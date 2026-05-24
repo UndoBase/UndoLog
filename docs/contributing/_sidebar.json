@@ -1,0 +1,13 @@
+{
+  "label": "Contributing",
+  "order": 5,
+  "pages": [
+    { "slug": "index", "title": "Overview" },
+    { "slug": "development-setup", "title": "Development Setup" },
+    { "slug": "documentation-guide", "title": "Documentation Guide" },
+    { "slug": "testing-guide", "title": "Testing Guide" },
+    { "slug": "COMMIT_AND_PR_STANDARDS", "title": "Commit & PR Standards" },
+    { "slug": "CONTRIBUTING", "title": "Contributing Guidelines" },
+    { "slug": "CODE_OF_CONDUCT", "title": "Code of Conduct" }
+  ]
+}

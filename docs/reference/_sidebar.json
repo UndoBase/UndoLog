@@ -1,0 +1,16 @@
+{
+  "label": "Reference",
+  "order": 2,
+  "pages": [
+    { "slug": "index", "title": "Overview" },
+    { "slug": "tool-tiers", "title": "Tool Tiers" },
+    { "slug": "effect-states", "title": "Effect States" },
+    { "slug": "call-signature", "title": "Call Signature" },
+    { "slug": "error-codes", "title": "Error Codes" },
+    { "slug": "configuration", "title": "Configuration" },
+    { "slug": "database-schema", "title": "Database Schema" },
+    { "slug": "api/python-sdk", "title": "Python SDK API" },
+    { "slug": "api/go-proxy-rest", "title": "Go Proxy REST API" },
+    { "slug": "api/rust-engine-grpc", "title": "Rust Engine gRPC API" }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "label": "Getting Started",
+  "order": 0,
+  "pages": [
+    { "slug": "index", "title": "Overview" },
+    { "slug": "installation", "title": "Installation" },
+    { "slug": "quickstart", "title": "Quickstart" },
+    { "slug": "concepts", "title": "Core Concepts" }
+  ]
+}

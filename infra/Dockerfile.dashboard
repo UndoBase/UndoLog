@@ -1,0 +1,57 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dockerfile.dashboard - UndoLog Next.js Dashboard
+#
+# Multi-stage build:
+#   1. node:22-alpine - install deps and run `next build` (standalone output)
+#   2. node:22-alpine - production runtime with only the built artifacts
+#
+# The underlying `next.config.ts` must set `output: "standalone"` so that
+# `next build` emits `.next/standalone/` with all required dependencies.
+#
+# Exposes:
+#   - HTTP on  :3000  (Next.js server, proxied through the Go proxy in prod)
+#
+# Build:
+#   docker build -t undolog-dashboard:latest -f infra/Dockerfile.dashboard .
+#
+# Run:
+#   docker run --rm -p 3000:3000 undolog-dashboard:latest
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: Builder ─────────────────────────────────────────────────────────
+FROM node:22-alpine AS build
+
+WORKDIR /app
+
+# Copy dependency manifests first for layer caching.
+COPY apps/dashboard/package.json apps/dashboard/package-lock.json* ./
+RUN npm ci
+
+# Copy the rest of the dashboard source.
+COPY apps/dashboard/ .
+
+# Build the Next.js application (standalone output).
+RUN npm run build
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM node:22-alpine AS runtime
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+WORKDIR /app
+
+# Copy standalone output from builder.
+COPY --from=build /app/.next/standalone ./
+# Copy static assets for the standalone server to serve.
+COPY --from=build /app/.next/static ./.next/static
+# Copy public assets.
+COPY --from=build /app/public ./public
+
+EXPOSE 3000/tcp
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+# The standalone output's server.js is the entrypoint.
+ENTRYPOINT ["node", "server.js"]

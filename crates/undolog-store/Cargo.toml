@@ -1,0 +1,20 @@
+[package]
+name              = "undolog-store"
+version.workspace = true
+edition.workspace = true
+description       = "UndoLog PostgreSQL repository layer"
+keywords          = ["undolog", "effect-tracking", "postgres", "repository", "storage"]
+categories        = ["database", "development-tools"]
+readme            = "../../README.md"
+homepage          = "https://github.com/UndoBase/UndoLog"
+
+[dependencies]
+undolog-types.workspace  = true
+tokio.workspace        = true
+serde.workspace        = true
+serde_json.workspace   = true
+sqlx.workspace         = true
+uuid.workspace         = true
+chrono.workspace       = true
+thiserror.workspace    = true
+tracing.workspace      = true

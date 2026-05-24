@@ -1,0 +1,239 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  rust:
+    name: Rust - check, lint, test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: undolog
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 3s
+          --health-timeout 2s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: target
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features
+
+      - name: Run migrations
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres undolog -f migrations/0001_initial.sql
+          PGPASSWORD=postgres psql -h localhost -U postgres undolog -f migrations/0002_add_undo_stack_retry_fields.sql
+        env:
+          PGPASSWORD: postgres
+
+      - name: Test
+        run: cargo test --workspace -- --nocapture
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/undolog
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/undolog
+
+  go:
+    name: Go - format, lint, vet, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/undolog-proxy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/undolog-proxy/go.mod
+          cache-dependency-path: services/undolog-proxy/go.sum
+
+      - name: Format (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Lint (golangci-lint)
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: services/undolog-proxy
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -v -count=1
+
+  python:
+    name: Python - format, lint, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/undolog-py
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install .[dev]
+          pip install blake3 ruff
+
+      - name: Format (ruff)
+        run: ruff format --check .
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Test
+        run: pytest -v
+
+  commitlint:
+    name: Commit message format
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install commitlint
+        run: |
+          npm install --save-dev \
+            @commitlint/cli \
+            @commitlint/config-conventional
+
+      - name: Lint PR title
+        run: echo "${{ github.event.pull_request.title }}" | npx commitlint
+
+      - name: Lint commit messages
+        run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+  markdown-links:
+    name: Docs - broken link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install markdown-link-check
+        run: npm install --save-dev markdown-link-check
+
+      - name: Check docs for broken links
+        run: |
+          find docs -name '*.md' -exec npx markdown-link-check {} \;
+
+  changelog:
+    name: CHANGELOG validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check CHANGELOG has Unreleased section
+        run: |
+          if ! grep -q "^## \[Unreleased\]" CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md is missing the [Unreleased] section."
+            exit 1
+          fi
+
+      - name: Check Unreleased section is non-empty (exclude chore/docs PRs)
+        run: |
+          title="${{ github.event.pull_request.title }}"
+          case "$title" in
+            chore*|docs*)
+              echo "Skipping - chore/docs PR"
+              exit 0
+              ;;
+          esac
+          lines=$(sed -n '/^## \[Unreleased\]/,/^## /p' CHANGELOG.md | grep -c '^- ')
+          if [ "$lines" -eq 0 ]; then
+            echo "ERROR: [Unreleased] section is empty. Add a changelog entry."
+            exit 1
+          fi
+
+  docs:
+    name: Docs - rustdoc completeness
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: target
+
+      - name: Check all public items are documented
+        run: RUSTDOCFLAGS="-D missing_docs" cargo doc --no-deps --workspace --exclude undolog-engine
+
+  www:
+    name: Website - build check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/www
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/www/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run build

@@ -1,0 +1,14 @@
+{
+  "label": "ADRs",
+  "order": 4,
+  "pages": [
+    { "slug": "index", "title": "Overview" },
+    { "slug": "0001-rust-for-effect-engine", "title": "0001: Rust for Engine" },
+    { "slug": "0002-go-for-mcp-proxy", "title": "0002: Go for Proxy" },
+    { "slug": "0003-blake3-for-call-signature", "title": "0003: BLAKE3 Hashing" },
+    { "slug": "0004-postgresql-advisory-locks", "title": "0004: Advisory Locks" },
+    { "slug": "0005-saga-not-2pc", "title": "0005: Saga Pattern" },
+    { "slug": "0006-mcp-protocol-layer", "title": "0006: MCP Protocol" },
+    { "slug": "0007-pre-registered-compensation", "title": "0007: Pre-Registered Comp" }
+  ]
+}

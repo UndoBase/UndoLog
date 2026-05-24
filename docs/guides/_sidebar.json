@@ -1,0 +1,15 @@
+{
+  "label": "Guides",
+  "order": 1,
+  "pages": [
+    { "slug": "index", "title": "Overview" },
+    { "slug": "annotating-tools", "title": "Annotating Tools" },
+    { "slug": "writing-compensations", "title": "Writing Compensations" },
+    { "slug": "configuring-approval-gates", "title": "Configuring Approval Gates" },
+    { "slug": "integrating-langgraph", "title": "Integrating with LangGraph" },
+    { "slug": "integrating-crewai", "title": "Integrating with CrewAI" },
+    { "slug": "integrating-semantic-kernel", "title": "Integrating with Semantic Kernel" },
+    { "slug": "deploying-with-docker", "title": "Deploying with Docker" },
+    { "slug": "running-in-production", "title": "Running in Production" }
+  ]
+}

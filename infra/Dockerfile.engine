@@ -1,0 +1,88 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dockerfile.engine - UndoLog Engine gRPC Server
+#
+# Multi-stage build:
+#   1. rust:1.87-slim   - compile the undolog-engine binary
+#   2. distroless/cc    - minimal glibc runtime (no shell, no package manager)
+#
+# Exposes:
+#   - gRPC endpoint on   :50051  (tool call interception & lifecycle)
+#   - HTTP health on     :9090   (liveness / readiness probe)
+#
+# Build:
+#   docker build -t undolog-engine:latest -f infra/Dockerfile.engine .
+#
+# Run:
+#   docker run --rm -p 50051:50051 -p 9090:9090 \
+#     -e DATABASE_URL=postgresql://user:pass@host/db \
+#     undolog-engine:latest
+#
+# Runtime deps at a glance:
+#   DATABASE_URL                       (required, PostgreSQL connection string)
+#   UNDOLOG_LOG_LEVEL                  (optional, default: info)
+#   UNDOLOG_ENGINE_GRPC_ADDR           (optional, default: 0.0.0.0:50051)
+#   UNDOLOG_ENGINE_HEALTH_ADDR         (optional, default: 0.0.0.0:9090)
+#   UNDOLOG_REGISTRY_REFRESH_SECS      (optional, default: 60)
+#   UNDOLOG_LOCK_MAX_ATTEMPTS          (optional, default: 3)
+#   UNDOLOG_LOCK_RETRY_MS              (optional, default: 100)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: Builder ─────────────────────────────────────────────────────────
+FROM rust:1.87-slim AS build
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      pkg-config \
+      libssl-dev \
+      ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# ── Copy manifest files first for dependency caching ─────────────────────────
+COPY Cargo.toml Cargo.lock ./
+COPY crates/undolog-types/Cargo.toml  crates/undolog-types/
+COPY crates/undolog-store/Cargo.toml  crates/undolog-store/
+COPY crates/undolog-engine/Cargo.toml crates/undolog-engine/
+COPY crates/undolog-saga/Cargo.toml   crates/undolog-saga/
+
+# Dummy source files so Cargo can resolve the dependency graph.
+RUN mkdir -p crates/undolog-types/src  \
+             crates/undolog-store/src  \
+             crates/undolog-engine/src \
+             crates/undolog-saga/src   \
+  && touch crates/undolog-types/src/lib.rs   \
+          crates/undolog-store/src/lib.rs    \
+          crates/undolog-engine/src/lib.rs   \
+          crates/undolog-saga/src/lib.rs     \
+  && echo "fn main() {}" > crates/undolog-engine/src/main.rs
+
+# Build and cache dependencies (this layer is reused across builds).
+RUN cargo build --release -p undolog-engine 2>&1
+
+# ── Copy real source code ────────────────────────────────────────────────────
+COPY proto   proto/
+COPY crates/undolog-types/src  crates/undolog-types/src/
+COPY crates/undolog-store/src  crates/undolog-store/src/
+COPY crates/undolog-engine/src crates/undolog-engine/src/
+COPY crates/undolog-saga/src   crates/undolog-saga/src/
+
+# Force a rebuild with the real sources (cache hit for deps, only engine changes).
+RUN touch crates/undolog-engine/src/main.rs && \
+    cargo build --release -p undolog-engine
+
+# Strip debug symbols (~30→5 MB).
+RUN strip /build/target/release/undolog-engine
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM gcr.io/distroless/cc
+
+COPY --from=build /build/target/release/undolog-engine /usr/local/bin/undolog-engine
+
+EXPOSE 50051/tcp
+EXPOSE 9090/tcp
+
+# Orchestrator-level probes should target:
+#   HTTP GET http://<container>:9090/  → 200 OK
+
+ENTRYPOINT ["/usr/local/bin/undolog-engine"]

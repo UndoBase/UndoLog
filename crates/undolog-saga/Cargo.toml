@@ -1,0 +1,31 @@
+[package]
+name              = "undolog-saga"
+version.workspace = true
+edition.workspace = true
+description       = "UndoLog saga orchestrator"
+keywords          = ["undolog", "saga", "compensation", "orchestrator", "rollback"]
+categories        = ["development-tools"]
+readme            = "../../README.md"
+homepage          = "https://github.com/UndoBase/UndoLog"
+
+[dependencies]
+async-trait.workspace = true
+backoff.workspace     = true
+reqwest.workspace     = true
+serde.workspace       = true
+serde_json.workspace  = true
+thiserror.workspace   = true
+tokio.workspace       = true
+tracing.workspace     = true
+
+undolog-types.workspace = true
+undolog-store.workspace  = true
+
+[dev-dependencies]
+proptest = "1.6"
+serial_test = "3.2"
+tokio = { version = "1.52", features = ["full"] }
+uuid.workspace = true
+wiremock = "0.6"
+chrono = { version = "0.4", features = ["serde"] }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "uuid", "chrono", "json"] }

@@ -1,0 +1,30 @@
+module.exports = {
+  extends: ["@commitlint/config-conventional"],
+  rules: {
+    "scope-enum": [
+      2,
+      "always",
+      [
+        "engine",
+        "store",
+        "types",
+        "saga",
+        "proxy",
+        "sdk-py",
+        "sdk-ts",
+        "dashboard",
+        "www",
+        "schema",
+        "proto",
+        "infra",
+        "docs",
+        "deps",
+      ],
+    ],
+    "header-max-length": [2, "always", 72],
+    "body-max-length": [2, "always", 72],
+    "body-max-line-length": [2, "always", 72],
+    "footer-max-length": [0, "always"],
+    "footer-max-line-length": [0, "always"],
+  },
+};

@@ -1,0 +1,188 @@
+// UndoLog Engine gRPC contract - single source of truth for the Rust↔Go interface.
+//
+// The Go MCP proxy calls the Rust Effect Engine through this service for every
+// tool call interception, commitment, failure, and approval resolution.
+//
+// Wire compatibility:
+//   - Rust (server): generated via tonic-build into crates/undolog-engine/src/grpc/
+//   - Go (client):   generated via protoc-gen-go-grpc into services/undolog-proxy/internal/engine/pb/
+//
+// All timestamps are RFC 3339 / protobuf Timestamp.
+// All UUIDs are string fields in standard 8-4-4-4-12 lowercase hex format.
+
+syntax = "proto3";
+
+package undolog.v1;
+
+option go_package = "undolog-proxy/internal/engine/pb;pb";
+
+// ── UndoLogEngine ──────────────────────────────────────────────────────────
+
+// UndoLogEngine is the core safety kernel of the UndoLog runtime.
+//
+// Every RPC is tenant-scoped (org_id) and idempotent where possible.
+service UndoLogEngine {
+  // Intercept a tool call before execution.
+  //
+  // The engine decides whether to Execute it fresh, return a cached result
+  // (Replay), or wait for human approval (AwaitingApproval).
+  rpc Intercept(InterceptRequest) returns (InterceptResponse);
+
+  // Commit reports a successful tool execution so the engine can persist
+  // the result snapshot and transition the effect to Committed.
+  rpc Commit(CommitRequest) returns (CommitResponse);
+
+  // Fail reports a failed tool execution so the engine can record the error
+  // and revert the effect to a failure state.
+  rpc Fail(FailRequest) returns (FailResponse);
+
+  // Approve resolves an AwaitingApproval effect positively.  The engine
+  // transitions the session back to Active so execution can resume.
+  rpc Approve(ApproveRequest) returns (ApproveResponse);
+
+  // Reject resolves an AwaitingApproval effect negatively.  The engine
+  // transitions the session to Halted and prevents further execution.
+  rpc Reject(RejectRequest) returns (RejectResponse);
+}
+
+// ── Messages ───────────────────────────────────────────────────────────────
+
+// ToolCall is the canonical tool invocation exchanged between proxy and engine.
+message ToolCall {
+  // Organisation that owns this call.  Scopes all subsequent lookups.
+  string org_id = 1;
+
+  // Session that produced the call (UUID v4).
+  string session_id = 2;
+
+  // Registered tool identifier, if known.
+  string tool_id = 3;
+
+  // Logical name of the tool (e.g. "transfer_funds").
+  string tool_name = 4;
+
+  // Semantic version of the tool implementation.
+  string tool_version = 5;
+
+  // Monotonically increasing call order within the session.
+  uint32 step_index = 6;
+
+  // Raw JSON arguments supplied by the caller.
+  bytes args = 7;
+
+  // Canonical BLAKE3 deduplication key (64 lowercase hex chars).
+  string signature = 8;
+}
+
+// ToolResult represents the upstream tool execution result.
+message ToolResult {
+  // Whether the execution completed without error.
+  bool success = 1;
+
+  // Raw JSON payload returned by the tool (omitted on error).
+  bytes output = 2;
+
+  // Human-readable error description (present only on failure).
+  string error = 3;
+
+  // Wall-clock duration of the upstream execution in milliseconds.
+  uint64 duration_ms = 4;
+}
+
+// ── Intercept ──────────────────────────────────────────────────────────────
+
+message InterceptRequest {
+  // The intercepted tool call.
+  ToolCall tool_call = 1;
+}
+
+message InterceptResponse {
+  // Routing decision from the engine.
+  oneof outcome {
+    // Execute the tool call fresh and commit the result afterward.
+    ExecuteOutcome execute = 1;
+    // Return the cached result without executing the tool.
+    ReplayOutcome replay = 2;
+    // Suspend execution pending human approval (Irreversible tier only).
+    AwaitingApprovalOutcome awaiting_approval = 3;
+  }
+
+  // Engine-side error description.  Populated only when the engine could
+  // not process the request (not a tool execution error).
+  string error = 10;
+}
+
+message ExecuteOutcome {
+  // Unique effect identifier for the newly created log entry.
+  string effect_id = 1;
+}
+
+message ReplayOutcome {
+  // Effect identifier of the original (cached) entry.
+  string effect_id = 1;
+  // The cached tool result from the original execution.
+  ToolResult cached_result = 2;
+}
+
+message AwaitingApprovalOutcome {
+  // Effect identifier for the pending entry.
+  string effect_id = 1;
+  // Approval request identifier that the caller should surface.
+  string approval_id = 2;
+}
+
+// ── Commit ─────────────────────────────────────────────────────────────────
+
+message CommitRequest {
+  // Effect identifier from the InterceptResponse (Execute outcome).
+  string effect_id = 1;
+  // Organisation that owns the effect.
+  string org_id = 2;
+  // Session that produced the call.
+  string session_id = 3;
+  // The successful tool execution result.
+  ToolResult result = 4;
+}
+
+message CommitResponse {}
+
+// ── Fail ───────────────────────────────────────────────────────────────────
+
+message FailRequest {
+  // Effect identifier from the InterceptResponse.
+  string effect_id = 1;
+  // Organisation that owns the effect.
+  string org_id = 2;
+  // Session that produced the call.
+  string session_id = 3;
+  // Human-readable error description.
+  string error = 4;
+}
+
+message FailResponse {}
+
+// ── Approve / Reject ───────────────────────────────────────────────────────
+
+message ApproveRequest {
+  // Approval request identifier from the InterceptResponse (AwaitingApproval).
+  string approval_id = 1;
+  // Organisation that owns the approval request.
+  string org_id = 2;
+  // Identity of the human who granted approval (for audit).
+  string actor = 3;
+  // Optional modified args to use in place of the original proposed args.
+  bytes approved_args = 4;
+}
+
+message ApproveResponse {}
+
+message RejectRequest {
+  // Approval request identifier from the InterceptResponse (AwaitingApproval).
+  string approval_id = 1;
+  // Organisation that owns the approval request.
+  string org_id = 2;
+  // Identity of the human who rejected the request (for audit).
+  string actor = 3;
+}
+
+message RejectResponse {}

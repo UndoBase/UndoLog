@@ -1,0 +1,11 @@
+{
+  "sections": [
+    { "dir": "getting-started", "label": "Getting Started", "order": 0 },
+    { "dir": "guides",          "label": "Guides",           "order": 1 },
+    { "dir": "reference",       "label": "Reference",        "order": 2 },
+    { "dir": "explanation",     "label": "Explanation",      "order": 3 },
+    { "dir": "adr",             "label": "ADRs",             "order": 4 },
+    { "dir": "contributing",    "label": "Contributing",     "order": 5 },
+    { "dir": "changelog",       "label": "Changelog",        "order": 6 }
+  ]
+}

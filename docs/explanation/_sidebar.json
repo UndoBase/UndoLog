@@ -1,0 +1,12 @@
+{
+  "label": "Explanation",
+  "order": 3,
+  "pages": [
+    { "slug": "index", "title": "Overview" },
+    { "slug": "safety-model", "title": "Safety Model" },
+    { "slug": "exactly-once-semantics", "title": "Exactly-Once Semantics" },
+    { "slug": "saga-pattern", "title": "Saga Pattern" },
+    { "slug": "mcp-native-design", "title": "MCP-Native Design" },
+    { "slug": "comparison-with-langraph", "title": "vs LangGraph" }
+  ]
+}

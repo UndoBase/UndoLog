@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dockerfile.proxy - UndoLog Go MCP Proxy
+#
+# Multi-stage build:
+#   1. golang:1.24-alpine  - compile the undolog-proxy binary
+#   2. scratch             - truly empty rootfs (no shell, no package manager)
+#
+# Exposes:
+#   - HTTP endpoint on  :8080  (MCP tool call interception, approvals, SSE)
+#
+# Build:
+#   docker build -t undolog-proxy:latest -f infra/Dockerfile.proxy .
+#
+# Run:
+#   docker run --rm -p 8080:8080 \
+#     -e UNDOLOG_PROXY_ENGINE_GRPC_ADDR=host.docker.internal:50051 \
+#     -e UNDOLOG_PROXY_UPSTREAM_TOOL_URL=http://host.docker.internal:9091 \
+#     undolog-proxy:latest
+#
+# Runtime deps at a glance:
+#   UNDOLOG_PROXY_LISTEN_ADDR              (optional, default: :8080)
+#   UNDOLOG_PROXY_ENGINE_GRPC_ADDR         (optional, default: localhost:50051)
+#   UNDOLOG_PROXY_UPSTREAM_TOOL_URL        (optional)
+#   UNDOLOG_PROXY_API_KEYS                 (optional, csv key=org auth)
+#   UNDOLOG_PROXY_READ_TIMEOUT_SECS        (optional, default: 15)
+#   UNDOLOG_PROXY_WRITE_TIMEOUT_SECS       (optional, default: 15)
+#   UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS    (optional, default: 30)
+#   UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS     (optional, default: 30)
+#   UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE (optional, default: 128)
+#   UNDOLOG_LOG_LEVEL                      (optional, default: info)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: Builder ─────────────────────────────────────────────────────────
+FROM golang:1.24-alpine AS build
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /src
+
+# Copy dependency manifests first for layer caching.
+COPY services/undolog-proxy/go.mod services/undolog-proxy/go.sum ./
+RUN go mod download
+
+# Copy the entire proxy source tree.
+COPY services/undolog-proxy/ .
+
+# Build static binary (no CGO, stripped, no debug info).
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-w -s" -o /out/undolog-proxy ./cmd/proxy
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM scratch
+
+# TLS root certificates for gRPC (mTLS with Rust engine).
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+COPY --from=build /out/undolog-proxy /usr/local/bin/undolog-proxy
+
+EXPOSE 8080/tcp
+
+# HEALTHCHECK is omitted intentionally - the runtime is `scratch` which has no
+# shell, wget, or curl. Use the /health HTTP endpoint in orchestration probes.
+
+ENTRYPOINT ["/usr/local/bin/undolog-proxy"]

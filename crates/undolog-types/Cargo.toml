@@ -1,0 +1,18 @@
+[package]
+name              = "undolog-types"
+version.workspace = true
+edition.workspace = true
+description       = "Shared domain types - no async, no DB"
+keywords          = ["undolog", "effect-tracking", "llm", "safety", "types"]
+categories        = ["data-structures", "development-tools"]
+readme            = "../../README.md"
+homepage          = "https://github.com/UndoBase/UndoLog"
+
+[dependencies]
+serde.workspace      = true
+serde_json.workspace = true
+uuid.workspace       = true
+chrono.workspace     = true
+thiserror.workspace  = true
+blake3.workspace     = true
+sqlx.workspace       = true
