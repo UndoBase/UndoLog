@@ -46,7 +46,7 @@ UndoLog is Apache 2.0 licensed. Contributions are welcome. Read the [contributin
 
 ## Security
 
-If you discover a security vulnerability, email [security@undolog.com](mailto:security@undolog.com). All reports are promptly addressed.
+If you discover a security vulnerability, email [security@undobase.com](mailto:security@undobase.com). All reports are promptly addressed.
 
 
 
