@@ -4,6 +4,7 @@ import { getDocPage, getAllDocSlugs } from "@/lib/docs";
 import DocsLayout from "@/components/DocsLayout";
 import TableOfContents from "@/components/TableOfContents";
 import CodeCopyProvider from "@/components/CodeCopyProvider";
+import ArrowIcon from "@/components/ArrowIcon";
 
 
 export async function generateStaticParams() {
@@ -33,7 +34,7 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
 
   return (
     <DocsLayout>
-      <article className="doc-article">
+      <article>
         <div className="doc-body">
           <div className="doc-content">
             <CodeCopyProvider>
@@ -50,13 +51,13 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
           {page.prev && (
             <Link href={`/docs/${page.prev.slug}`} className="doc-nav-link doc-nav-prev">
               <span className="doc-nav-direction">Previous</span>
-              <span className="doc-nav-title">{page.prev.title}</span>
+              <span className="doc-nav-title"><ArrowIcon flip />{page.prev.title}</span>
             </Link>
           )}
           {page.next && (
             <Link href={`/docs/${page.next.slug}`} className="doc-nav-link doc-nav-next">
               <span className="doc-nav-direction">Next</span>
-              <span className="doc-nav-title">{page.next.title}</span>
+              <span className="doc-nav-title">{page.next.title}<ArrowIcon /></span>
             </Link>
           )}
         </div>

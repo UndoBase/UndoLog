@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import BackgroundLayer from "@/components/BackgroundLayer";
 
 export const metadata: Metadata = {
   title: "UndoLog - Bringing ACID to Agent Actions",
@@ -26,7 +27,10 @@ export default function RootLayout({
         />
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
       </head>
-      <body>{children}</body>
+      <body>
+        <BackgroundLayer />
+        {children}
+      </body>
     </html>
   );
 }

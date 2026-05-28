@@ -1,6 +1,7 @@
 import { getSidebar } from "@/lib/docs";
 import DocsLayout from "@/components/DocsLayout";
 import Link from "next/link";
+import ArrowIcon from "@/components/ArrowIcon";
 
 export default function DocsLanding() {
   const sidebar = getSidebar();
@@ -32,8 +33,9 @@ export default function DocsLanding() {
                 <p className="docs-landing-card-desc">
                   {descriptions[section.dir] || `Browse ${section.label.toLowerCase()} documentation.`}
                 </p>
-                <span className="docs-landing-card-count">
-                  {section.pages.length} {section.pages.length === 1 ? "page" : "pages"}
+                <span className="docs-landing-card-footer">
+                  <span>{section.pages.length} {section.pages.length === 1 ? "page" : "pages"}</span>
+                  <ArrowIcon size={12} />
                 </span>
               </Link>
             );

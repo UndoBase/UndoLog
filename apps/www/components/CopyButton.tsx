@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 
+/**
+ * CopyButton: Clipboard copy button with icon toggle.
+ * Accepts external className for CSS reuse across code blocks and showcase.
+ */
 export default function CopyButton({ code, className }: { code: string; className?: string }) {
   const [copied, setCopied] = useState(false);
 

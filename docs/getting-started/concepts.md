@@ -136,10 +136,10 @@ actions: only `compensation_failed` entries escalate to human operators.
 A session moves through these states over its lifetime:
 
 ```
-                    ┌────────────────────────────┐
-                    │         active             │
-                    │  (tool calls flowing)      │
-                    └────────┬───────────────────┘
+              ┌────────────────────────────┐
+              │           active           │
+              │    (tool calls flowing)    │
+              └────────────────────────────┘
                              │
               ┌──────────────┼──────────────┐
               │              │              │
@@ -155,7 +155,8 @@ A session moves through these states over its lifetime:
                     │ (undo walk)│    (if approval
                     └─────┬──────┘     rejected)
                           │
-                    ┌─────▼──────┐         ┌──────────────────┐
+                          ▼ 
+                    ┌────────────┐         ┌──────────────────┐
                     │ compensated│         │     halted       │
                     │ (all done) │         │ (needs manual    │
                     └────────────┘         │  intervention)   │
