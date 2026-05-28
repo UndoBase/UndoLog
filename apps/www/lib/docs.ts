@@ -8,7 +8,7 @@ import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
-import rehypePrettyCode from "rehype-pretty-code";
+import rehypePrettyCode, { type Options } from "rehype-pretty-code";
 
 const DOCS_ROOT = path.resolve(process.cwd(), "../../docs");
 
@@ -36,17 +36,49 @@ export interface SidebarSection {
   pages: { slug: string; title: string }[];
 }
 
-export interface SidebarConfig {
+interface SidebarConfig {
   sections: SidebarSection[];
 }
 
 let cachedSidebar: SidebarConfig | null = null;
 let cachedSlugs: { slug: string; title: string }[] | null = null;
 
-const prettyCodeOptions = {
-  theme: { dark: "github-dark-dimmed" as const, light: "github-light" as const },
-  keepBackground: true,
+const undologTheme = {
+  name: "undolog",
+  type: "dark" as const,
+  colors: {
+    "editor.background": "#1D1C2E",
+    "editor.foreground": "#e2e0f0",
+  },
+  tokenColors: [
+    { scope: "keyword", settings: { foreground: "#7F77DD" } },
+    { scope: "keyword.control", settings: { foreground: "#7F77DD" } },
+    { scope: "storage.type", settings: { foreground: "#7F77DD" } },
+    { scope: "storage.modifier", settings: { foreground: "#7F77DD" } },
+    { scope: "string", settings: { foreground: "#4ADE80" } },
+    { scope: "string.quoted", settings: { foreground: "#4ADE80" } },
+    { scope: "string.regexp", settings: { foreground: "#F59E0B" } },
+    { scope: "comment", settings: { foreground: "#6b7280", fontStyle: "italic" } },
+    { scope: "entity.name.function", settings: { foreground: "#e2e0f0" } },
+    { scope: "support.function", settings: { foreground: "#6CB6FF" } },
+    { scope: "support.type", settings: { foreground: "#7F77DD" } },
+    { scope: "constant.numeric", settings: { foreground: "#F59E0B" } },
+    { scope: "constant.language", settings: { foreground: "#8b87a0" } },
+    { scope: "constant.builtin", settings: { foreground: "#8b87a0" } },
+    { scope: "invalid", settings: { foreground: "#F07178" } },
+    { scope: "invalid.deprecated", settings: { foreground: "#F07178" } },
+    { scope: "entity.other.attribute-name", settings: { foreground: "#6CB6FF" } },
+    { scope: "variable.other.constant", settings: { foreground: "#8b87a0" } },
+    { scope: "punctuation", settings: { foreground: "#8b87a0" } },
+    { scope: "punctuation.definition.tag", settings: { foreground: "#7F77DD" } },
+    { scope: "meta.tag", settings: { foreground: "#7F77DD" } },
+  ],
 };
+
+const prettyCodeOptions = {
+  theme: undologTheme as any,
+  keepBackground: true,
+} satisfies Options;
 
 function readSidebarConfig(): SidebarConfig {
   if (cachedSidebar) return cachedSidebar;

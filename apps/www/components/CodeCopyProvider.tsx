@@ -2,6 +2,11 @@
 
 import { useEffect, useRef } from "react";
 
+/**
+ * CodeCopyProvider: Injects copy buttons into rehype-pretty-code figures.
+ * Renders children inside a wrapper ref and attaches clipboard buttons
+ * to every <figure data-rehype-pretty-code-figure> it finds.
+ */
 export default function CodeCopyProvider({ children }: { children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
 

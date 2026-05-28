@@ -5,6 +5,11 @@ import Link from "next/link";
 import { type SidebarSection } from "@/lib/docs";
 import { sectionIcons } from "./sectionIcons";
 
+/**
+ * DocsSidebar: Left navigation for the docs section.
+ * Renders collapsible sections with icons, page lists, and active-state indicators.
+ * Highlights the current page using the URL pathname.
+ */
 export default function DocsSidebar({ sections }: { sections: SidebarSection[] }) {
   const pathname = usePathname();
   const currentSlug = pathname.replace(/^\/docs\/?/, "");
