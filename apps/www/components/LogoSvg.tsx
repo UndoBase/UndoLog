@@ -1,3 +1,7 @@
+/**
+ * LogoSvg: Brand logo as an SVG arc with arrowhead and central dot.
+ * Used in the Navbar brand link and Footer.
+ */
 export default function LogoSvg({ size = 30 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" className="logo-arc">

@@ -1,5 +1,9 @@
-const SectionIcon = ({ children, className }: { children: React.ReactNode; className?: string }) => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className={className}>
+/**
+ * sectionIcons: SVG icon map for docs sidebar sections.
+ * Each icon is a 16px inline SVG specific to a doc section (getting-started, guides, etc.).
+ */
+const SectionIcon = ({ children }: { children: React.ReactNode }) => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
     {children}
   </svg>
 );

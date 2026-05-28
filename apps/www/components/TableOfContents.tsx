@@ -3,8 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { DocHeading } from "@/lib/docs";
 
+/**
+ * TableOfContents: Collapsible sidebar navigation for doc articles.
+ * Tracks active heading via IntersectionObserver and auto-scrolls
+ * the TOC to keep the active item visible.
+ * Toggle button hides/shows the panel with a smooth slide transition.
+ */
 export default function TableOfContents({ headings }: { headings: DocHeading[] }) {
   const [activeId, setActiveId] = useState<string>("");
+  const [open, setOpen] = useState(true);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const tocRef = useRef<HTMLUListElement>(null);
 
@@ -13,7 +20,6 @@ export default function TableOfContents({ headings }: { headings: DocHeading[] }
 
     const ids = headings.map((h) => h.id);
 
-    // Track which heading was last entered from above
     let lastEntered = "";
 
     const handleIntersect = (entries: IntersectionObserverEntry[]) => {
@@ -24,14 +30,12 @@ export default function TableOfContents({ headings }: { headings: DocHeading[] }
           return;
         }
       }
-      // If nothing is intersecting, keep the last entered heading
       if (lastEntered) {
         setActiveId(lastEntered);
       }
     };
 
     observerRef.current = new IntersectionObserver(handleIntersect, {
-      // -80px top for navbar, -80% bottom so heading only needs to enter top 20%
       rootMargin: "-80px 0px -80% 0px",
       threshold: 0,
     });
@@ -42,7 +46,6 @@ export default function TableOfContents({ headings }: { headings: DocHeading[] }
 
     elements.forEach((el) => observerRef.current!.observe(el));
 
-    // Activate first heading initially
     if (elements.length > 0) {
       setActiveId(elements[0].id);
     }
@@ -52,7 +55,6 @@ export default function TableOfContents({ headings }: { headings: DocHeading[] }
     };
   }, [headings]);
 
-  // Auto-scroll TOC to keep active item visible
   useEffect(() => {
     if (!activeId || !tocRef.current) return;
 
@@ -76,29 +78,50 @@ export default function TableOfContents({ headings }: { headings: DocHeading[] }
   if (headings.length === 0) return null;
 
   return (
-    <aside className="docs-toc">
-      <h4 className="docs-toc-title">On this page</h4>
-      <nav>
-        <ul className="docs-toc-list" ref={tocRef}>
-          {headings.map((h) => {
-            const isActive = activeId === h.id;
-            return (
-              <li
-                key={h.id}
-                className={`docs-toc-item ${isActive ? "active" : ""}`}
-                style={{ paddingLeft: h.level === 3 ? 12 : 0 }}
-              >
-                <a
-                  href={`#${h.id}`}
-                  className={`docs-toc-link ${isActive ? "active" : ""}`}
+    <div className="docs-toc-wrap">
+      <button
+        className="docs-toc-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={open ? "Hide table of contents" : "Show table of contents"}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          {open ? (
+            <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          ) : (
+            <>
+              <path d="M2 4H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M2 8H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M2 12H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </>
+          )}
+        </svg>
+        <span className="docs-toc-toggle-tip">{open ? "Hide" : "Contents"}</span>
+      </button>
+
+      <aside className={`docs-toc ${open ? "open" : "closed"}`}>
+        <h4 className="docs-toc-title">On this page</h4>
+        <nav>
+          <ul className="docs-toc-list" ref={tocRef}>
+            {headings.map((h) => {
+              const isActive = activeId === h.id;
+              return (
+                <li
+                  key={h.id}
+                  className={`docs-toc-item ${isActive ? "active" : ""}`}
+                  style={{ paddingLeft: h.level === 3 ? 12 : 0 }}
                 >
-                  <span>{h.text}</span>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-    </aside>
+                  <a
+                    href={`#${h.id}`}
+                    className={`docs-toc-link ${isActive ? "active" : ""}`}
+                  >
+                    <span>{h.text}</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      </aside>
+    </div>
   );
 }
