@@ -31,10 +31,15 @@ func (m *mockEngine) Commit(ctx context.Context, req protocol.CommitRequest) err
 // Fail is a no-op stub used to satisfy the engine interface.
 func (m *mockEngine) Fail(ctx context.Context, req protocol.FailRequest) error { return nil }
 
-// Approve records that the approval was resumed by the handler.
-func (m *mockEngine) Approve(ctx context.Context, req protocol.ApproveRequest) error {
+// Approve records that the approval was resumed and returns a valid response.
+func (m *mockEngine) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
 	m.approved = append(m.approved, req.ApprovalID)
-	return nil
+	return protocol.ApproveResponse{
+		EffectID:  "eff-1",
+		SessionID: "sess-1",
+		ToolName:  "delete_user",
+		Args:      []byte(`{"id":"u1"}`),
+	}, nil
 }
 
 // Reject records that the approval was denied by the handler.
@@ -51,7 +56,10 @@ func TestApprovalLifecycle(t *testing.T) {
 	store := NewStore()
 	engine := &mockEngine{}
 	broadcaster := sse.NewBroadcaster(4)
-	handler := NewHandler(store, engine, broadcaster, nil)
+	mockExec := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{Success: true, Output: []byte(`{"deleted":true}`)}, nil
+	}
+	handler := NewHandler(store, engine, mockExec, broadcaster, nil)
 
 	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 

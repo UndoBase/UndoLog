@@ -89,8 +89,9 @@ ENGINE_GRPC_ADDR=localhost:50051 \
   ./undolog-proxy
 ```
 
-The proxy starts an HTTP server on `:8080`. It exposes the `/api/v1/intercept`,
-`/api/v1/commit`, and `/api/v1/fail` endpoints that the Python SDK talks to.
+The proxy starts an HTTP server on `:8080`. It exposes the `/mcp/tool_call`
+endpoint that the Python SDK talks to, with commit and fail handled inline
+during the tool call lifecycle.
 
 ### 4. Install the Python SDK
 

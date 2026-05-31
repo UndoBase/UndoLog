@@ -174,7 +174,18 @@ message ApproveRequest {
   bytes approved_args = 4;
 }
 
-message ApproveResponse {}
+message ApproveResponse {
+  // Effect identifier that transitions pending -> approved.
+  string effect_id = 1;
+  // Session that was awaiting approval; now resumed to active.
+  string session_id = 2;
+  // Tool name to execute.
+  string tool_name = 3;
+  // Tool version for execution.
+  string tool_version = 4;
+  // Args to use for execution (approved_args ?? proposed_args from the request).
+  bytes args = 5;
+}
 
 message RejectRequest {
   // Approval request identifier from the InterceptResponse (AwaitingApproval).

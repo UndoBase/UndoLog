@@ -19,6 +19,26 @@ impl SessionStore {
         Self { pool }
     }
 
+    /// Create a new session (auto-created on first tool intercept).
+    pub async fn create_session(
+        &self,
+        org_id: &OrgId,
+        session_id: &SessionId,
+    ) -> UndoLogResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO undolog_sessions (session_id, org_id, state, started_at)
+            VALUES ($1, $2, 'active'::undolog_session_state, now())
+            ON CONFLICT (session_id) DO NOTHING
+            "#,
+        )
+        .bind(*session_id.as_uuid())
+        .bind(*org_id.as_uuid())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Load one session row by ID.
     ///
     /// Returns `Ok(None)` when the session does not exist.

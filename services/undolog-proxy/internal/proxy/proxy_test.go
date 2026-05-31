@@ -47,8 +47,8 @@ func (m *mockEngineClient) Fail(ctx context.Context, req protocol.FailRequest) e
 }
 
 // Approve is a no-op stub used to satisfy the engine client interface.
-func (m *mockEngineClient) Approve(ctx context.Context, req protocol.ApproveRequest) error {
-	return nil
+func (m *mockEngineClient) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
+	return protocol.ApproveResponse{}, nil
 }
 
 // Reject is a no-op stub used to satisfy the engine client interface.

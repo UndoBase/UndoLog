@@ -19,7 +19,7 @@ use undolog_types::{
     approval::{ApprovalAction, ApprovalRequest, ApprovalState},
     effect::{ToolCall, ToolResult},
     errors::UndoLogError,
-    ids::{ApprovalRequestId, EffectId, OrgId},
+    ids::{ApprovalRequestId, EffectId, OrgId, SessionId},
     tier::ToolTier,
 };
 
@@ -53,6 +53,17 @@ pub enum InterceptOutcome {
     Replay { effect_id: EffectId, result: Option<ToolResult> },
     /// Irreversible action; execution suspended pending human approval.
     AwaitingApproval { effect_id: EffectId, approval_request_id: ApprovalRequestId },
+}
+
+/// Data returned by approve() for the proxy to execute the tool.
+#[derive(Debug, Clone)]
+pub struct ApprovalResult {
+    pub effect_id: EffectId,
+    pub session_id: SessionId,
+    pub tool_name: String,
+    pub tool_version: String,
+    /// Resolved args (approved_args if provided, otherwise proposed_args).
+    pub args: serde_json::Value,
 }
 
 // ── EffectEngine ───────────────────────────────────────────────────────────
@@ -95,10 +106,15 @@ impl EffectEngine {
         step = call.step_index,
     ))]
     pub async fn intercept(&self, call: ToolCall) -> Result<InterceptOutcome, UndoLogError> {
-        // Verify session exists before proceeding.
-        let session = self.session_store.get_session(&call.org_id, &call.session_id).await?;
-        if session.is_none() {
-            return Err(UndoLogError::Internal(format!("Session not found: {}", call.session_id)));
+        // Auto-create session on first use if it doesn't exist.
+        let existing = self.session_store.get_session(&call.org_id, &call.session_id).await?;
+        if existing.is_none() {
+            self.session_store.create_session(&call.org_id, &call.session_id).await?;
+            info!(
+                org_id = %call.org_id,
+                session_id = %call.session_id,
+                "Auto-created session on first intercept"
+            );
         }
 
         let signature = call.signature();
@@ -173,6 +189,9 @@ impl EffectEngine {
 
                 // Push undo entry onto the stack (critical: must complete before execution).
                 self.effect_store.push_undo_entry(&call, &effect_id, compensation).await?;
+
+                // Transition from pending → executing so the proxy can commit.
+                self.effect_store.set_executing(&call.org_id, &effect_id).await?;
 
                 info!(
                     effect_id = %effect_id,
@@ -278,6 +297,11 @@ impl EffectEngine {
     }
 
     /// Approve an Irreversible action (human has granted permission).
+    ///
+    /// Transitions the effect from `pending` to `approved`, resumes the
+    /// session, and returns the execution data the proxy needs to run the
+    /// tool. When `approved_args` differs from the original `proposed_args`,
+    /// the effect's `args_snapshot` is updated to keep the audit trail accurate.
     #[instrument(skip(self), fields(org_id = %org_id, approval_request_id = %approval_request_id, actor = %actor))]
     pub async fn approve(
         &self,
@@ -285,8 +309,17 @@ impl EffectEngine {
         approval_request_id: &ApprovalRequestId,
         actor: &str,
         approved_args: Option<serde_json::Value>,
-    ) -> Result<(), UndoLogError> {
-        // Resolve the approval request with Approve action.
+    ) -> Result<ApprovalResult, UndoLogError> {
+        // Load the approval request to resolve args and get execution data.
+        let approval =
+            self.approval_store.get(org_id, approval_request_id).await?.ok_or_else(|| {
+                UndoLogError::ApprovalNotFound { approval_id: approval_request_id.to_string() }
+            })?;
+
+        // Resolve args: approved_args (from the approver) override proposed_args.
+        let resolved_args = approved_args.clone().unwrap_or(approval.proposed_args.clone());
+
+        // Resolve the approval request (idempotent: fails if already resolved).
         self.approval_store
             .resolve(
                 org_id,
@@ -298,12 +331,38 @@ impl EffectEngine {
             )
             .await?;
 
-        info!(approval_request_id = %approval_request_id, "Approval granted");
+        // Transition effect: pending -> approved.
+        self.effect_store.approve_effect(org_id, &approval.effect_id).await?;
 
-        Ok(())
+        // If the approver modified the args, update args_snapshot for audit.
+        if resolved_args != approval.proposed_args {
+            self.effect_store
+                .update_args_snapshot(org_id, &approval.effect_id, &resolved_args)
+                .await?;
+        }
+
+        // Resume the session: awaiting_approval -> active.
+        self.session_store.set_active(org_id, &approval.session_id).await?;
+
+        info!(
+            approval_request_id = %approval_request_id,
+            effect_id = %approval.effect_id,
+            "Approval granted; effect transitioning to approved"
+        );
+
+        Ok(ApprovalResult {
+            effect_id: approval.effect_id,
+            session_id: approval.session_id,
+            tool_name: approval.tool_name,
+            tool_version: String::new(),
+            args: resolved_args,
+        })
     }
 
     /// Reject an Irreversible action (human has denied permission).
+    ///
+    /// Transitions the effect from `pending` to `rejected` so the effect
+    /// log accurately reflects the outcome.
     #[instrument(skip(self), fields(org_id = %org_id, approval_request_id = %approval_request_id, actor = %actor))]
     pub async fn reject(
         &self,
@@ -311,10 +370,19 @@ impl EffectEngine {
         approval_request_id: &ApprovalRequestId,
         actor: &str,
     ) -> Result<(), UndoLogError> {
+        // Load approval first to get effect_id before mutating state.
+        let approval =
+            self.approval_store.get(org_id, approval_request_id).await?.ok_or_else(|| {
+                UndoLogError::ApprovalNotFound { approval_id: approval_request_id.to_string() }
+            })?;
+
         // Resolve the approval request with Reject action.
         self.approval_store
             .resolve(org_id, approval_request_id, &ApprovalAction::Reject, actor, None, None)
             .await?;
+
+        // Transition effect: pending -> rejected.
+        self.effect_store.reject_effect(org_id, &approval.effect_id).await?;
 
         info!(approval_request_id = %approval_request_id, "Approval rejected");
 

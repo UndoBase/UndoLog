@@ -87,10 +87,28 @@ curl -X POST "http://localhost:8080/approvals/a1b2c3d4e5f6.../reject" \
   -H "X-Org-Id: org-demo"
 ```
 
-A successful decision returns:
+On approve, the proxy executes the tool inline and commits the result. A successful decision returns:
 
 ```json
-{"status": "approved", "approval_id": "a1b2c3d4e5f6..."}
+{
+  "status": "approved",
+  "approval_id": "a1b2c3d4e5f6...",
+  "effect_id": "eff-001",
+  "execution": "committed",
+  "result": {"status": "deleted"}
+}
+```
+
+If the tool execution fails, the approval is still recorded (`status: "approved"`) but `execution` is `"failed"` with an error field:
+
+```json
+{
+  "status": "approved",
+  "approval_id": "a1b2c3d4e5f6...",
+  "effect_id": "eff-001",
+  "execution": "failed",
+  "error": "..."
+}
 ```
 
 If the approval is already resolved, you get HTTP 409:
@@ -160,11 +178,13 @@ APPROVAL_RESPONSE=$(curl -s -X POST http://localhost:8080/mcp/tool_call \
 APPROVAL_ID=$(echo "$APPROVAL_RESPONSE" | jq -r '.approval_id')
 echo "Approval ID: $APPROVAL_ID"
 
-# Approve it
+# Approve it (auto-executes the tool and commits the result)
 curl -s -X POST "http://localhost:8080/approvals/$APPROVAL_ID/approve" \
-  -H "X-Org-Id: org-demo" | jq .
+  -H "Content-Type: application/json" \
+  -H "X-Org-Id: org-demo" \
+  -d '{"actor": "admin@example.com"}' | jq .
 
-# Retry
+# Retry (tool was already committed during approval, returns cached result)
 curl -s -X POST http://localhost:8080/mcp/tool_call \
   -H "Content-Type: application/json" \
   -H "X-Api-Key: my-api-key" \

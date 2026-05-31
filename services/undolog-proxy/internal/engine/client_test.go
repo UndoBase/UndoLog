@@ -37,9 +37,9 @@ func (m *mockTransport) Commit(ctx context.Context, req protocol.CommitRequest) 
 // Fail returns the configured fake fail error.
 func (m *mockTransport) Fail(ctx context.Context, req protocol.FailRequest) error { return m.failErr }
 
-// Approve returns the configured fake approve error.
-func (m *mockTransport) Approve(ctx context.Context, req protocol.ApproveRequest) error {
-	return m.approveErr
+// Approve returns the configured fake approve response and error.
+func (m *mockTransport) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
+	return protocol.ApproveResponse{}, m.approveErr
 }
 
 // Reject returns the configured fake reject error.
@@ -76,7 +76,7 @@ func TestClientDelegatesToTransport(t *testing.T) {
 	if err := client.Fail(context.Background(), protocol.FailRequest{EffectID: "effect-1"}); err != nil {
 		t.Fatalf("fail returned error: %v", err)
 	}
-	if err := client.Approve(context.Background(), protocol.ApproveRequest{ApprovalID: "approval-1"}); err != nil {
+	if _, err := client.Approve(context.Background(), protocol.ApproveRequest{ApprovalID: "approval-1"}); err != nil {
 		t.Fatalf("approve returned error: %v", err)
 	}
 	if err := client.Reject(context.Background(), protocol.RejectRequest{ApprovalID: "approval-1"}); err != nil {
