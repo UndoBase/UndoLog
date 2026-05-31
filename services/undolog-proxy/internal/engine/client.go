@@ -115,7 +115,7 @@ func (c *Client) SetTransport(t Transport) {
 
 // Intercept asks the engine how the proxy should route one tool call.
 func (c *Client) Intercept(ctx context.Context, req protocol.InterceptRequest) (protocol.InterceptResponse, error) {
-	return c.call(func(t Transport) (protocol.InterceptResponse, error) {
+	return call(c, func(t Transport) (protocol.InterceptResponse, error) {
 		return t.Intercept(ctx, req)
 	})
 }
@@ -134,9 +134,9 @@ func (c *Client) Fail(ctx context.Context, req protocol.FailRequest) error {
 	})
 }
 
-// Approve resumes an approval request in the engine.
-func (c *Client) Approve(ctx context.Context, req protocol.ApproveRequest) error {
-	return c.callVoid(func(t Transport) error {
+// Approve resumes an approval request in the engine and returns execution data.
+func (c *Client) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
+	return call(c, func(t Transport) (protocol.ApproveResponse, error) {
 		return t.Approve(ctx, req)
 	})
 }
@@ -148,9 +148,12 @@ func (c *Client) Reject(ctx context.Context, req protocol.RejectRequest) error {
 	})
 }
 
-func (c *Client) call(fn func(Transport) (protocol.InterceptResponse, error)) (protocol.InterceptResponse, error) {
+// call checks transport configuration, then delegates to fn.
+// Generic over any return type T. Used by Intercept, Approve, and future RPCs.
+func call[T any](c *Client, fn func(Transport) (T, error)) (T, error) {
 	if c.transport == nil {
-		return protocol.InterceptResponse{}, protocol.ErrEngineTransportNotConfigured
+		var zero T
+		return zero, protocol.ErrEngineTransportNotConfigured
 	}
 	return fn(c.transport)
 }

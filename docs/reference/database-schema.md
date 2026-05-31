@@ -31,7 +31,7 @@ section: "reference"
 | `compensating` | Compensation is running (undo in progress). |
 | `compensated` | Compensation completed successfully. |
 | `compensation_failed` | Compensation itself failed; requires manual intervention. |
-| `approved` | Human approved an irreversible action (now executing). |
+| `approved` | Human approved an irreversible action; ready for proxy execution. |
 | `rejected` | Human rejected an irreversible action; session halted. |
 | `replayed` | Result was served from cache (exactly-once replay path). |
 

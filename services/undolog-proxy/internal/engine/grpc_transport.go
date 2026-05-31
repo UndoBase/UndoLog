@@ -61,11 +61,14 @@ func (t *GRPCTransport) Fail(ctx context.Context, req protocol.FailRequest) erro
 	return err
 }
 
-// Approve resumes a pending approval request.
-func (t *GRPCTransport) Approve(ctx context.Context, req protocol.ApproveRequest) error {
+// Approve resumes a pending approval request and returns execution data.
+func (t *GRPCTransport) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
 	pbReq := approveRequestToProto(req)
-	_, err := t.client.Approve(ctx, pbReq)
-	return err
+	pbResp, err := t.client.Approve(ctx, pbReq)
+	if err != nil {
+		return protocol.ApproveResponse{}, err
+	}
+	return approveResponseFromProto(pbResp), nil
 }
 
 // Reject rejects a pending approval request.
@@ -75,7 +78,7 @@ func (t *GRPCTransport) Reject(ctx context.Context, req protocol.RejectRequest) 
 	return err
 }
 
-// Close is a no-op — the caller owns the gRPC connection lifecycle.
+// Close is a no-op. The caller owns the gRPC connection lifecycle.
 func (t *GRPCTransport) Close() error { return nil }
 
 // ── Proto ↔ Protocol conversions ──────────────────────────────────────────
@@ -135,26 +138,44 @@ func interceptResponseFromProto(msg *pb.InterceptResponse) protocol.InterceptRes
 
 func commitRequestToProto(req protocol.CommitRequest) *pb.CommitRequest {
 	return &pb.CommitRequest{
-		EffectId: req.EffectID,
-		Result:   toolResultToProto(req.Result),
+		OrgId:     req.OrgID,
+		SessionId: req.SessionID,
+		EffectId:  req.EffectID,
+		Result:    toolResultToProto(req.Result),
 	}
 }
 
 func failRequestToProto(req protocol.FailRequest) *pb.FailRequest {
 	return &pb.FailRequest{
-		EffectId: req.EffectID,
-		Error:    req.Error,
+		OrgId:     req.OrgID,
+		SessionId: req.SessionID,
+		EffectId:  req.EffectID,
+		Error:     req.Error,
+	}
+}
+
+func approveResponseFromProto(msg *pb.ApproveResponse) protocol.ApproveResponse {
+	return protocol.ApproveResponse{
+		EffectID:    msg.EffectId,
+		SessionID:   msg.SessionId,
+		ToolName:    msg.ToolName,
+		ToolVersion: msg.ToolVersion,
+		Args:        msg.Args,
 	}
 }
 
 func approveRequestToProto(req protocol.ApproveRequest) *pb.ApproveRequest {
 	return &pb.ApproveRequest{
-		ApprovalId: req.ApprovalID,
+		OrgId:        req.OrgID,
+		ApprovalId:   req.ApprovalID,
+		Actor:        req.Actor,
+		ApprovedArgs: req.ApprovedArgs,
 	}
 }
 
 func rejectRequestToProto(req protocol.RejectRequest) *pb.RejectRequest {
 	return &pb.RejectRequest{
+		OrgId:      req.OrgID,
 		ApprovalId: req.ApprovalID,
 	}
 }

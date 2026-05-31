@@ -37,6 +37,9 @@ pub enum UndoLogError {
     #[error("Approval request '{approval_id}' timed out")]
     ApprovalTimedOut { approval_id: String },
 
+    #[error("Approval request '{approval_id}' not found")]
+    ApprovalNotFound { approval_id: String },
+
     // ── Advisory lock ─────────────────────────────────────────────────────
     #[error(
         "Could not acquire advisory lock for signature '{signature}' after {attempts} attempts"

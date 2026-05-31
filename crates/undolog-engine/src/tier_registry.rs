@@ -153,6 +153,8 @@ async fn refresh_all_orgs(registry: &TierRegistry, pool: &sqlx::PgPool) -> Resul
         SELECT
             tool_id, org_id, tool_name, tool_version,
             tier::text,
+            compensation_ref,
+            irreversibility_reason,
             risk_tags,
             estimated_impact
         FROM undolog_tool_registry
@@ -170,7 +172,11 @@ async fn refresh_all_orgs(registry: &TierRegistry, pool: &sqlx::PgPool) -> Resul
         let org_str = org_id_uuid.to_string();
 
         let tier_str: String = row.try_get("tier")?;
-        let tier = tier_from_str(&tier_str);
+        let compensation_ref: Option<String> =
+            row.try_get::<Option<String>, _>("compensation_ref")?;
+        let irreversibility_reason: Option<String> =
+            row.try_get::<Option<String>, _>("irreversibility_reason")?;
+        let tier = tier_from_str(&tier_str, compensation_ref, irreversibility_reason);
 
         let tool_id_uuid: uuid::Uuid = row.try_get("tool_id")?;
         let risk_tags: Vec<String> = row.try_get("risk_tags").unwrap_or_default();
@@ -199,16 +205,27 @@ async fn refresh_all_orgs(registry: &TierRegistry, pool: &sqlx::PgPool) -> Resul
 }
 
 /// Parse a tool tier string from the DB. Defaults to Safe for unknown values.
-fn tier_from_str(s: &str) -> ToolTier {
+fn tier_from_str(
+    s: &str,
+    compensation_ref: Option<String>,
+    irreversibility_reason: Option<String>,
+) -> ToolTier {
     match s {
         "compensable" => {
-            // Tier detail (compensation descriptor) must be enriched from the
-            // undolog_tool_registry.compensation_ref column in a real query.
-            // For the registry snapshot we store Safe as a placeholder;
-            // the full tier is always read from the ToolCall itself (set by the SDK).
-            ToolTier::Safe
+            let fn_name =
+                compensation_ref.unwrap_or_else(|| "__registry_compensable__".to_string());
+            ToolTier::Compensable {
+                compensation: undolog_types::CompensationDescriptor::new(
+                    fn_name,
+                    serde_json::Value::Null,
+                ),
+            }
         }
-        "irreversible" => ToolTier::Safe, // same - enriched at call time by SDK
+        "irreversible" => {
+            let reason =
+                irreversibility_reason.unwrap_or_else(|| "Registered as irreversible".to_string());
+            ToolTier::Irreversible { reason }
+        }
         _ => ToolTier::Safe,
     }
 }

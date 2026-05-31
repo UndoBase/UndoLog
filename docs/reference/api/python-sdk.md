@@ -55,7 +55,7 @@ async def intercept(
 | `httpx.HTTPStatusError` | Proxy-level HTTP errors (4xx/5xx). |
 | `httpx.RequestError` | Connection or timeout errors. |
 
-**HTTP:** `POST /api/v1/intercept` with headers `X-UndoLog-Org-Id`, `X-UndoLog-Session-Id`.
+**HTTP:** `POST /mcp/tool_call` with headers `X-UndoLog-Org-Id`, `X-UndoLog-Session-Id`, and `X-Api-Key`.
 
 ---
 
@@ -87,7 +87,7 @@ async def commit(
 | `httpx.HTTPStatusError` | Proxy-level HTTP errors. |
 | `httpx.RequestError` | Connection or timeout errors. |
 
-**HTTP:** `POST /api/v1/commit`
+No-op; commit is handled inline by the proxy during the tool call. Kept for API compatibility.
 
 ---
 
@@ -119,7 +119,7 @@ async def fail(
 | `httpx.HTTPStatusError` | Proxy-level HTTP errors. |
 | `httpx.RequestError` | Connection or timeout errors. |
 
-**HTTP:** `POST /api/v1/fail`
+No-op; fail is handled inline by the proxy during the tool call. Kept for API compatibility.
 
 ---
 

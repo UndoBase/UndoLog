@@ -1,8 +1,9 @@
 //! EffectStore - repository for `undolog_effect_log` and `undolog_undo_stack`.
 //!
-//! # Exactly-once guarantee (two-layer defence)
-//! 1. `pg_try_advisory_xact_lock(key)` - prevents concurrent racing writers.
-//! 2. `INSERT … ON CONFLICT (call_signature) DO NOTHING` - last-resort net.
+//! # Exactly-once guarantee
+//! `pg_try_advisory_xact_lock(key)` prevents concurrent racing writers.
+//! `find_by_signature` before insert catches in-flight duplicates.
+//! Partition-level unique indexes handle edge-case violations.
 //!
 //! # Advisory lock key
 //! Derived via FNV-1a 64-bit hash of the call_signature string.
@@ -84,8 +85,8 @@ impl EffectStore {
 
     /// Insert a Compensable tool call into the effect log.
     ///
-    /// Returns `true` if inserted (new call), `false` if `ON CONFLICT` fired
-    /// (duplicate signature → caller uses the replay path).
+    /// Returns `true` if inserted. Duplicate prevention is handled by the
+    /// advisory lock and `find_by_signature` check in the caller.
     ///
     /// Compensation args are captured **before** execution so a crash between
     /// insert and execution still leaves the undo information persisted.
@@ -104,7 +105,7 @@ impl EffectStore {
         let compensation_args = serde_json::to_value(&compensation.args)?;
         let args_snapshot = serde_json::to_value(&call.args)?;
 
-        let rows = sqlx::query(
+        sqlx::query(
             r#"
             INSERT INTO undolog_effect_log (
                 effect_id, org_id, session_id, tool_id,
@@ -118,7 +119,6 @@ impl EffectStore {
                 $8, $9, $10,
                 'pending'::undolog_effect_state, now()
             )
-            ON CONFLICT (call_signature) DO NOTHING
             "#,
         )
         .bind(*effect_id.as_uuid())
@@ -132,10 +132,11 @@ impl EffectStore {
         .bind(&args_snapshot)
         .bind(&compensation_args)
         .execute(&self.pool)
-        .await?
-        .rows_affected();
+        .await?;
 
-        Ok(rows > 0)
+        // Lock + find_by_signature above already prevent duplicates.
+        // Partition-level unique indexes handle any edge case.
+        Ok(true)
     }
 
     // ── Insert (Irreversible) ─────────────────────────────────────────────
@@ -154,7 +155,7 @@ impl EffectStore {
     ) -> UndoLogResult<bool> {
         let args_snapshot = serde_json::to_value(&call.args)?;
 
-        let rows = sqlx::query(
+        sqlx::query(
             r#"
             INSERT INTO undolog_effect_log (
                 effect_id, org_id, session_id, tool_id,
@@ -168,7 +169,6 @@ impl EffectStore {
                 $8, $9,
                 'pending'::undolog_effect_state, now()
             )
-            ON CONFLICT (call_signature) DO NOTHING
             "#,
         )
         .bind(*effect_id.as_uuid())
@@ -181,10 +181,9 @@ impl EffectStore {
         .bind(call.step_index as i32)
         .bind(&args_snapshot)
         .execute(&self.pool)
-        .await?
-        .rows_affected();
+        .await?;
 
-        Ok(rows > 0)
+        Ok(true)
     }
 
     // ── Push undo stack entry ─────────────────────────────────────────────
@@ -421,7 +420,7 @@ impl EffectStore {
     /// Transition an Irreversible effect from pending to approved.
     /// Called when a human approves in the dashboard.
     pub async fn approve_effect(&self, org_id: &OrgId, effect_id: &EffectId) -> UndoLogResult<()> {
-        sqlx::query(
+        let rows = sqlx::query(
             r#"
             UPDATE undolog_effect_log
             SET state = 'approved'::undolog_effect_state
@@ -433,13 +432,22 @@ impl EffectStore {
         .bind(*effect_id.as_uuid())
         .bind(*org_id.as_uuid())
         .execute(&self.pool)
-        .await?;
+        .await?
+        .rows_affected();
+
+        if rows == 0 {
+            return Err(UndoLogError::InvalidStateTransition {
+                effect_id: effect_id.to_string(),
+                current_state: "not pending".to_string(),
+                target_state: "approved".to_string(),
+            });
+        }
         Ok(())
     }
 
     /// Transition an Irreversible effect to rejected.
     pub async fn reject_effect(&self, org_id: &OrgId, effect_id: &EffectId) -> UndoLogResult<()> {
-        sqlx::query(
+        let rows = sqlx::query(
             r#"
             UPDATE undolog_effect_log
             SET state = 'rejected'::undolog_effect_state
@@ -451,7 +459,53 @@ impl EffectStore {
         .bind(*effect_id.as_uuid())
         .bind(*org_id.as_uuid())
         .execute(&self.pool)
-        .await?;
+        .await?
+        .rows_affected();
+
+        if rows == 0 {
+            return Err(UndoLogError::InvalidStateTransition {
+                effect_id: effect_id.to_string(),
+                current_state: "not pending".to_string(),
+                target_state: "rejected".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Update args_snapshot for an approved effect when the approver
+    /// modifies the original proposed args. Keeps the audit trail accurate.
+    ///
+    /// Only allowed when the effect is in 'approved' state.
+    pub async fn update_args_snapshot(
+        &self,
+        org_id: &OrgId,
+        effect_id: &EffectId,
+        args: &serde_json::Value,
+    ) -> UndoLogResult<()> {
+        let args_json = serde_json::to_value(args)?;
+        let rows = sqlx::query(
+            r#"
+            UPDATE undolog_effect_log
+            SET args_snapshot = $1
+            WHERE effect_id = $2
+              AND org_id    = $3
+              AND state     = 'approved'::undolog_effect_state
+            "#,
+        )
+        .bind(&args_json)
+        .bind(*effect_id.as_uuid())
+        .bind(*org_id.as_uuid())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        if rows == 0 {
+            return Err(UndoLogError::InvalidStateTransition {
+                effect_id: effect_id.to_string(),
+                current_state: "not approved".to_string(),
+                target_state: "approved".to_string(),
+            });
+        }
         Ok(())
     }
 

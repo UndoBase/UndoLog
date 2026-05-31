@@ -150,12 +150,19 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
         };
 
         let engine = self.engine.read().await;
-        engine
+        let result = engine
             .approve(&org_id, &approval_id, &req.actor, approved_args)
             .await
             .map_err(|e| Status::internal(format!("approve failed: {e}")))?;
 
-        Ok(Response::new(pb::ApproveResponse {}))
+        Ok(Response::new(pb::ApproveResponse {
+            effect_id: result.effect_id.to_string(),
+            session_id: result.session_id.to_string(),
+            tool_name: result.tool_name,
+            tool_version: result.tool_version,
+            args: serde_json::to_vec(&result.args)
+                .map_err(|e| Status::internal(format!("serialize args failed: {e}")))?,
+        }))
     }
 
     #[instrument(skip(self, request), fields(rpc = "Reject"))]

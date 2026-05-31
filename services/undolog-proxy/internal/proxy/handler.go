@@ -199,8 +199,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result, execErr := h.executor.Execute(ctx, call)
 		if execErr != nil {
 			if failErr := h.engineClient.Fail(ctx, protocol.FailRequest{
-				EffectID: outcome.EffectID,
-				Error:    execErr.Error(),
+				OrgID:     orgID,
+				SessionID: req.SessionID,
+				EffectID:  outcome.EffectID,
+				Error:     execErr.Error(),
 			}); failErr != nil {
 				h.logger.Error("commit failed after execution failure", "effect_id", outcome.EffectID, "exec_error", execErr, "fail_error", failErr)
 			}
@@ -215,8 +217,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.engineClient.Commit(ctx, protocol.CommitRequest{
-			EffectID: outcome.EffectID,
-			Result:   result,
+			OrgID:     orgID,
+			SessionID: req.SessionID,
+			EffectID:  outcome.EffectID,
+			Result:    result,
 		}); err != nil {
 			h.emit(sse.Event{
 				Type:      sse.EventEffectFailed,

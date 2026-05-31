@@ -114,11 +114,14 @@ The pending approval appears at `GET /approvals?state=pending`. Resolve it with:
 
 ```bash
 curl -X POST "http://localhost:8080/approvals/${APPROVAL_ID}/approve" \
-  -H "X-Org-Id: org-demo"
+  -H "Content-Type: application/json" \
+  -H "X-Org-Id: org-demo" \
+  -d '{"actor": "admin@example.com"}'
 ```
 
-After approval, retry the same step. The engine replays the cached result
-instead of executing the function again.
+Approval triggers auto-execution: the proxy runs the tool and commits the
+result inline. The agent then retries the same step and receives the cached
+result instead of executing the function again.
 
 ## Verify it works
 

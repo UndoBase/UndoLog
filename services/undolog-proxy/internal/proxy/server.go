@@ -42,7 +42,10 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, logg
 
 	broadcaster := sse.NewBroadcaster(cfg.DashboardEventBufSize)
 	approvalStore := approval.NewStore()
-	approvalHandler := approval.NewHandler(approvalStore, engine, broadcaster, logger)
+	executeApproved := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return tool.Execute(ctx, call)
+	}
+	approvalHandler := approval.NewHandler(approvalStore, engine, executeApproved, broadcaster, logger)
 	mw := NewMiddlewareStack(logger, cfg.TrustedAPIKeys)
 	handler := NewHandler(engine, tool, approvalStore, broadcaster, cfg.RequestTimeout, logger)
 

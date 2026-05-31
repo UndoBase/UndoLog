@@ -75,23 +75,40 @@ type InterceptResponse struct {
 
 // CommitRequest reports a successful execution back to the engine.
 type CommitRequest struct {
-	EffectID string     `json:"effect_id"`
-	Result   ToolResult `json:"result"`
+	OrgID     string     `json:"org_id"`
+	SessionID string     `json:"session_id"`
+	EffectID  string     `json:"effect_id"`
+	Result    ToolResult `json:"result"`
 }
 
 // FailRequest reports a failed execution back to the engine.
 type FailRequest struct {
-	EffectID string `json:"effect_id"`
-	Error    string `json:"error"`
+	OrgID     string `json:"org_id"`
+	SessionID string `json:"session_id"`
+	EffectID  string `json:"effect_id"`
+	Error     string `json:"error"`
+}
+
+// ApproveResponse carries execution data returned by the engine after approval.
+type ApproveResponse struct {
+	EffectID    string          `json:"effect_id"`
+	SessionID   string          `json:"session_id"`
+	ToolName    string          `json:"tool_name"`
+	ToolVersion string          `json:"tool_version,omitempty"`
+	Args        json.RawMessage `json:"args"`
 }
 
 // ApproveRequest resumes a pending approval request.
 type ApproveRequest struct {
-	ApprovalID string `json:"approval_id"`
+	OrgID        string          `json:"org_id"`
+	ApprovalID   string          `json:"approval_id"`
+	Actor        string          `json:"actor"`
+	ApprovedArgs json.RawMessage `json:"approved_args,omitempty"`
 }
 
 // RejectRequest rejects a pending approval request.
 type RejectRequest struct {
+	OrgID      string `json:"org_id"`
 	ApprovalID string `json:"approval_id"`
 }
 
@@ -100,7 +117,7 @@ type EngineClient interface {
 	Intercept(ctx context.Context, req InterceptRequest) (InterceptResponse, error)
 	Commit(ctx context.Context, req CommitRequest) error
 	Fail(ctx context.Context, req FailRequest) error
-	Approve(ctx context.Context, req ApproveRequest) error
+	Approve(ctx context.Context, req ApproveRequest) (ApproveResponse, error)
 	Reject(ctx context.Context, req RejectRequest) error
 	Close() error
 }

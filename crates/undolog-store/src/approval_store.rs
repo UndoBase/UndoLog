@@ -1,10 +1,10 @@
 //! ApprovalStore - repository for `undolog_approval_requests` and `undolog_approval_events`.
 
-use sqlx::PgPool;
+use sqlx::{postgres::PgRow, PgPool, Row};
 use undolog_types::{
-    approval::{ApprovalAction, ApprovalRequest},
+    approval::{ApprovalAction, ApprovalRequest, ApprovalState},
     errors::{UndoLogError, UndoLogResult},
-    ids::{ApprovalRequestId, OrgId},
+    ids::{ApprovalRequestId, EffectId, OrgId, SessionId},
 };
 
 /// Repository for `undolog_approval_requests` and `undolog_approval_events`.
@@ -70,7 +70,7 @@ impl ApprovalStore {
         approved_args: Option<serde_json::Value>,
         note: Option<&str>,
     ) -> UndoLogResult<()> {
-        let new_state = Self::approval_action_to_string(action);
+        let new_state = Self::approval_action_to_state(action);
 
         let rows = sqlx::query(
             r#"
@@ -133,6 +133,15 @@ impl ApprovalStore {
 
     fn approval_action_to_string(action: &ApprovalAction) -> &'static str {
         match action {
+            ApprovalAction::Approve => "approve",
+            ApprovalAction::Modify => "modify",
+            ApprovalAction::Reject => "reject",
+            ApprovalAction::Timeout => "timeout",
+        }
+    }
+
+    fn approval_action_to_state(action: &ApprovalAction) -> &'static str {
+        match action {
             ApprovalAction::Approve | ApprovalAction::Modify => "approved",
             ApprovalAction::Reject => "rejected",
             ApprovalAction::Timeout => "timed_out",
@@ -165,4 +174,72 @@ impl ApprovalStore {
 
         Ok(rows)
     }
+
+    /// Load a single approval request by ID.
+    ///
+    /// Returns `Ok(None)` when the approval request does not exist.
+    pub async fn get(
+        &self,
+        org_id: &OrgId,
+        req_id: &ApprovalRequestId,
+    ) -> UndoLogResult<Option<ApprovalRequest>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                approval_request_id, org_id, session_id, effect_id,
+                tool_name, irreversibility_reason, risk_tags,
+                estimated_impact, proposed_args, agent_context,
+                state::text, timeout_at, auto_approve_on_timeout,
+                resolved_at, resolved_by, approved_args, created_at
+            FROM undolog_approval_requests
+            WHERE approval_request_id = $1
+              AND org_id              = $2
+            "#,
+        )
+        .bind(*req_id.as_uuid())
+        .bind(*org_id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(map_approval_row).transpose()
+    }
+}
+
+fn map_approval_row(row: PgRow) -> UndoLogResult<ApprovalRequest> {
+    use uuid::Uuid;
+
+    let approval_id_uuid: Uuid = row.try_get("approval_request_id")?;
+    let org_id_uuid: Uuid = row.try_get("org_id")?;
+    let session_id_uuid: Uuid = row.try_get("session_id")?;
+    let effect_id_uuid: Uuid = row.try_get("effect_id")?;
+    let state_str: String = row.try_get("state")?;
+
+    let state = match state_str.as_str() {
+        "pending" => ApprovalState::Pending,
+        "approved" => ApprovalState::Approved,
+        "rejected" => ApprovalState::Rejected,
+        "timed_out" => ApprovalState::TimedOut,
+        "auto_approved" => ApprovalState::AutoApproved,
+        other => return Err(UndoLogError::Internal(format!("unknown approval state: {other}"))),
+    };
+
+    Ok(ApprovalRequest {
+        approval_request_id: ApprovalRequestId::from(approval_id_uuid),
+        org_id: OrgId::from(org_id_uuid),
+        session_id: SessionId::from(session_id_uuid),
+        effect_id: EffectId::from(effect_id_uuid),
+        tool_name: row.try_get("tool_name")?,
+        irreversibility_reason: row.try_get("irreversibility_reason")?,
+        risk_tags: row.try_get("risk_tags")?,
+        estimated_impact: row.try_get("estimated_impact")?,
+        proposed_args: row.try_get("proposed_args")?,
+        agent_context: row.try_get("agent_context")?,
+        state,
+        timeout_at: row.try_get("timeout_at")?,
+        auto_approve_on_timeout: row.try_get("auto_approve_on_timeout")?,
+        resolved_at: row.try_get("resolved_at")?,
+        resolved_by: row.try_get("resolved_by")?,
+        approved_args: row.try_get("approved_args")?,
+        created_at: row.try_get("created_at")?,
+    })
 }

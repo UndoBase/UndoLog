@@ -113,12 +113,12 @@ async def send_email(to: str, subject: str) -> dict:
 
 | Aspect | Behaviour |
 |--------|-----------|
-| Effect log | Entry created in `undolog_effect_log` with state `Pending → Approved → Executing → Committed` on success. |
+| Effect log | Entry created in `undolog_effect_log` with state `Pending → Approved → Committed` on success. |
 | Interception | Call sent to proxy via `UndoLogClient.intercept()`. |
 | Compensation | Not supported. The operation is irreversible. |
 | Approval | Required. Execution is suspended until a human approves or rejects via the dashboard API. |
 | Session state | Session transitions to `AwaitingApproval` while pending. |
-| On approval | Session resumes, effect transitions to `Executing`, tool runs. |
+| On approval | Effect transitions to `approved`. The proxy executes the tool separately and commits the result. No engine-level `executing` state. |
 | On rejection | Session transitions to `Halted`, effect transitions to `Rejected`. |
 | Retry | No automatic retry. The caller must resubmit after approval resolution. |
 | Replay | Not applicable for pending/approved effects. Possible if already committed. |
