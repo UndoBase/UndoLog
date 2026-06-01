@@ -18,6 +18,8 @@ jobs:
   rust:
     name: Rust - check, lint, test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16-alpine
@@ -67,6 +69,8 @@ jobs:
   go:
     name: Go - format, lint, vet, test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: services/undolog-proxy
@@ -103,6 +107,8 @@ jobs:
   python:
     name: Python - format, lint, test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: sdks/undolog-py
@@ -132,6 +138,8 @@ jobs:
   commitlint:
     name: Commit message format
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +165,8 @@ jobs:
   markdown-links:
     name: Docs - broken link check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -174,6 +184,8 @@ jobs:
   changelog:
     name: CHANGELOG validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
@@ -205,6 +217,8 @@ jobs:
   docs:
     name: Docs - rustdoc completeness
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -221,6 +235,8 @@ jobs:
   www:
     name: Website - build check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: apps/www

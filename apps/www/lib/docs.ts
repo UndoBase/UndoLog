@@ -6,6 +6,7 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import rehypePrettyCode, { type Options } from "rehype-pretty-code";
@@ -160,6 +161,7 @@ export async function getDocPage(slug: string): Promise<DocPage | null> {
     .use(rehypeSlug)
     .use(rehypeAutolinkHeadings, { behavior: "wrap" })
     .use(rehypePrettyCode, prettyCodeOptions)
+    .use(rehypeSanitize, defaultSchema)
     .use(rehypeStringify);
 
   const file = await processor.process(parsed.content);
@@ -179,10 +181,12 @@ export async function getDocPage(slug: string): Promise<DocPage | null> {
   const headings: DocHeading[] = [];
   let match;
   while ((match = headingRegex.exec(contentHtml)) !== null) {
+    let headingText = match[3];
+    while (headingText !== (headingText = headingText.replace(/<[^>]*>/g, "")));
     headings.push({
       level: parseInt(match[1]),
       id: match[2],
-      text: match[3].replace(/<[^>]+>/g, ""),
+      text: headingText,
     });
   }
 
