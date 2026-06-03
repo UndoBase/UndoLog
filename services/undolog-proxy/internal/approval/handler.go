@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
@@ -25,15 +26,16 @@ type ExecuteApprovedFn func(ctx context.Context, call protocol.ToolCall) (protoc
 
 // Handler exposes approval listing and decision endpoints.
 type Handler struct {
-	store       *Store
-	engine      protocol.EngineClient
-	executeFn   ExecuteApprovedFn
-	broadcaster eventBroadcaster
-	logger      *slog.Logger
+	store          *Store
+	engine         protocol.EngineClient
+	executeFn      ExecuteApprovedFn
+	broadcaster    eventBroadcaster
+	logger         *slog.Logger
+	requestTimeout time.Duration
 }
 
 // NewHandler wires the approval store, engine client, executor callback, and broadcaster together.
-func NewHandler(store *Store, engine protocol.EngineClient, executeFn ExecuteApprovedFn, broadcaster eventBroadcaster, logger *slog.Logger) *Handler {
+func NewHandler(store *Store, engine protocol.EngineClient, executeFn ExecuteApprovedFn, broadcaster eventBroadcaster, requestTimeout time.Duration, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -41,11 +43,12 @@ func NewHandler(store *Store, engine protocol.EngineClient, executeFn ExecuteApp
 		store = NewStore()
 	}
 	return &Handler{
-		store:       store,
-		engine:      engine,
-		executeFn:   executeFn,
-		broadcaster: broadcaster,
-		logger:      logger,
+		store:          store,
+		engine:         engine,
+		executeFn:      executeFn,
+		broadcaster:    broadcaster,
+		requestTimeout: requestTimeout,
+		logger:         logger,
 	}
 }
 
@@ -125,6 +128,11 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 	}
 
 	ctx := r.Context()
+	if h.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.requestTimeout)
+		defer cancel()
+	}
 	switch target {
 	case StatusApproved:
 		// Parse optional actor and approved_args from the request body.
@@ -133,7 +141,9 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 			ApprovedArgs json.RawMessage `json:"approved_args"`
 		}
 		if r.Body != nil {
-			_ = json.NewDecoder(r.Body).Decode(&body)
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				h.logger.Warn("malformed approve request body", "error", err)
+			}
 		}
 		if body.Actor == "" {
 			body.Actor = "unknown"
@@ -179,17 +189,23 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 			h.logger.Error("commit failed after approved execution", "effect_id", approveResp.EffectID, "commit_error", commitErr)
 		}
 
-		rec, _ = h.store.UpdateStatus(id, target)
-		if h.broadcaster != nil {
-			payload, _ := json.Marshal(rec)
-			h.broadcaster.Emit(sse.Event{
-				Type:       sse.EventApprovalApproved,
-				OrgID:      rec.OrgID,
-				SessionID:  rec.SessionID,
-				EffectID:   approveResp.EffectID,
-				ApprovalID: rec.ID,
-				Payload:    payload,
-			})
+		rec, ok = h.store.UpdateStatus(id, target)
+		if !ok {
+			h.logger.Error("status update failed after approve", "approval_id", id)
+		} else if h.broadcaster != nil {
+			payload, mErr := json.Marshal(rec)
+			if mErr != nil {
+				h.logger.Error("marshal approved record for SSE", "approval_id", id, "error", mErr)
+			} else {
+				h.broadcaster.Emit(sse.Event{
+					Type:       sse.EventApprovalApproved,
+					OrgID:      rec.OrgID,
+					SessionID:  rec.SessionID,
+					EffectID:   approveResp.EffectID,
+					ApprovalID: rec.ID,
+					Payload:    payload,
+				})
+			}
 		}
 
 		resp := map[string]any{
@@ -207,22 +223,28 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 		writeJSON(w, resp)
 
 	case StatusRejected:
-		if err := h.engine.Reject(ctx, protocol.RejectRequest{OrgID: orgID, ApprovalID: id}); err != nil {
-			h.failDecision(w, id, err)
+		if rejErr := h.engine.Reject(ctx, protocol.RejectRequest{OrgID: orgID, ApprovalID: id}); rejErr != nil {
+			h.failDecision(w, id, rejErr)
 			return
 		}
 
-		rec, _ = h.store.UpdateStatus(id, target)
-		if h.broadcaster != nil {
-			payload, _ := json.Marshal(rec)
-			h.broadcaster.Emit(sse.Event{
-				Type:       sse.EventApprovalRejected,
-				OrgID:      rec.OrgID,
-				SessionID:  rec.SessionID,
-				EffectID:   rec.EffectID,
-				ApprovalID: rec.ID,
-				Payload:    payload,
-			})
+		rec, ok = h.store.UpdateStatus(id, target)
+		if !ok {
+			h.logger.Error("status update failed after reject", "approval_id", id)
+		} else if h.broadcaster != nil {
+			payload, mErr := json.Marshal(rec)
+			if mErr != nil {
+				h.logger.Error("marshal rejected record for SSE", "approval_id", id, "error", mErr)
+			} else {
+				h.broadcaster.Emit(sse.Event{
+					Type:       sse.EventApprovalRejected,
+					OrgID:      rec.OrgID,
+					SessionID:  rec.SessionID,
+					EffectID:   rec.EffectID,
+					ApprovalID: rec.ID,
+					Payload:    payload,
+				})
+			}
 		}
 
 		writeJSON(w, map[string]any{

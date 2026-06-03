@@ -1,6 +1,6 @@
 //! SessionStore - repository for `undolog_sessions`.
 
-use sqlx::PgPool;
+use sqlx::{postgres::PgConnection, PgPool};
 use undolog_types::{
     errors::{UndoLogError, UndoLogResult},
     ids::{OrgId, SessionId},
@@ -90,8 +90,13 @@ impl SessionStore {
     }
 
     /// Transition a session back to `active` after an approval resumes it.
-    pub async fn set_active(&self, org_id: &OrgId, session_id: &SessionId) -> UndoLogResult<()> {
-        sqlx::query(
+    pub async fn set_active(
+        &self,
+        conn: &mut PgConnection,
+        org_id: &OrgId,
+        session_id: &SessionId,
+    ) -> UndoLogResult<()> {
+        let rows = sqlx::query(
             r#"
             UPDATE undolog_sessions
             SET state = 'active'::undolog_session_state
@@ -102,8 +107,16 @@ impl SessionStore {
         )
         .bind(*session_id.as_uuid())
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
+
+        if rows.rows_affected() == 0 {
+            return Err(UndoLogError::InvalidStateTransition {
+                effect_id: session_id.to_string(),
+                current_state: "not awaiting_approval".to_string(),
+                target_state: "active".to_string(),
+            });
+        }
         Ok(())
     }
 
@@ -166,6 +179,18 @@ impl SessionStore {
         session_id: &SessionId,
         reason: &str,
     ) -> UndoLogResult<()> {
+        let mut conn = self.pool.acquire().await?;
+        self.set_halted_with_conn(&mut conn, org_id, session_id, reason).await
+    }
+
+    /// Transition to `halted` using a provided DB connection (for transactional use).
+    pub async fn set_halted_with_conn(
+        &self,
+        conn: &mut PgConnection,
+        org_id: &OrgId,
+        session_id: &SessionId,
+        reason: &str,
+    ) -> UndoLogResult<()> {
         sqlx::query(
             r#"
             UPDATE undolog_sessions
@@ -178,7 +203,7 @@ impl SessionStore {
         .bind(reason)
         .bind(*session_id.as_uuid())
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
         Ok(())
     }

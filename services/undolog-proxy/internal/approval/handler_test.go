@@ -59,7 +59,7 @@ func TestApprovalLifecycle(t *testing.T) {
 	mockExec := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return protocol.ToolResult{Success: true, Output: []byte(`{"deleted":true}`)}, nil
 	}
-	handler := NewHandler(store, engine, mockExec, broadcaster, nil)
+	handler := NewHandler(store, engine, mockExec, broadcaster, 0, nil)
 
 	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
