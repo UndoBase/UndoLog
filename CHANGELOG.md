@@ -25,13 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   from DB to construct proper `Compensable`/`Irreversible` tiers
 - Removed `ON CONFLICT DO NOTHING` from effect inserts (advisory lock +
   `find_by_signature` provide sufficient deduplication)
+- Approve and reject flows wrap all DB writes in a single PG transaction
+  for cross-store atomicity (no partial state on failure)
+- Approval handler applies `requestTimeout` context to prevent hanging HTTP
+  connections during post-approval tool execution
 
 ### Fixed
 
 - `approve_effect()`, `reject_effect()`, `update_args_snapshot()` now return
   `InvalidStateTransition` on zero rows affected
+- `set_active()` now returns `InvalidStateTransition` when session is not in
+  `awaiting_approval` state
 - `reject()` reordered to load approval before resolving (prevents
   `ApprovalNotFound` on the callback)
+- `reject()` now transitions session to `halted` state instead of leaving it
+  stuck in `awaiting_approval`
+- `approve()` now returns the correct `tool_version` from the effect record
+  instead of an empty string
 
 ### Security
 

@@ -1,6 +1,9 @@
 //! ApprovalStore - repository for `undolog_approval_requests` and `undolog_approval_events`.
 
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::{
+    postgres::{PgConnection, PgRow},
+    PgPool, Row, Transaction,
+};
 use undolog_types::{
     approval::{ApprovalAction, ApprovalRequest, ApprovalState},
     errors::{UndoLogError, UndoLogResult},
@@ -17,6 +20,11 @@ impl ApprovalStore {
     /// Create a new approval repository over the given PostgreSQL pool.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Begin a new database transaction on the shared pool.
+    pub async fn begin(&self) -> UndoLogResult<Transaction<'static, sqlx::Postgres>> {
+        Ok(self.pool.begin().await?)
     }
 
     /// Persist a new approval request (state = `pending`).
@@ -61,8 +69,10 @@ impl ApprovalStore {
     /// Resolve a pending approval request (approve, reject, modify, or timeout).
     ///
     /// Returns `Err(ApprovalAlreadyResolved)` if the request is not in `pending` state.
+    #[allow(clippy::too_many_arguments)]
     pub async fn resolve(
         &self,
+        conn: &mut PgConnection,
         org_id: &OrgId,
         req_id: &ApprovalRequestId,
         action: &ApprovalAction,
@@ -89,7 +99,7 @@ impl ApprovalStore {
         .bind(&approved_args)
         .bind(*req_id.as_uuid())
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?
         .rows_affected();
 
@@ -97,12 +107,13 @@ impl ApprovalStore {
             return Err(UndoLogError::ApprovalAlreadyResolved { approval_id: req_id.to_string() });
         }
 
-        self.append_audit_event(org_id, req_id, action, actor, note).await
+        self.append_audit_event(conn, org_id, req_id, action, actor, note).await
     }
 
     /// Append an immutable audit event for every action taken on an approval.
     pub async fn append_audit_event(
         &self,
+        conn: &mut PgConnection,
         org_id: &OrgId,
         req_id: &ApprovalRequestId,
         action: &ApprovalAction,
@@ -125,7 +136,7 @@ impl ApprovalStore {
         .bind(action_str)
         .bind(actor)
         .bind(note)
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
 
         Ok(())

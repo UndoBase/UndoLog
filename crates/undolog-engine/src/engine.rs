@@ -58,9 +58,13 @@ pub enum InterceptOutcome {
 /// Data returned by approve() for the proxy to execute the tool.
 #[derive(Debug, Clone)]
 pub struct ApprovalResult {
+    /// The approved effect to execute.
     pub effect_id: EffectId,
+    /// The session the effect belongs to.
     pub session_id: SessionId,
+    /// Name of the tool to execute.
     pub tool_name: String,
+    /// Version of the tool from the effect record.
     pub tool_version: String,
     /// Resolved args (approved_args if provided, otherwise proposed_args).
     pub args: serde_json::Value,
@@ -221,6 +225,7 @@ impl EffectEngine {
 
                 // Create approval request with context.
                 let approval_request_id = ApprovalRequestId::new();
+                let now = chrono::Utc::now();
                 let approval_req = ApprovalRequest {
                     approval_request_id,
                     org_id: call.org_id,
@@ -233,12 +238,12 @@ impl EffectEngine {
                     proposed_args: call.args.clone(),
                     agent_context: serde_json::json!({}),
                     state: ApprovalState::Pending,
-                    timeout_at: chrono::Utc::now() + chrono::Duration::hours(24),
+                    created_at: now,
+                    timeout_at: now + chrono::Duration::hours(24),
                     auto_approve_on_timeout: false,
                     resolved_at: None,
                     resolved_by: None,
                     approved_args: None,
-                    created_at: chrono::Utc::now(),
                 };
 
                 // Persist approval request.
@@ -319,9 +324,13 @@ impl EffectEngine {
         // Resolve args: approved_args (from the approver) override proposed_args.
         let resolved_args = approved_args.clone().unwrap_or(approval.proposed_args.clone());
 
-        // Resolve the approval request (idempotent: fails if already resolved).
+        // All state mutations run in a single DB transaction for atomicity.
+        let mut tx = self.approval_store.begin().await?;
+
+        // Resolve the approval request.
         self.approval_store
             .resolve(
+                &mut tx,
                 org_id,
                 approval_request_id,
                 &ApprovalAction::Approve,
@@ -332,17 +341,27 @@ impl EffectEngine {
             .await?;
 
         // Transition effect: pending -> approved.
-        self.effect_store.approve_effect(org_id, &approval.effect_id).await?;
+        self.effect_store.approve_effect(&mut tx, org_id, &approval.effect_id).await?;
+
+        // Load effect record to get tool_version for the response.
+        let tool_version = self
+            .effect_store
+            .find_by_effect_id(&mut tx, org_id, &approval.effect_id)
+            .await?
+            .map(|e| e.tool_version)
+            .unwrap_or_default();
 
         // If the approver modified the args, update args_snapshot for audit.
         if resolved_args != approval.proposed_args {
             self.effect_store
-                .update_args_snapshot(org_id, &approval.effect_id, &resolved_args)
+                .update_args_snapshot(&mut tx, org_id, &approval.effect_id, &resolved_args)
                 .await?;
         }
 
         // Resume the session: awaiting_approval -> active.
-        self.session_store.set_active(org_id, &approval.session_id).await?;
+        self.session_store.set_active(&mut tx, org_id, &approval.session_id).await?;
+
+        tx.commit().await?;
 
         info!(
             approval_request_id = %approval_request_id,
@@ -354,7 +373,7 @@ impl EffectEngine {
             effect_id: approval.effect_id,
             session_id: approval.session_id,
             tool_name: approval.tool_name,
-            tool_version: String::new(),
+            tool_version,
             args: resolved_args,
         })
     }
@@ -370,19 +389,37 @@ impl EffectEngine {
         approval_request_id: &ApprovalRequestId,
         actor: &str,
     ) -> Result<(), UndoLogError> {
-        // Load approval first to get effect_id before mutating state.
+        // Load approval first to get effect_id and session_id before mutating state.
         let approval =
             self.approval_store.get(org_id, approval_request_id).await?.ok_or_else(|| {
                 UndoLogError::ApprovalNotFound { approval_id: approval_request_id.to_string() }
             })?;
 
+        // All state mutations run in a single DB transaction for atomicity.
+        let mut tx = self.approval_store.begin().await?;
+
         // Resolve the approval request with Reject action.
         self.approval_store
-            .resolve(org_id, approval_request_id, &ApprovalAction::Reject, actor, None, None)
+            .resolve(
+                &mut tx,
+                org_id,
+                approval_request_id,
+                &ApprovalAction::Reject,
+                actor,
+                None,
+                None,
+            )
             .await?;
 
         // Transition effect: pending -> rejected.
-        self.effect_store.reject_effect(org_id, &approval.effect_id).await?;
+        self.effect_store.reject_effect(&mut tx, org_id, &approval.effect_id).await?;
+
+        // Halt the session: a rejected action makes the trajectory untrustworthy.
+        self.session_store
+            .set_halted_with_conn(&mut tx, org_id, &approval.session_id, "approval rejected")
+            .await?;
+
+        tx.commit().await?;
 
         info!(approval_request_id = %approval_request_id, "Approval rejected");
 

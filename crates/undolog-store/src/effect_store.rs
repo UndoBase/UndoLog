@@ -9,7 +9,10 @@
 //! Derived via FNV-1a 64-bit hash of the call_signature string.
 //! The Go MCP Interceptor uses the identical algorithm (see advisory_lock_key docs).
 
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::{
+    postgres::{PgConnection, PgRow},
+    PgPool, Row,
+};
 use tracing::{debug, instrument};
 
 use undolog_types::{
@@ -371,6 +374,37 @@ impl EffectStore {
         maybe_row.map(map_effect_row).transpose()
     }
 
+    /// Look up an effect record by its effect_id.
+    pub async fn find_by_effect_id(
+        &self,
+        conn: &mut PgConnection,
+        org_id: &OrgId,
+        effect_id: &EffectId,
+    ) -> UndoLogResult<Option<EffectRecord>> {
+        let maybe_row = sqlx::query(
+            r#"
+            SELECT
+                effect_id, org_id, session_id, tool_id,
+                call_signature, tool_name, tool_version,
+                tier::text,
+                step_index, args_snapshot, result_snapshot,
+                state::text, compensation_args,
+                executed_at, committed_at, compensated_at,
+                replay_count, last_replayed_at, approval_request_id
+            FROM undolog_effect_log
+            WHERE effect_id = $1
+              AND org_id    = $2
+            LIMIT 1
+            "#,
+        )
+        .bind(*effect_id.as_uuid())
+        .bind(*org_id.as_uuid())
+        .fetch_optional(&mut *conn)
+        .await?;
+
+        maybe_row.map(map_effect_row).transpose()
+    }
+
     /// Increment the replay counter and update last_replayed_at.
     pub async fn mark_replayed(&self, org_id: &OrgId, effect_id: &EffectId) -> UndoLogResult<()> {
         sqlx::query(
@@ -419,7 +453,12 @@ impl EffectStore {
 
     /// Transition an Irreversible effect from pending to approved.
     /// Called when a human approves in the dashboard.
-    pub async fn approve_effect(&self, org_id: &OrgId, effect_id: &EffectId) -> UndoLogResult<()> {
+    pub async fn approve_effect(
+        &self,
+        conn: &mut PgConnection,
+        org_id: &OrgId,
+        effect_id: &EffectId,
+    ) -> UndoLogResult<()> {
         let rows = sqlx::query(
             r#"
             UPDATE undolog_effect_log
@@ -431,7 +470,7 @@ impl EffectStore {
         )
         .bind(*effect_id.as_uuid())
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?
         .rows_affected();
 
@@ -446,7 +485,12 @@ impl EffectStore {
     }
 
     /// Transition an Irreversible effect to rejected.
-    pub async fn reject_effect(&self, org_id: &OrgId, effect_id: &EffectId) -> UndoLogResult<()> {
+    pub async fn reject_effect(
+        &self,
+        conn: &mut PgConnection,
+        org_id: &OrgId,
+        effect_id: &EffectId,
+    ) -> UndoLogResult<()> {
         let rows = sqlx::query(
             r#"
             UPDATE undolog_effect_log
@@ -458,7 +502,7 @@ impl EffectStore {
         )
         .bind(*effect_id.as_uuid())
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?
         .rows_affected();
 
@@ -478,6 +522,7 @@ impl EffectStore {
     /// Only allowed when the effect is in 'approved' state.
     pub async fn update_args_snapshot(
         &self,
+        conn: &mut PgConnection,
         org_id: &OrgId,
         effect_id: &EffectId,
         args: &serde_json::Value,
@@ -495,7 +540,7 @@ impl EffectStore {
         .bind(&args_json)
         .bind(*effect_id.as_uuid())
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?
         .rows_affected();
 
@@ -671,7 +716,7 @@ fn map_effect_row(row: PgRow) -> UndoLogResult<EffectRecord> {
     Ok(EffectRecord {
         effect_id: EffectId::from(effect_id_uuid),
         org_id: OrgId::from(org_id_uuid),
-        session_id: undolog_types::ids::SessionId::from(session_id_uuid),
+        session_id: SessionId::from(session_id_uuid),
         tool_id: tool_id_uuid.map(ToolId::from),
         call_signature: CallSignature(row.try_get::<String, _>("call_signature")?),
         tool_name: row.try_get("tool_name")?,
@@ -704,8 +749,8 @@ fn map_undo_row(row: PgRow) -> UndoLogResult<UndoEntry> {
     Ok(UndoEntry {
         undo_id: UndoId::from(undo_id_uuid),
         org_id: OrgId::from(org_id_uuid),
-        session_id: undolog_types::ids::SessionId::from(session_id_uuid),
-        effect_id: undolog_types::ids::EffectId::from(effect_id_uuid),
+        session_id: SessionId::from(session_id_uuid),
+        effect_id: EffectId::from(effect_id_uuid),
         stack_position: row.try_get::<i32, _>("stack_position")? as u32,
         compensation: CompensationDescriptor {
             fn_name: row.try_get("compensation_fn")?,
