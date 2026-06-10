@@ -57,6 +57,7 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h localhost -U postgres undolog -f migrations/0001_initial.sql
           PGPASSWORD=postgres psql -h localhost -U postgres undolog -f migrations/0002_add_undo_stack_retry_fields.sql
+          PGPASSWORD=postgres psql -h localhost -U postgres undolog -f migrations/0003_seed_demo_data.sql
         env:
           PGPASSWORD: postgres
 

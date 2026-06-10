@@ -51,13 +51,22 @@ services:
     environment:
       UNDOLOG_PROXY_LISTEN_ADDR: :8080
       UNDOLOG_PROXY_ENGINE_GRPC_ADDR: engine:50051
-      UNDOLOG_PROXY_API_KEYS: dev-key=org_dev
+      UNDOLOG_PROXY_UPSTREAM_TOOL_URL: http://tool-server:9091/tools
+      UNDOLOG_PROXY_API_KEYS: dev-key=00000000-0000-0000-0000-000000000001
       UNDOLOG_LOG_LEVEL: debug
     ports:
       - "8080:8080"
     depends_on:
       engine:
         condition: service_started
+
+  tool-server:
+    build:
+      context: infra/mock-tool-server
+      dockerfile: Dockerfile
+    ports:
+      - "9091:9091"
+    depends_on: {}
 
   dashboard:
     build:

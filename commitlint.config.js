@@ -22,6 +22,7 @@ module.exports = {
         "proto",
         "infra",
         "docs",
+        "examples",
         "deps",
       ],
     ],

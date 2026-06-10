@@ -18,9 +18,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `effect_store.update_args_snapshot()` for modified-args audit trail
 - `rows_affected()` guards on `approve_effect()`, `reject_effect()`,
   `update_args_snapshot()` for safe state transitions
+- `approval_demo.py`: full approval lifecycle demo (SAFE → COMPENSABLE →
+  IRREVERSIBLE → AwaitingApprovalError → auto-approve via API)
+- `compensation_demo.py`: compensation lifecycle demo (pre-registered
+  compensation, LIFO rollback, custom retry policies)
+- `compensate_assign_engineer()` and `compensate_escalate()` handler functions
+- `replay_demo.py`: exactly-once execution via BLAKE3 signature dedup
+  (same session_id + step_index + tool_name + canonical args → Replay)
+- `compensate_charge_payment()` handler function for payment reversal
+- `infra/mock-tool-server/`: upstream MCP tool server for local demos
+- `migrations/0003_seed_demo_data.sql`: demo org + tool registrations
+  (charge_payment, send_email, create_ticket, escalate_case)
+- docker-compose.yml: added `tool-server` service, fixed API key UUID format
+- `agent_stateful.py`: stateful LangGraph with ``interrupt``-based approval
+  branching (approve → continue, reject → halt), ``MemorySaver`` checkpointing
 
 ### Changed
-
 - Tool tier registry now reads `compensation_ref` and `irreversibility_reason`
   from DB to construct proper `Compensable`/`Irreversible` tiers
 - Removed `ON CONFLICT DO NOTHING` from effect inserts (advisory lock +
