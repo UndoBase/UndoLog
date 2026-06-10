@@ -72,14 +72,20 @@ class UndoLogClient:
         if response.outcome == "Execute":
             result = await my_tool(**args)
             await client.commit(response.effect_id, result)
+
+    Environment configuration:
+        ``UNDOLOG_PROXY_URL`` - base URL of the UndoLog proxy (default: ``http://localhost:8080``).
+        ``UNDOLOG_API_KEY`` - API key for proxy authentication.
     """
 
     def __init__(
         self,
         proxy_url: str | None = None,
+        api_key: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = (proxy_url or _default_proxy_url()).rstrip("/")
+        self._api_key = api_key or os.environ.get("UNDOLOG_API_KEY", "")
         if http_client is not None:
             self._http = http_client
         else:
@@ -110,19 +116,29 @@ class UndoLogClient:
             httpx.RequestError: On connection or timeout errors.
         """
         resp = await self._http.post(
-            "/api/v1/intercept",
+            "/mcp/tool_call",
             headers=self._headers(org_id, session_id),
             json={
                 "session_id": session_id,
                 "tool_name": tool_name,
+                "tool_version": "1.0.0",
                 "step_index": step_index,
                 "args": args,
             },
         )
         resp.raise_for_status()
         body = resp.json()
+        # Proxy returns {status, effect_id, result} directly.
+        # Map proxy statuses to SDK outcome strings.
+        status = body.get("status", "executed")
+        outcome_map = {
+            "executed": "Execute",
+            "replayed": "Replay",
+            "pending_approval": "AwaitingApproval",
+        }
+        outcome = outcome_map.get(status, status.capitalize())
         return InterceptResponse(
-            outcome=body.get("outcome", body.get("status", "Execute")).capitalize(),
+            outcome=outcome,
             effect_id=body.get("effect_id"),
             approval_id=body.get("approval_id"),
             cached_result=body.get("cached_result", body.get("result")),
@@ -134,28 +150,26 @@ class UndoLogClient:
         session_id: str,
         effect_id: str,
         result: dict[str, Any],
-    ) -> None:
-        """Report a successful tool execution to the proxy.
+    ) -> dict[str, Any]:
+        """Commit a tool result for a proxy-originated call.
 
-        Args:
-            org_id: Organisation scoping the call.
-            session_id: Active session UUID.
-            effect_id: Effect identifier from the intercept response.
-            result: The tool execution result.
+        For calls routed through ``POST /mcp/tool_call`` the proxy commits
+        inline and this method is a safe no-op.  For direct engine access
+        this sends ``PUT /effects/{effect_id}/commit`` to persist the result.
 
-        Raises:
-            httpx.HTTPStatusError: On proxy-level HTTP errors.
-            httpx.RequestError: On connection or timeout errors.
+        Returns the server response body (or empty dict for the inline path).
         """
-        resp = await self._http.post(
-            "/api/v1/commit",
+        url = f"/effects/{effect_id}/commit"
+        body = {"session_id": session_id, "result": result}
+        resp = await self._http.put(
+            url,
             headers=self._headers(org_id, session_id),
-            json={
-                "effect_id": effect_id,
-                "result": result,
-            },
+            json=body,
         )
+        if resp.status_code == 404:
+            return {}
         resp.raise_for_status()
+        return resp.json()
 
     async def fail(
         self,
@@ -163,28 +177,26 @@ class UndoLogClient:
         session_id: str,
         effect_id: str,
         error: str,
-    ) -> None:
-        """Report a tool execution failure to the proxy.
+    ) -> dict[str, Any]:
+        """Mark an effect as failed and trigger compensation rollback.
 
-        Args:
-            org_id: Organisation scoping the call.
-            session_id: Active session UUID.
-            effect_id: Effect identifier from the intercept response.
-            error: Human-readable error description.
+        For calls routed through ``POST /mcp/tool_call`` the proxy handles
+        failure inline and this method is a safe no-op.  For direct engine
+        access this sends ``PUT /effects/{effect_id}/fail``.
 
-        Raises:
-            httpx.HTTPStatusError: On proxy-level HTTP errors.
-            httpx.RequestError: On connection or timeout errors.
+        Returns the server response body (or empty dict for the inline path).
         """
-        resp = await self._http.post(
-            "/api/v1/fail",
+        url = f"/effects/{effect_id}/fail"
+        body = {"session_id": session_id, "error": error}
+        resp = await self._http.put(
+            url,
             headers=self._headers(org_id, session_id),
-            json={
-                "effect_id": effect_id,
-                "error": error,
-            },
+            json=body,
         )
+        if resp.status_code == 404:
+            return {}
         resp.raise_for_status()
+        return resp.json()
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client session."""
@@ -193,11 +205,13 @@ class UndoLogClient:
     def _headers(self, org_id: str, session_id: str) -> dict[str, str]:
         """Build tenant-scoped headers for every proxy request.
 
-        Both headers are required by the UndoLog proxy for tenant isolation
-        and session routing. The Go proxy mirrors these values in its
-        upstream requests and SSE events.
+        ``X-Api-Key`` authenticates the organisation. ``X-UndoLog-Org-Id`` and
+        ``X-UndoLog-Session-Id`` provide tenant isolation and session routing.
         """
-        return {
+        headers = {
             "X-UndoLog-Org-Id": org_id,
             "X-UndoLog-Session-Id": session_id,
         }
+        if self._api_key:
+            headers["X-Api-Key"] = self._api_key
+        return headers
