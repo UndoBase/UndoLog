@@ -18,6 +18,7 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.25",
+    "asyncpg>=0.29",
 ]
 
 [tool.ruff]
@@ -26,3 +27,6 @@ line-length = 100
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests that require a live UndoLog stack (docker compose up -d)",
+]

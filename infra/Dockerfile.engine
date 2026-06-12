@@ -44,6 +44,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/undolog-types/Cargo.toml  crates/undolog-types/
 COPY crates/undolog-store/Cargo.toml  crates/undolog-store/
 COPY crates/undolog-engine/Cargo.toml crates/undolog-engine/
+COPY crates/undolog-engine/build.rs   crates/undolog-engine/
 COPY crates/undolog-saga/Cargo.toml   crates/undolog-saga/
 
 # Dummy source files so Cargo can resolve the dependency graph.
@@ -57,18 +58,28 @@ RUN mkdir -p crates/undolog-types/src  \
           crates/undolog-saga/src/lib.rs     \
   && echo "fn main() {}" > crates/undolog-engine/src/main.rs
 
+# Copy proto definitions so the build script (tonic-build) can generate
+# gRPC stubs during the dependency-caching build.
+COPY proto   proto/
+
 # Build and cache dependencies (this layer is reused across builds).
+# The dummy lib.rs / main.rs don't reference the proto stubs, but the
+# build script runs and caches the generated output into OUT_DIR so the
+# subsequent real-source build has everything it needs.
 RUN cargo build --release -p undolog-engine 2>&1
 
 # ── Copy real source code ────────────────────────────────────────────────────
-COPY proto   proto/
 COPY crates/undolog-types/src  crates/undolog-types/src/
 COPY crates/undolog-store/src  crates/undolog-store/src/
 COPY crates/undolog-engine/src crates/undolog-engine/src/
 COPY crates/undolog-saga/src   crates/undolog-saga/src/
 
 # Force a rebuild with the real sources (cache hit for deps, only engine changes).
-RUN touch crates/undolog-engine/src/main.rs && \
+RUN touch crates/undolog-types/src/lib.rs \
+        crates/undolog-store/src/lib.rs \
+        crates/undolog-engine/src/lib.rs \
+        crates/undolog-engine/src/main.rs \
+        crates/undolog-saga/src/lib.rs && \
     cargo build --release -p undolog-engine
 
 # Strip debug symbols (~30→5 MB).
