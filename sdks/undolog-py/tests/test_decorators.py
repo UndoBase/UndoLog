@@ -7,16 +7,18 @@ Verifies:
     - AwaitingApproval raises ``AwaitingApprovalError`` without execution
     - Step index increments correctly
     - Missing session raises ``RuntimeError``
+    - Network errors (timeouts, connection refused) propagate correctly
 """
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from undolog_sdk import AwaitingApprovalError, ToolTier, undolog_tool
-from undolog_sdk.client import InterceptResponse
+from undolog_sdk.client import InterceptResponse, UndoLogClient
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.tier import CompensationDescriptor
 
@@ -271,3 +273,172 @@ class TestSessionRequired:
 
         result = await custom_param(ctx=session)
         assert result == "ok"
+
+
+# ── Network error simulation ──────────────────────────────────────────────
+
+
+class TestNetworkErrors:
+    """Network-level errors propagate correctly through the decorator.
+
+    Uses ``httpx.MockTransport`` to simulate transport-layer failures
+    (timeouts, connection refused) and HTTP error codes, exercising the
+    real ``UndoLogClient`` code paths instead of mocking at the client
+    level.
+    """
+
+    async def test_intercept_connect_error(self, session: UndoLogSession) -> None:
+        """ConnectError during intercept propagates as-is to the caller."""
+
+        async def _handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused")
+
+        transport = httpx.MockTransport(_handler)
+        http_client = httpx.AsyncClient(
+            transport=transport, base_url="http://localhost:8080"
+        )
+        client = UndoLogClient(http_client=http_client)
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=client,
+        )
+        async def my_tool() -> str:
+            return "ok"
+
+        with pytest.raises(httpx.ConnectError):
+            await my_tool(_session=session)
+
+    async def test_intercept_read_timeout(self, session: UndoLogSession) -> None:
+        """ReadTimeout during intercept propagates as-is to the caller."""
+
+        async def _handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("request timed out", request=request)
+
+        transport = httpx.MockTransport(_handler)
+        http_client = httpx.AsyncClient(
+            transport=transport, base_url="http://localhost:8080"
+        )
+        client = UndoLogClient(http_client=http_client)
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=client,
+        )
+        async def my_tool() -> str:
+            return "ok"
+
+        with pytest.raises(httpx.ReadTimeout):
+            await my_tool(_session=session)
+
+    async def test_intercept_http_500(self, session: UndoLogSession) -> None:
+        """HTTP 500 from the proxy propagates as HTTPStatusError."""
+
+        async def _handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, json={"error": "internal"})
+
+        transport = httpx.MockTransport(_handler)
+        http_client = httpx.AsyncClient(
+            transport=transport, base_url="http://localhost:8080"
+        )
+        client = UndoLogClient(http_client=http_client)
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=client,
+        )
+        async def my_tool() -> str:
+            return "ok"
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await my_tool(_session=session)
+
+    async def test_intercept_http_401(self, session: UndoLogSession) -> None:
+        """HTTP 401 from the proxy propagates as HTTPStatusError."""
+
+        async def _handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"error": "unauthorized"})
+
+        transport = httpx.MockTransport(_handler)
+        http_client = httpx.AsyncClient(
+            transport=transport, base_url="http://localhost:8080"
+        )
+        client = UndoLogClient(http_client=http_client)
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=client,
+        )
+        async def my_tool() -> str:
+            return "ok"
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await my_tool(_session=session)
+
+    async def test_commit_connect_error(self, session: UndoLogSession) -> None:
+        """ConnectError during commit after a successful intercept."""
+        call_count: int = 0
+
+        async def _handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return httpx.Response(
+                    200, json={"status": "executed", "effect_id": "eff-1"}
+                )
+            raise httpx.ConnectError("commit connection refused")
+
+        transport = httpx.MockTransport(_handler)
+        http_client = httpx.AsyncClient(
+            transport=transport, base_url="http://localhost:8080"
+        )
+        client = UndoLogClient(http_client=http_client)
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=client,
+        )
+        async def my_tool() -> str:
+            return "ok"
+
+        with pytest.raises(httpx.ConnectError):
+            await my_tool(_session=session)
+
+    async def test_fail_connect_error(self, session: UndoLogSession) -> None:
+        """ConnectError during fail replaces the original function error.
+
+        When the function body raises and the subsequent ``fail()`` call also
+        fails, the network error propagates (the original exception is lost).
+        """
+        call_count: int = 0
+
+        async def _handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return httpx.Response(
+                    200, json={"status": "executed", "effect_id": "eff-2"}
+                )
+            raise httpx.ConnectError("fail connection refused")
+
+        transport = httpx.MockTransport(_handler)
+        http_client = httpx.AsyncClient(
+            transport=transport, base_url="http://localhost:8080"
+        )
+        client = UndoLogClient(http_client=http_client)
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=client,
+        )
+        async def failing_tool() -> str:
+            raise ValueError("tool error")
+
+        with pytest.raises(httpx.ConnectError):
+            await failing_tool(_session=session)

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Integration tests for live UndoLog stack: approval lifecycle (approve,
+  reject, double-approve/reject), concurrent execution, LIFO compensation
+  chain, and BLAKE3 replay idempotency (``test_live_stack.py``)
+- Network error simulation tests: ``ConnectError``, ``ReadTimeout``,
+  HTTP 4xx/5xx, and commit/fail network errors propagate correctly
+  through the ``@undolog_tool`` decorator (``test_decorators.py``)
 - Auto-execute approved irreversible tools: proxy runs the tool and commits
   the result inline during the approve call (no separate retry needed)
 - Engine approves effect (`pending→approved`), resumes session, and returns
