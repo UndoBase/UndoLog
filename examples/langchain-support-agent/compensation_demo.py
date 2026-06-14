@@ -47,6 +47,8 @@ import logging
 import os
 from typing import Any
 
+import httpx
+
 from undolog_sdk import (
     CompensationDescriptor,
     ToolTier,
@@ -67,6 +69,27 @@ def _org_id() -> str:
     return os.environ.get("UNDOLOG_ORG_ID", "org_demo")
 
 
+_MOCK_TOOL_SERVER_URL: str | None = None
+
+
+def _get_tool_server_url() -> str:
+    global _MOCK_TOOL_SERVER_URL
+    if _MOCK_TOOL_SERVER_URL is None:
+        _MOCK_TOOL_SERVER_URL = os.environ.get("MOCK_TOOL_SERVER_URL", "http://localhost:9091")
+    return _MOCK_TOOL_SERVER_URL
+
+
+async def _call_tool(tool_name: str, args: dict[str, str]) -> dict[str, Any]:
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_get_tool_server_url()}/tools",
+            json={"tool_name": tool_name, "args": args},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        return json.loads(resp.json()["output"])
+
+
 # ── Demo tools ──────────────────────────────────────────────────────────
 
 
@@ -85,12 +108,7 @@ async def lookup_user(user_id: str) -> dict[str, Any]:
     dict
         User profile with name, email, and plan.
     """
-    return {
-        "user_id": user_id,
-        "name": "Bob Smith",
-        "email": "bob@example.com",
-        "plan": "enterprise",
-    }
+    return await _call_tool("lookup_user", {"user_id": user_id})
 
 
 # COMPENSABLE tool with default retry settings.
@@ -122,10 +140,7 @@ async def notify_user(to: str, subject: str, body: str) -> dict[str, Any]:
         Confirmation with email_id and status.
     """
     log.info("[EXEC] notify_user to=%s subject=%s", to, subject)
-    return {
-        "email_id": f"email_{hash(to + subject) % 10**8:08x}",
-        "status": "sent",
-    }
+    return await _call_tool("notify_user", {"to": to, "subject": subject, "body": body})
 
 
 # COMPENSABLE tool with custom retry settings.
@@ -163,14 +178,16 @@ async def open_ticket(
     dict
         Created ticket with ticket_id and status.
     """
-    ticket_id = f"TKT-{hash(user_id + description) % 10**8:08x}"
     log.info(
         "[EXEC] open_ticket user=%s priority=%s ticket=%s",
         user_id,
         priority,
-        ticket_id,
+        description,
     )
-    return {"ticket_id": ticket_id, "status": "open", "priority": priority}
+    return await _call_tool(
+        "open_ticket",
+        {"user_id": user_id, "priority": priority, "description": description},
+    )
 
 
 # COMPENSABLE tool with custom compensation version.
@@ -206,7 +223,7 @@ async def assign_engineer(ticket_id: str, engineer: str) -> dict[str, Any]:
         Assignment confirmation.
     """
     log.info("[EXEC] assign_engineer ticket=%s engineer=%s", ticket_id, engineer)
-    return {"ticket_id": ticket_id, "engineer": engineer, "status": "assigned"}
+    return await _call_tool("assign_engineer", {"ticket_id": ticket_id, "engineer": engineer})
 
 
 # A tool that can fail conditionally to demonstrate rollback.
@@ -247,10 +264,11 @@ async def escalate_ticket(ticket_id: str, reason: str, *, _fail: bool = False) -
         after the effect was registered and compensation pushed.
     """
     log.info("[EXEC] escalate_ticket ticket=%s reason=%s", ticket_id, reason)
+    result = await _call_tool("escalate_ticket", {"ticket_id": ticket_id, "reason": reason})
     if _fail:
         log.info("[FAIL] escalate_ticket : simulating downstream failure")
         raise RuntimeError(f"Downstream escalation service unreachable for ticket {ticket_id}")
-    return {"ticket_id": ticket_id, "reason": reason, "status": "escalated"}
+    return result
 
 
 def _step(label: str) -> None:

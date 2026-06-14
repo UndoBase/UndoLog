@@ -16,16 +16,41 @@ IRREVERSIBLE
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from collections.abc import Awaitable, Callable
+from typing import Any
+
+import httpx
 
 from undolog_sdk import CompensationDescriptor, ToolTier, undolog_tool
 
 log = logging.getLogger(__name__)
 
+_MOCK_TOOL_SERVER_URL: str | None = None
+
+
+def _get_tool_server_url() -> str:
+    global _MOCK_TOOL_SERVER_URL
+    if _MOCK_TOOL_SERVER_URL is None:
+        _MOCK_TOOL_SERVER_URL = os.environ.get("MOCK_TOOL_SERVER_URL", "http://localhost:9091")
+    return _MOCK_TOOL_SERVER_URL
+
+
+async def _call_tool(tool_name: str, args: dict[str, str]) -> dict[str, Any]:
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_get_tool_server_url()}/tools",
+            json={"tool_name": tool_name, "args": args},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        return json.loads(resp.json()["output"])
+
 
 @undolog_tool(tier=ToolTier.SAFE)
-async def lookup_customer(customer_id: str) -> dict:
+async def lookup_customer(customer_id: str) -> dict[str, Any]:
     """Look up customer information by ID.
 
     Parameters
@@ -38,13 +63,7 @@ async def lookup_customer(customer_id: str) -> dict:
     dict
         Customer profile with name, email, plan, and support level.
     """
-    return {
-        "customer_id": customer_id,
-        "name": "Alice Johnson",
-        "email": "alice@example.com",
-        "plan": "enterprise",
-        "support_level": "premium",
-    }
+    return await _call_tool("lookup_customer", {"customer_id": customer_id})
 
 
 @undolog_tool(
@@ -54,7 +73,7 @@ async def lookup_customer(customer_id: str) -> dict:
         args={"to": "{to}", "subject": "{subject}"},
     ),
 )
-async def send_email(to: str, subject: str, body: str) -> dict:
+async def send_email(to: str, subject: str, body: str) -> dict[str, Any]:
     """Send an email to a customer.
 
     On workflow rollback the engine calls ``compensate_send_email``
@@ -75,7 +94,7 @@ async def send_email(to: str, subject: str, body: str) -> dict:
         Confirmation with ``email_id`` and delivery ``status``.
     """
     log.info("[EMAIL] To: %s, Subject: %s", to, subject)
-    return {"email_id": "email_" + str(hash(to + subject))[:12], "status": "sent"}
+    return await _call_tool("send_email", {"to": to, "subject": subject, "body": body})
 
 
 @undolog_tool(
@@ -85,7 +104,7 @@ async def send_email(to: str, subject: str, body: str) -> dict:
         args={"ticket_id": "{ticket_id}"},
     ),
 )
-async def create_ticket(customer_id: str, priority: str, description: str) -> dict:
+async def create_ticket(customer_id: str, priority: str, description: str) -> dict[str, Any]:
     """Create a support ticket in the system.
 
     On workflow rollback the engine calls ``compensate_create_ticket``
@@ -105,13 +124,14 @@ async def create_ticket(customer_id: str, priority: str, description: str) -> di
     dict
         Created ticket with ``ticket_id``, ``status``, and ``priority``.
     """
-    ticket_id = "TKT-" + str(hash(customer_id + description))[-8:]
-    log.info("[TICKET] Created #%s (priority=%s, customer=%s)", ticket_id, priority, customer_id)
-    return {"ticket_id": ticket_id, "status": "open", "priority": priority}
+    return await _call_tool(
+        "create_ticket",
+        {"customer_id": customer_id, "priority": priority, "description": description},
+    )
 
 
 @undolog_tool(tier=ToolTier.IRREVERSIBLE)
-async def escalate_case(ticket_id: str, reason: str) -> dict:
+async def escalate_case(ticket_id: str, reason: str) -> dict[str, Any]:
     """Escalate a case to the priority support queue.
 
     Because escalation is irreversible the engine pauses execution
@@ -131,10 +151,14 @@ async def escalate_case(ticket_id: str, reason: str) -> dict:
         Escalation confirmation with ``ticket_id`` and ``status``.
     """
     log.info("[ESCALATE] Ticket #%s escalated: %s", ticket_id, reason)
-    return {"ticket_id": ticket_id, "status": "escalated", "reason": reason}
+    # Body is unreachable for IRREVERSIBLE tools -- the decorator raises
+    # AwaitingApprovalError before executing.  The proxy runs the tool
+    # on approve, not this Python function.
+    msg = f"escalate_case({ticket_id}, {reason})"
+    raise AssertionError(msg)
 
 
-def get_tool_registry() -> dict[str, Callable[..., Awaitable[dict]]]:
+def get_tool_registry() -> dict[str, Callable[..., Awaitable[dict[str, Any]]]]:
     """Return a name-to-function mapping for the four support tools.
 
     Returns

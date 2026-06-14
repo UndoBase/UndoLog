@@ -134,6 +134,29 @@ async def _call_tool(
     return resp.json()
 
 
+# ── Mock tool server helper ────────────────────────────────────────────────
+
+_MOCK_TOOL_SERVER_URL: str | None = None
+
+
+def _get_mock_server_url() -> str:
+    global _MOCK_TOOL_SERVER_URL
+    if _MOCK_TOOL_SERVER_URL is None:
+        _MOCK_TOOL_SERVER_URL = os.environ.get("MOCK_TOOL_SERVER_URL", "http://localhost:9091")
+    return _MOCK_TOOL_SERVER_URL
+
+
+async def _call_mock_server(tool_name: str, args: dict[str, str]) -> dict[str, Any]:
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_get_mock_server_url()}/tools",
+            json={"tool_name": tool_name, "args": args},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        return json.loads(resp.json()["output"])
+
+
 # ── Demo tools ───────────────────────────────────────────────────────────────
 
 
@@ -153,7 +176,7 @@ async def lookup_plan(plan_id: str) -> dict[str, Any]:
     dict
         Plan details.
     """
-    return {"plan_id": plan_id, "name": "Enterprise", "price": 99}
+    return await _call_mock_server("lookup_plan", {"plan_id": plan_id})
 
 
 async def main() -> None:

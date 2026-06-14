@@ -1,7 +1,7 @@
-"""Mock upstream MCP tool server for UndoLog demos.
+"""Stateful mock upstream MCP tool server for UndoLog demos.
 
-Accepts tool call POST requests from the UndoLog proxy (``HTTPToolExecutor``)
-and returns a canned ``ToolResult`` with the input echoed in ``output.args``.
+Provides realistic CRUD operations for all demo tools, with an
+in-memory store seeded with sample data at startup.
 
 Endpoints
 ---------
@@ -11,12 +11,6 @@ POST /tools
 
 GET /health
     Returns ``{"status": "ok"}``.
-
-Usage
------
-::
-
-    python infra/mock-tool-server/server.py
 
 Environment
 -----------
@@ -28,12 +22,15 @@ MOCK_TOOL_SERVER_PORT : int
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import time
+import uuid
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Any
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,11 +39,281 @@ logging.basicConfig(
 )
 log = logging.getLogger("mock-tool-server")
 
-TOOL_CALLS: list[dict] = []
+
+# ── Seed data ──────────────────────────────────────────────────────────────
+
+SEED_CUSTOMERS: dict[str, dict[str, str]] = {
+    "cust_42": {
+        "customer_id": "cust_42",
+        "name": "Alice Johnson",
+        "email": "alice@example.com",
+        "plan": "enterprise",
+        "support_level": "premium",
+    },
+    "cust_1": {
+        "customer_id": "cust_1",
+        "name": "Bob Smith",
+        "email": "bob@example.com",
+        "plan": "enterprise",
+        "support_level": "standard",
+    },
+    "user_42": {
+        "user_id": "user_42",
+        "name": "Bob Smith",
+        "email": "bob@example.com",
+        "plan": "enterprise",
+    },
+    "user_1": {
+        "user_id": "user_1",
+        "name": "Carol Davis",
+        "email": "carol@example.com",
+        "plan": "premium",
+    },
+}
+
+SEED_PLANS: dict[str, dict[str, Any]] = {
+    "enterprise": {
+        "plan_id": "enterprise",
+        "name": "Enterprise",
+        "monthly_price": 999,
+        "features": ["unlimited_tickets", "priority_support", "api_access"],
+    },
+    "premium": {
+        "plan_id": "premium",
+        "name": "Premium",
+        "monthly_price": 299,
+        "features": ["unlimited_tickets", "priority_support"],
+    },
+    "basic": {
+        "plan_id": "basic",
+        "name": "Basic",
+        "monthly_price": 49,
+        "features": ["10_tickets_per_month"],
+    },
+}
+
+SEED_ENGINEERS: dict[str, dict[str, str]] = {
+    "sarah": {"engineer": "sarah", "name": "Sarah Chen", "team": "senior"},
+    "mike": {"engineer": "mike", "name": "Mike Rivera", "team": "level-2"},
+}
+
+
+# ── In-memory store (mutated at runtime) ──────────────────────────────────
+
+_store: dict[str, dict[str, Any]] = {
+    "customers": dict(SEED_CUSTOMERS),
+    "plans": dict(SEED_PLANS),
+    "engineers": dict(SEED_ENGINEERS),
+    "tickets": {},
+    "emails": {},
+    "payments": {},
+}
+
+
+# ── Internal handlers ────────────────────────────────────────────────────
+
+
+def _ok(output: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "success": True,
+        "output": json.dumps(output),
+        "duration_ms": 0,
+    }
+
+
+def _handle_lookup_customer(args: dict[str, Any]) -> dict[str, Any]:
+    customer_id = args.get("customer_id", "")
+    customer = _store["customers"].get(customer_id)
+    if not customer:
+        return {"success": False, "error": f"Customer {customer_id!r} not found"}
+    return _ok(customer)
+
+
+def _handle_lookup_user(args: dict[str, Any]) -> dict[str, Any]:
+    user_id = args.get("user_id", "")
+    user = _store["customers"].get(user_id)
+    if not user:
+        return {"success": False, "error": f"User {user_id!r} not found"}
+    return _ok(user)
+
+
+def _handle_lookup_plan(args: dict[str, Any]) -> dict[str, Any]:
+    plan_id = args.get("plan_id", "")
+    plan = _store["plans"].get(plan_id)
+    if not plan:
+        return {"success": False, "error": f"Plan {plan_id!r} not found"}
+    return _ok(plan)
+
+
+def _handle_send_email(args: dict[str, Any]) -> dict[str, Any]:
+    to = args.get("to", "")
+    subject = args.get("subject", "")
+    body = args.get("body", "")
+    key = f"{to}:{subject}:{body}"
+    email_id = hashlib.sha256(key.encode()).hexdigest()[:16]
+    if email_id not in _store["emails"]:
+        _store["emails"][email_id] = {
+            "email_id": email_id,
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "status": "sent",
+        }
+    return _ok({"email_id": email_id, "status": "sent"})
+
+
+def _handle_create_ticket(args: dict[str, Any]) -> dict[str, Any]:
+    ticket_id = f"TKT-{uuid.uuid4().hex[:8].upper()}"
+    _store["tickets"][ticket_id] = {
+        "ticket_id": ticket_id,
+        "customer_id": args.get("customer_id", args.get("user_id", "")),
+        "priority": args.get("priority", "low"),
+        "description": args.get("description", ""),
+        "status": "open",
+    }
+    return _ok(
+        {
+            "ticket_id": ticket_id,
+            "status": "open",
+            "priority": args.get("priority", "low"),
+        }
+    )
+
+
+def _handle_assign_engineer(args: dict[str, Any]) -> dict[str, Any]:
+    ticket_id = args.get("ticket_id", "")
+    engineer = args.get("engineer", "")
+    ticket = _store["tickets"].get(ticket_id)
+    if not ticket:
+        return {"success": False, "error": f"Ticket {ticket_id!r} not found"}
+    ticket["engineer"] = engineer
+    ticket["status"] = "assigned"
+    return _ok({"ticket_id": ticket_id, "engineer": engineer, "status": "assigned"})
+
+
+def _handle_escalate(args: dict[str, Any]) -> dict[str, Any]:
+    ticket_id = args.get("ticket_id", "")
+    reason = args.get("reason", "")
+    ticket = _store["tickets"].get(ticket_id)
+    if not ticket:
+        return {"success": False, "error": f"Ticket {ticket_id!r} not found"}
+    ticket["status"] = "escalated"
+    ticket["escalation_reason"] = reason
+    return _ok({"ticket_id": ticket_id, "status": "escalated", "reason": reason})
+
+
+def _handle_charge_payment(args: dict[str, Any]) -> dict[str, Any]:
+    payment_id = f"PAY-{uuid.uuid4().hex[:8].upper()}"
+    amount = args.get("amount", 0)
+    currency = args.get("currency", "USD")
+    _store["payments"][payment_id] = {
+        "payment_id": payment_id,
+        "amount": amount,
+        "currency": currency,
+        "status": "processed",
+    }
+    return _ok(
+        {
+            "payment_id": payment_id,
+            "amount": amount,
+            "currency": currency,
+            "status": "processed",
+        }
+    )
+
+
+# ── Compensation handlers (reversal operations) ───────────────────────────
+
+
+def _handle_compensate_send_email(args: dict[str, Any]) -> dict[str, Any]:
+    to = args.get("to", "unknown")
+    subject = args.get("subject", "")
+    corr_id = f"CORR-{uuid.uuid4().hex[:8].upper()}"
+    _store["emails"][corr_id] = {
+        "email_id": corr_id,
+        "to": to,
+        "original_subject": subject,
+        "type": "correction",
+        "status": "sent",
+    }
+    return _ok({"status": "correction_sent", "to": to, "original_subject": subject})
+
+
+def _handle_compensate_create_ticket(args: dict[str, Any]) -> dict[str, Any]:
+    ticket_id = args.get("ticket_id", "unknown")
+    ticket = _store["tickets"].get(ticket_id)
+    if ticket:
+        ticket["status"] = "closed"
+    return _ok({"status": "ticket_closed", "ticket_id": ticket_id})
+
+
+def _handle_compensate_assign_engineer(args: dict[str, Any]) -> dict[str, Any]:
+    ticket_id = args.get("ticket_id", "unknown")
+    engineer = args.get("engineer", "unknown")
+    ticket = _store["tickets"].get(ticket_id)
+    if ticket and ticket.get("engineer") == engineer:
+        ticket["status"] = "open"
+        ticket.pop("engineer", None)
+    return _ok(
+        {"status": "engineer_unassigned", "ticket_id": ticket_id, "engineer": engineer}
+    )
+
+
+def _handle_compensate_escalate(args: dict[str, Any]) -> dict[str, Any]:
+    ticket_id = args.get("ticket_id", "unknown")
+    reason = args.get("reason", "unknown")
+    ticket = _store["tickets"].get(ticket_id)
+    if ticket:
+        ticket["status"] = "open"
+        ticket.pop("escalation_reason", None)
+    return _ok(
+        {"status": "escalation_reversed", "ticket_id": ticket_id, "reason": reason}
+    )
+
+
+def _handle_compensate_charge_payment(args: dict[str, Any]) -> dict[str, Any]:
+    amount = args.get("amount", 0)
+    currency = args.get("currency", "unknown")
+    reversal_id = f"REV-{uuid.uuid4().hex[:8].upper()}"
+    _store["payments"][reversal_id] = {
+        "payment_id": reversal_id,
+        "amount": amount,
+        "currency": currency,
+        "status": "reversed",
+    }
+    return _ok({"status": "charge_reversed", "amount": amount, "currency": currency})
+
+
+# ── Dispatch table ────────────────────────────────────────────────────────
+
+HANDLERS: dict[str, Any] = {
+    "lookup_customer": _handle_lookup_customer,
+    "lookup_user": _handle_lookup_user,
+    "lookup_plan": _handle_lookup_plan,
+    "send_email": _handle_send_email,
+    "notify_user": _handle_send_email,
+    "create_ticket": _handle_create_ticket,
+    "open_ticket": _handle_create_ticket,
+    "assign_engineer": _handle_assign_engineer,
+    "escalate_case": _handle_escalate,
+    "escalate_ticket": _handle_escalate,
+    "charge_payment": _handle_charge_payment,
+    "compensate_send_email": _handle_compensate_send_email,
+    "compensate_create_ticket": _handle_compensate_create_ticket,
+    "compensate_assign_engineer": _handle_compensate_assign_engineer,
+    "compensate_escalate": _handle_compensate_escalate,
+    "compensate_charge_payment": _handle_compensate_charge_payment,
+}
+
+
+# ── HTTP handler ──────────────────────────────────────────────────────────
+
+
+TOOL_CALLS: list[dict[str, Any]] = []
 
 
 class Handler(BaseHTTPRequestHandler):
-    """HTTP handler that echoes tool calls back as successful results."""
+    """HTTP handler that dispatches tool calls to internal handlers."""
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -75,21 +342,25 @@ class Handler(BaseHTTPRequestHandler):
         args = call.get("args", {})
         log.info("TOOL CALL: %s args=%s", tool_name, json.dumps(args))
 
-        TOOL_CALLS.append({"tool_name": tool_name, "args": args, "timestamp": time.time()})
+        TOOL_CALLS.append(
+            {"tool_name": tool_name, "args": args, "timestamp": time.time()}
+        )
 
-        result = {
-            "success": True,
-            "output": json.dumps({
-                "echo": True,
-                "tool_name": tool_name,
-                "args": args,
-                "mock_result": "ok",
-            }),
-            "duration_ms": 0,
-        }
-        self._json_response(result)
+        handler = HANDLERS.get(tool_name)
+        if not handler:
+            self._json_response(
+                {"success": False, "error": f"Unknown tool: {tool_name!r}"},
+                HTTPStatus.NOT_FOUND,
+            )
+            return
 
-    def _json_response(self, data: dict, status: int = HTTPStatus.OK) -> None:
+        result = handler(args)
+        http_status = (
+            HTTPStatus.OK if result.get("success", False) else HTTPStatus.NOT_FOUND
+        )
+        self._json_response(result, http_status)
+
+    def _json_response(self, data: dict[str, Any], status: int = HTTPStatus.OK) -> None:
         payload = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
