@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Tool bodies now make real HTTP calls to a stateful mock-tool-server
+  (replaces hardcoded mock returns in ``tools.py``, ``compensation_demo.py``,
+  ``replay_demo.py``)
+- Stateful mock-tool-server with CRUD handlers, in-memory store, and
+  seeded customer/plan/engineer data (``infra/mock-tool-server/server.py``)
 - Integration tests for live UndoLog stack: approval lifecycle (approve,
   reject, double-approve/reject), concurrent execution, LIFO compensation
   chain, and BLAKE3 replay idempotency (``test_live_stack.py``)
