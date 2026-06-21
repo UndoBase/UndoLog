@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docker-compose.yml: added `tool-server` service, fixed API key UUID format
 - `agent_stateful.py`: stateful LangGraph with ``interrupt``-based approval
   branching (approve → continue, reject → halt), ``MemorySaver`` checkpointing
+- Interrupt lifecycle tests for ``agent_stateful.py``: AAE catch, approve
+  resume, reject halt, checkpointer verification
 
 ### Changed
 - Tool tier registry now reads `compensation_ref` and `irreversibility_reason`
@@ -56,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `agent.py` now wraps raw ``@undolog_tool`` functions with ``StructuredTool``
+  + context var for session injection (was crashing with missing ``_session``
+  kwarg when called by ``create_react_agent``)
 - `approve_effect()`, `reject_effect()`, `update_args_snapshot()` now return
   `InvalidStateTransition` on zero rows affected
 - `set_active()` now returns `InvalidStateTransition` when session is not in

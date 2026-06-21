@@ -17,6 +17,7 @@ from unittest import mock
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.checkpoint.memory import MemorySaver
 
 from agent_stateful import (
     AgentState,
@@ -25,8 +26,10 @@ from agent_stateful import (
     _invoke_tool,
     _proxy_url,
     build_graph,
+    execute_tools,
     route_after_tools,
 )
+from undolog_sdk import AwaitingApprovalError
 from undolog_sdk.session import UndoLogSession
 
 
@@ -49,6 +52,11 @@ class TestGraphConstruction:
         schema = graph.get_graph().nodes
         tools_node = schema.get("tools")
         assert tools_node is not None, "tools node must exist"
+
+    def test_graph_has_checkpointer(self) -> None:
+        graph = build_graph()
+        assert graph.checkpointer is not None
+        assert isinstance(graph.checkpointer, MemorySaver)
 
 
 class TestRouting:
@@ -184,3 +192,92 @@ class TestToolInvocation:
         assert isinstance(result, ToolMessage)
         assert "Unknown tool" in result.content
         assert result.tool_call_id == "call_1"
+
+
+class TestInterruptLifecycle:
+    """Interrupt / approve / reject lifecycle through execute_tools."""
+
+    @pytest.mark.asyncio
+    async def test_no_tool_calls_returns_empty(self) -> None:
+        msg = AIMessage(content="Hello")
+        state: AgentState = {
+            "messages": [msg],
+            "org_id": "org_test",
+            "session_id": "sess_1",
+            "halted": False,
+            "pending_approval": None,
+        }
+        result = await execute_tools(state)
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_catches_aae_and_sets_pending_approval(self) -> None:
+        tool_call = {"name": "lookup_customer", "args": {"customer_id": "c1"}, "id": "call_1"}
+        msg = AIMessage(content="", tool_calls=[tool_call])
+        state: AgentState = {
+            "messages": [msg],
+            "org_id": "org_test",
+            "session_id": "sess_1",
+            "halted": False,
+            "pending_approval": None,
+        }
+        aae = AwaitingApprovalError(approval_id="ap_1", tool_name="lookup_customer")
+
+        with (
+            mock.patch("agent_stateful._invoke_tool", side_effect=aae),
+            mock.patch("agent_stateful.interrupt", return_value=None),
+        ):
+            result = await execute_tools(state)
+
+        assert result["pending_approval"]["approval_id"] == "ap_1"
+        assert result["pending_approval"]["tool_name"] == "lookup_customer"
+        assert result["pending_approval"]["tool_call"]["name"] == "lookup_customer"
+
+    @pytest.mark.asyncio
+    async def test_approve_resumes_and_calls_api(self) -> None:
+        tool_call = {"name": "lookup_customer", "args": {"customer_id": "c1"}, "id": "call_1"}
+        msg = AIMessage(content="", tool_calls=[tool_call])
+        state: AgentState = {
+            "messages": [msg],
+            "org_id": "org_test",
+            "session_id": "sess_1",
+            "halted": False,
+            "pending_approval": {
+                "approval_id": "ap_1",
+                "tool_name": "lookup_customer",
+                "tool_call": tool_call,
+            },
+        }
+        mock_result = ToolMessage(content="ok", tool_call_id="call_1")
+
+        with (
+            mock.patch("agent_stateful.interrupt", return_value="approve"),
+            mock.patch("agent_stateful._approve_via_api", return_value={}),
+            mock.patch("agent_stateful._invoke_tool", return_value=mock_result),
+        ):
+            result = await execute_tools(state)
+
+        assert result["messages"][0].tool_call_id == "call_1"
+        assert result["pending_approval"] is None
+
+    @pytest.mark.asyncio
+    async def test_reject_sets_halted(self) -> None:
+        tool_call = {"name": "lookup_customer", "args": {"customer_id": "c1"}, "id": "call_1"}
+        msg = AIMessage(content="", tool_calls=[tool_call])
+        state: AgentState = {
+            "messages": [msg],
+            "org_id": "org_test",
+            "session_id": "sess_1",
+            "halted": False,
+            "pending_approval": {
+                "approval_id": "ap_1",
+                "tool_name": "lookup_customer",
+                "tool_call": tool_call,
+            },
+        }
+
+        with mock.patch("agent_stateful.interrupt", return_value="reject"):
+            result = await execute_tools(state)
+
+        assert result["halted"] is True
+        assert result["pending_approval"] is None
