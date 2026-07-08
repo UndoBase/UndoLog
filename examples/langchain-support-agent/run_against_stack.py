@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import os
+import sys
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -25,7 +26,11 @@ from langgraph.prebuilt import create_react_agent
 
 from undolog_sdk.session import UndoLogSession
 
-from tools import get_tool_registry
+_examples_root = os.path.join(os.path.dirname(__file__), "..")
+if _examples_root not in sys.path:
+    sys.path.insert(0, _examples_root)
+
+from example_tools import get_tool_registry  # noqa: E402  -- sys.path insertion above
 
 _current_session: contextvars.ContextVar[UndoLogSession | None] = contextvars.ContextVar(
     "undolog_session", default=None

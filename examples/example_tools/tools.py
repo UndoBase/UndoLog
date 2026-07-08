@@ -34,7 +34,9 @@ _MOCK_TOOL_SERVER_URL: str | None = None
 def _get_tool_server_url() -> str:
     global _MOCK_TOOL_SERVER_URL
     if _MOCK_TOOL_SERVER_URL is None:
-        _MOCK_TOOL_SERVER_URL = os.environ.get("MOCK_TOOL_SERVER_URL", "http://localhost:9091")
+        _MOCK_TOOL_SERVER_URL = os.environ.get(
+            "MOCK_TOOL_SERVER_URL", "http://localhost:9091"
+        )
     return _MOCK_TOOL_SERVER_URL
 
 
@@ -104,7 +106,9 @@ async def send_email(to: str, subject: str, body: str) -> dict[str, Any]:
         args={"ticket_id": "{ticket_id}"},
     ),
 )
-async def create_ticket(customer_id: str, priority: str, description: str) -> dict[str, Any]:
+async def create_ticket(
+    customer_id: str, priority: str, description: str
+) -> dict[str, Any]:
     """Create a support ticket in the system.
 
     On workflow rollback the engine calls ``compensate_create_ticket``

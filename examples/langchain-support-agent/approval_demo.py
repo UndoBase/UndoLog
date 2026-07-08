@@ -34,6 +34,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from typing import Any
 
 import httpx
@@ -41,7 +42,11 @@ import httpx
 from undolog_sdk import AwaitingApprovalError
 from undolog_sdk.session import UndoLogSession
 
-from tools import get_tool_registry
+_examples_root = os.path.join(os.path.dirname(__file__), "..")
+if _examples_root not in sys.path:
+    sys.path.insert(0, _examples_root)
+
+from example_tools import get_tool_registry  # noqa: E402  -- sys.path insertion above
 
 logging.basicConfig(
     level=logging.INFO,

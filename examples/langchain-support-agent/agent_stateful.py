@@ -66,10 +66,14 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
-
-from tools import get_tool_registry
 from undolog_sdk import AwaitingApprovalError
 from undolog_sdk.session import UndoLogSession
+
+_examples_root = os.path.join(os.path.dirname(__file__), "..")
+if _examples_root not in sys.path:
+    sys.path.insert(0, _examples_root)
+
+from example_tools import get_tool_registry  # noqa: E402  -- sys.path insertion above
 
 logging.basicConfig(
     level=logging.INFO,

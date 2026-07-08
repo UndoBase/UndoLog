@@ -15,7 +15,7 @@
 # All targets expect the UndoLog stack to be running:
 #   docker compose up -d postgres engine tool-server proxy
 
-.PHONY: test test-unit test-live test-all run run-approval run-compensation run-replay lint format
+.PHONY: test test-unit test-live test-all run run-approval run-compensation run-replay run-vanilla run-crewai run-semantic-kernel run-llama-index lint format
 
 test:
 	python -m pytest -v
@@ -47,3 +47,15 @@ run-compensation:
 
 run-replay:
 	python replay_demo.py
+
+run-vanilla:
+	python vanilla_agent.py
+
+run-crewai:
+	python crewai_agent.py
+
+run-semantic-kernel:
+	python semantic_kernel_agent.py
+
+run-llama-index:
+	python llama_index_agent.py
