@@ -150,7 +150,7 @@ class TestBuildSession:
             "pending_approval": None,
         }
         session = _build_session(state)
-        assert session._step_index == 0  # noqa: SLF001
+        assert session._step_index == 0  # noqa: SLF001  -- _build_session constructs session directly for test
 
 
 class TestHelpers:

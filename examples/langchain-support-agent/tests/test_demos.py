@@ -20,7 +20,7 @@ from compensation_demo import (
     notify_user,
     open_ticket,
 )
-from compensations import (
+from example_tools.compensations import (
     compensate_assign_engineer,
     compensate_charge_payment,
     compensate_create_ticket,
@@ -35,7 +35,7 @@ class TestApprovalDemoImports:
     """approval_demo module imports resolve correctly."""
 
     def test_import_approval_demo(self) -> None:
-        import approval_demo  # noqa: F811
+        import approval_demo  # noqa: F811  -- re-import in test isolation
 
         assert hasattr(approval_demo, "main")
 
@@ -221,7 +221,7 @@ class TestReplayDemoImports:
     """replay_demo module imports resolve correctly."""
 
     def test_import_replay_demo(self) -> None:
-        import replay_demo  # noqa: F811
+        import replay_demo  # noqa: F811  -- re-import in test isolation
 
         assert hasattr(replay_demo, "main")
 

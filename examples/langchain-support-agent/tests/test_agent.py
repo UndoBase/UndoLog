@@ -14,14 +14,14 @@ from __future__ import annotations
 import inspect
 
 
-from compensations import compensate_create_ticket, compensate_send_email
-from tools import (
+from example_tools import (
     create_ticket,
     escalate_case,
     get_tool_registry,
     lookup_customer,
     send_email,
 )
+from example_tools.compensations import compensate_create_ticket, compensate_send_email
 from undolog_sdk import CompensationDescriptor, ToolTier
 
 

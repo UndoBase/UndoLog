@@ -45,6 +45,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   branching (approve → continue, reject → halt), ``MemorySaver`` checkpointing
 - Interrupt lifecycle tests for ``agent_stateful.py``: AAE catch, approve
   resume, reject halt, checkpointer verification
+- ``examples/example_tools/`` package: shared tool registry and compensation
+  handlers consumed by all framework examples
+- ``examples/vanilla-support-agent/``: standalone vanilla asyncio agent with
+  OpenAI client, ``pyproject.toml``, ``Makefile``, and 11 unit tests
+- ``examples/crewai-support-agent/``: standalone CrewAI agent with
+  ``StructuredTool`` wrappers, ``pyproject.toml``, ``Makefile``, and 3 tests
+- ``examples/semantic-kernel-support-agent/``: standalone Semantic Kernel
+  agent with ``KernelFunctionFromMethod`` wrappers, ``pyproject.toml``,
+  ``Makefile``, and 2 tests
+- ``examples/llama-index-support-agent/``: standalone LlamaIndex agent with
+  ``FunctionTool`` wrappers, ``pyproject.toml``, ``Makefile``, and 2 tests
+- ``test_crewai_agent.py``, ``test_semantic_kernel_agent.py``,
+  ``test_llama_index_agent.py``: per-framework import and missing-API-key
+  tests split from ``test_cross_framework.py``
 
 ### Changed
 - Tool tier registry now reads `compensation_ref` and `irreversibility_reason`
@@ -55,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   for cross-store atomicity (no partial state on failure)
 - Approval handler applies `requestTimeout` context to prevent hanging HTTP
   connections during post-approval tool execution
+- ``vanilla_agent.py``, ``crewai_agent.py``, ``semantic_kernel_agent.py``,
+  ``llama_index_agent.py`` moved from ``langchain-support-agent/`` to their
+  own per-framework directories
+- ``tools.py`` and ``compensations.py`` removed from
+  ``langchain-support-agent/``; all agents import from ``example_tools``
 
 ### Fixed
 

@@ -35,7 +35,7 @@ import undolog_sdk.decorators
 from undolog_sdk import AwaitingApprovalError
 from undolog_sdk.session import UndoLogSession
 
-from tools import get_tool_registry
+from example_tools import get_tool_registry
 
 
 log = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ log = logging.getLogger(__name__)
 def _asyncpg_available() -> bool:
     """Check whether ``asyncpg`` is installed."""
     try:
-        import asyncpg  # noqa: F401
+        import asyncpg  # noqa: F401  -- existence check only
 
         return True
     except ImportError:
