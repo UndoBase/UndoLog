@@ -76,7 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Bump google.golang.org/grpc to v1.79.3 (CVE-2026-33186, CRITICAL)
 - Force postcss to >=8.5.10 via npm overrides (CVE-2026-41305, MODERATE)
-- Bump golang.org/x/net to v0.48.0 (CVE-2025-22872, CVE-2025-22870, MODERATE)
+- Bump golang.org/x/net to v0.56.0 (CVE-2025-22872, CVE-2025-22870,
+  CVE-2026-XXXXX, MODERATE)
+- Bump js-yaml to v3.15.0 (quadratic-complexity DoS in merge key
+  handling, MODERATE)
 - Fix incomplete HTML sanitization in heading extraction (CodeQL HIGH)
 - Add rehype-sanitize to docs markdown pipeline (defense-in-depth)
 - Add permissions block to all CI jobs (CodeQL MEDIUM)
