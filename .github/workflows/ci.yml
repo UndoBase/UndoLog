@@ -67,3 +67,36 @@ jobs:
 
       - name: Run mock-tool-server tests
         run: python -m pytest infra/mock-tool-server/tests/ -v --no-header
+
+      - name: CHANGELOG validation
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! grep -q "^## \[Unreleased\]" CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md is missing the [Unreleased] section."
+            exit 1
+          fi
+          title="${{ github.event.pull_request.title }}"
+          case "$title" in
+            chore*|docs*) exit 0 ;;
+          esac
+          lines=$(sed -n '/^## \[Unreleased\]/,/^## /p' CHANGELOG.md | grep -c '^- ')
+          if [ "$lines" -eq 0 ]; then
+            echo "ERROR: [Unreleased] section is empty."
+            exit 1
+          fi
+
+      - name: Commit message format
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --unshallow 2>/dev/null || true
+          npm install --save-dev @commitlint/cli @commitlint/config-conventional
+          echo "${{ github.event.pull_request.title }}" | npx commitlint
+          npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+      - name: Docs - broken link check
+        run: |
+          npm install --save-dev markdown-link-check
+          find docs -name '*.md' -exec npx markdown-link-check {} \;
+
+      - name: Docs - rustdoc completeness
+        run: RUSTDOCFLAGS="-D missing_docs" cargo doc --no-deps --workspace --exclude undolog-engine
