@@ -1,8 +1,7 @@
 """Stateful LangGraph agent with UndoLog approval branching.
 
-Extends ``agent.py`` with three premium LangGraph patterns that the
-analysis (``report/example-langchain-analysis.md`` §6) identified as
-missing:
+Extends ``agent.py`` with three LangGraph patterns for stateful
+approval branching:
 
 1. **Custom StateGraph** : defines ``AgentState`` with explicit fields
    for session identity, halt flag, and pending approval metadata.

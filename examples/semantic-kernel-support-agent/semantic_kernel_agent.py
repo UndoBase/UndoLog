@@ -2,7 +2,6 @@
 Semantic Kernel agent using UndoLog for exactly-once tool execution.
 
 Demonstrates undolog working with Microsoft's Semantic Kernel framework.
-Proves ADR 0006's claim that undolog is framework-agnostic.
 
 Requires ``semantic-kernel`` to be installed
 (``pip install semantic-kernel``).

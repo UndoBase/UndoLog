@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Idempotency-Key header dedup in mock-tool-server: repeated key returns
+  cached response without re-executing the handler
+  (``infra/mock-tool-server/server.py``)
+- Cross-language BLAKE3 signature parity test: hardcoded digest
+  ``8f20ad...d32546`` that must match the Rust engine's canonical-JSON
+  pipeline (``test_signature.py``)
+- 19 property-style state machine tests: effect transitions, session step
+  invariants, and compensation descriptor invariants
+  (``test_state_machine.py``)
 - Tool bodies now make real HTTP calls to a stateful mock-tool-server
   (replaces hardcoded mock returns in ``tools.py``, ``compensation_demo.py``,
   ``replay_demo.py``)
