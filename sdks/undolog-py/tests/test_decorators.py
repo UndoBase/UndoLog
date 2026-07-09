@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from typing import Any
+
 from undolog_sdk import AwaitingApprovalError, ToolTier, undolog_tool
 from undolog_sdk.client import InterceptResponse, UndoLogClient
 from undolog_sdk.session import UndoLogSession
@@ -38,6 +40,8 @@ def mock_client() -> AsyncMock:
 
 
 class TestSafeTier:
+    """Safe tools bypass the proxy entirely."""
+
     async def test_bypasses_proxy(self, session: UndoLogSession) -> None:
         called = False
 
@@ -72,6 +76,8 @@ class TestSafeTier:
 
 
 class TestCompensableExecute:
+    """Compensable tools call intercept then commit or fail."""
+
     async def test_calls_intercept_and_commit(
         self, session: UndoLogSession, mock_client: AsyncMock
     ) -> None:
@@ -85,7 +91,7 @@ class TestCompensableExecute:
             compensation=CompensationDescriptor.new("undo_test"),
             client=mock_client,
         )
-        async def create_item(name: str) -> dict:
+        async def create_item(name: str) -> dict[str, Any]:
             return {"id": 1, "name": name}
 
         result = await create_item("widget", _session=session)
@@ -149,7 +155,7 @@ class TestCompensableExecute:
     async def test_missing_compensation_raises(self) -> None:
         with pytest.raises(ValueError, match="compensation descriptor"):
 
-            @undolog_tool(tier=ToolTier.COMPENSABLE)  # type: ignore[arg-type]
+            @undolog_tool(tier=ToolTier.COMPENSABLE)
             async def bad_tool() -> None:
                 pass
 
@@ -158,6 +164,8 @@ class TestCompensableExecute:
 
 
 class TestReplay:
+    """Replay returns cached result without executing the function body."""
+
     async def test_returns_cached_result_without_execution(
         self, session: UndoLogSession, mock_client: AsyncMock
     ) -> None:
@@ -209,6 +217,8 @@ class TestReplay:
 
 
 class TestAwaitingApproval:
+    """AwaitingApproval outcome raises without executing the function body."""
+
     async def test_raises_without_execution(
         self, session: UndoLogSession, mock_client: AsyncMock
     ) -> None:
@@ -223,7 +233,7 @@ class TestAwaitingApproval:
             tier=ToolTier.IRREVERSIBLE,
             client=mock_client,
         )
-        async def delete_db(db_name: str) -> dict:
+        async def delete_db(db_name: str) -> dict[str, Any]:
             nonlocal executed
             executed = True
             return {"deleted": db_name}
@@ -258,6 +268,8 @@ class TestAwaitingApproval:
 
 
 class TestSessionRequired:
+    """Missing session parameter raises RuntimeError."""
+
     async def test_missing_session_raises(self) -> None:
         @undolog_tool(tier=ToolTier.SAFE)
         async def needs_session() -> str:

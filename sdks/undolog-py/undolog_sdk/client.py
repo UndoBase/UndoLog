@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import httpx
 
@@ -169,7 +169,7 @@ class UndoLogClient:
         if resp.status_code == 404:
             return {}
         resp.raise_for_status()
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
 
     async def fail(
         self,
@@ -196,7 +196,7 @@ class UndoLogClient:
         if resp.status_code == 404:
             return {}
         resp.raise_for_status()
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client session."""
