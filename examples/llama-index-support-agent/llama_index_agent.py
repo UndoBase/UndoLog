@@ -2,8 +2,7 @@
 LlamaIndex agent using UndoLog for exactly-once tool execution.
 
 Demonstrates undolog working with the LlamaIndex data framework via
-``FunctionTool`` wrappers.  Proves ADR 0006's claim that undolog is
-framework-agnostic.
+``FunctionTool`` wrappers.
 
 Requires ``llama-index`` to be installed (``pip install llama-index``).
 

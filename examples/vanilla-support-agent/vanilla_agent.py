@@ -2,8 +2,7 @@
 Vanilla asyncio agent using UndoLog for exactly-once tool execution.
 
 Demonstrates undolog working with a plain Python async loop and the OpenAI
-client directly, without any agent framework.  This proves ADR 0006's claim
-that undolog is framework-agnostic.
+client directly, without any agent framework.
 
 Usage
 -----

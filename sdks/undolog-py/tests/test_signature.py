@@ -12,6 +12,7 @@ Verifies:
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
 
@@ -125,7 +126,7 @@ class TestCallSignature:
 
     def test_differs_on_step(self) -> None:
         s = _sid()
-        args = {}
+        args: dict[str, Any] = {}
         assert call_signature(s, 1, "t", args) != call_signature(s, 2, "t", args)
 
     def test_differs_on_args(self) -> None:
@@ -204,7 +205,7 @@ class TestCallSignature:
 # the same inputs that Rust uses.  Each fixture documents what it tests.
 # When Rust fixture files become available, load them here instead.
 
-FIXTURES: list[dict] = [
+FIXTURES: list[dict[str, Any]] = [
     # 1-5: Empty and simple structures
     {"name": "empty_obj", "args": {}, "expected_json": "{}"},
     {"name": "empty_list", "args": [], "expected_json": "[]"},
@@ -440,7 +441,7 @@ FIXTURES: list[dict] = [
 
 class TestCanonicalJsonFixtures:
     @pytest.mark.parametrize("fixture", FIXTURES, ids=lambda f: f["name"])
-    def test_canonical_json_fixture(self, fixture: dict) -> None:
+    def test_canonical_json_fixture(self, fixture: dict[str, Any]) -> None:
         result = canonical_json(fixture["args"])
         assert result == fixture["expected_json"]
 
@@ -452,7 +453,7 @@ class TestCanonicalJsonFixtures:
 
 class TestCallSignatureFixtures:
     @pytest.mark.parametrize("fixture", FIXTURES, ids=lambda f: f["name"])
-    def test_signature_is_64_hex(self, fixture: dict) -> None:
+    def test_signature_is_64_hex(self, fixture: dict[str, Any]) -> None:
         sig = call_signature(_sid(), 0, fixture["name"], fixture["args"])
         assert len(sig) == 64
 
@@ -464,12 +465,30 @@ class TestCallSignatureFixtures:
             )
 
 
+# ── Cross-language parity test vector ────────────────────────────────────
+# The expected signature below was computed by the Python SDK. The Rust
+# engine must produce the same 64-character hex output for the identical
+# inputs. If this test fails after a Rust change, the cross-language
+# call_signature invariant is broken.
+
+_CROSS_LANG_SESSION = "550e8400-e29b-41d4-a716-446655440000"
+_CROSS_LANG_STEP = 1
+_CROSS_LANG_TOOL = "send_email"
+_CROSS_LANG_ARGS: dict[str, str] = {
+    "to": "alice@example.com",
+    "subject": "Hello",
+}
+_CROSS_LANG_EXPECTED = (
+    "8f20ad25773b270753b417b05437f5644997cb43e70a11a9e3b4e6d9a9d32546"
+)
+
+
 # ── Fixture-driven signature validation ───────────────────────────────────
 # The following tests produce known signatures for a fixed session UUID.
 # These can be verified against Rust output when cross-language fixture files
 # are available.
 
-FIXED_FIXTURES = [
+FIXED_FIXTURES: list[dict[str, Any]] = [
     {
         "session": "00000000-0000-0000-0000-000000000000",
         "step": 0,
@@ -494,8 +513,22 @@ FIXED_FIXTURES = [
 ]
 
 
+class TestCrossLangParity:
+    """Verifies Python SDK output matches the Rust engine for identical inputs."""
+
+    def test_known_signature_matches_rust(self) -> None:
+        sig = call_signature(
+            _CROSS_LANG_SESSION, _CROSS_LANG_STEP, _CROSS_LANG_TOOL, _CROSS_LANG_ARGS
+        )
+        assert sig == _CROSS_LANG_EXPECTED, (
+            f"Python call_signature mismatch. "
+            f"Expected {_CROSS_LANG_EXPECTED} got {sig}. "
+            f"Verify Rust engine produces the same output."
+        )
+
+
 class TestFixedSignatures:
     @pytest.mark.parametrize("fx", FIXED_FIXTURES, ids=lambda f: f["tool"])
-    def test_known_signature_length(self, fx: dict) -> None:
+    def test_known_signature_length(self, fx: dict[str, Any]) -> None:
         sig = call_signature(fx["session"], fx["step"], fx["tool"], fx["args"])
         assert len(sig) == fx["expected_length"]

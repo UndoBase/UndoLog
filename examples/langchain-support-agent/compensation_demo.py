@@ -12,11 +12,11 @@ This demo exercises undolog's compensation mechanism end-to-end:
 
 Key safety invariant demonstrated
 ----------------------------------
-Pre-registered compensation (ADR 0007): the undo stack entry is
-persisted to PostgreSQL *before* the tool body executes.  If the
-process crashes between registration and execution, the orchestrator
-finds a pending undo entry on restart and calls the compensation
-(safest default: undo an action whose outcome is unknown).
+Pre-registered compensation: the undo stack entry is persisted to
+PostgreSQL *before* the tool body executes.  If the process crashes
+between registration and execution, the orchestrator finds a pending
+undo entry on restart and calls the compensation (safest default:
+undo an action whose outcome is unknown).
 
 Compensation patterns shown
 ---------------------------

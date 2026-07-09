@@ -2,8 +2,7 @@
 CrewAI agent using UndoLog for exactly-once tool execution.
 
 Demonstrates undolog working with the CrewAI multi-agent framework via
-LangChain ``StructuredTool`` wrappers.  Proves ADR 0006's claim that
-undolog is framework-agnostic.
+LangChain ``StructuredTool`` wrappers.
 
 Requires ``crewai`` to be installed (``pip install crewai``).
 

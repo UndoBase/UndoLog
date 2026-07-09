@@ -3,11 +3,17 @@
 Provides realistic CRUD operations for all demo tools, with an
 in-memory store seeded with sample data at startup.
 
+The server supports Idempotency-Key based deduplication for
+compensation requests: when the Rust saga orchestrator sends
+``Idempotency-Key: undo-{undo_id}`` on a retry, a previously cached
+response is returned without re-executing the handler.
+
 Endpoints
 ---------
 POST /tools
     Execute a tool call.  Request body is a ``ToolCall`` JSON object.
-    Response is a ``ToolResult`` JSON object.
+    Response is a ``ToolResult`` JSON object.  Supports
+    ``Idempotency-Key`` header for dedup.
 
 GET /health
     Returns ``{"status": "ok"}``.
@@ -96,6 +102,11 @@ SEED_ENGINEERS: dict[str, dict[str, str]] = {
     "sarah": {"engineer": "sarah", "name": "Sarah Chen", "team": "senior"},
     "mike": {"engineer": "mike", "name": "Mike Rivera", "team": "level-2"},
 }
+
+
+# ── Idempotency store (compensation dedup) ────────────────────────────────
+
+_IDEM_STORE: dict[str, dict[str, Any]] = {}
 
 
 # ── In-memory store (mutated at runtime) ──────────────────────────────────
@@ -342,6 +353,14 @@ class Handler(BaseHTTPRequestHandler):
         args = call.get("args", {})
         log.info("TOOL CALL: %s args=%s", tool_name, json.dumps(args))
 
+        idem_key = self.headers.get("Idempotency-Key", "")
+        if idem_key:
+            cached = _IDEM_STORE.get(idem_key)
+            if cached is not None:
+                log.info("IDEMPOTENCY HIT: key=%s tool=%s", idem_key, tool_name)
+                self._json_response(cached)
+                return
+
         TOOL_CALLS.append(
             {"tool_name": tool_name, "args": args, "timestamp": time.time()}
         )
@@ -355,6 +374,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         result = handler(args)
+        if idem_key:
+            _IDEM_STORE[idem_key] = result
         http_status = (
             HTTPStatus.OK if result.get("success", False) else HTTPStatus.NOT_FOUND
         )
@@ -373,6 +394,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def run() -> None:
+    """Start the HTTP server and block forever."""
     addr = os.environ.get("MOCK_TOOL_SERVER_ADDR", "0.0.0.0")
     port = int(os.environ.get("MOCK_TOOL_SERVER_PORT", "9091"))
     server = HTTPServer((addr, port), Handler)
