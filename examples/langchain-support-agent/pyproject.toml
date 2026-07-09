@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=75"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "undolog-example-langchain"
@@ -20,6 +20,9 @@ dev = [
     "pytest-asyncio>=0.25",
     "asyncpg>=0.29",
 ]
+
+[tool.setuptools.packages.find]
+include = ["langchain_support_agent*"]
 
 [tool.ruff]
 line-length = 100

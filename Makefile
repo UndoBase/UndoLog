@@ -7,7 +7,7 @@
 
 GO_PB_DIR := services/undolog-proxy/internal/engine/pb
 
-.PHONY: proto proto-go proto-rust clean check fmt lint test
+.PHONY: proto proto-go proto-rust clean check fmt lint test typecheck test-all
 
 proto: proto-go proto-rust
 
@@ -51,6 +51,20 @@ test:
 	cd services/undolog-proxy && go test ./... -count=1
 	cd sdks/undolog-py && python -m pytest -v
 	cd apps/www && npm run build
+
+typecheck:
+	cd sdks/undolog-py && mypy undolog_sdk/ tests/
+
+test-examples:
+	@for dir in examples/*-support-agent; do \
+		echo "=== Testing $$dir ==="; \
+		(cd "$$dir" && python -m pytest -v --no-header -m "not integration") || true; \
+	done
+
+test-mock-server:
+	python -m pytest infra/mock-tool-server/tests/ -v --no-header
+
+test-all: check test-examples test-mock-server
 
 # ── Clean ─────────────────────────────────────────────────────────────────
 

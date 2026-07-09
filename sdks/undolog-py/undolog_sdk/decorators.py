@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import functools
 import inspect
-from typing import Any, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from undolog_sdk.client import UndoLogClient
 from undolog_sdk.session import UndoLogSession
@@ -54,7 +55,7 @@ def undolog_tool(
     compensation: CompensationDescriptor | None = None,
     client: UndoLogClient | None = None,
     session_param: str = "_session",
-) -> Callable:
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     """Decorator that wraps an async function with UndoLog interception.
 
     Args:
@@ -93,7 +94,7 @@ def undolog_tool(
             "Pass compensation=CompensationDescriptor.new(...)"
         )
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         tool_name = func.__name__
 
         @functools.wraps(func)

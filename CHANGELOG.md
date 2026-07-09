@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- GitHub Actions CI workflow: runs ``make check`` on every push and
+  pull request to main, plus example unit tests and mock-tool-server
+  HTTP contract tests (``.github/workflows/ci.yml``)
+- mypy static type checking configuration with strict mode and
+  ``make typecheck`` target (``sdks/undolog-py/mypy.ini``,
+  ``sdks/undolog-py/pyproject.toml``)
+- 27 mock-tool-server HTTP contract tests: handler dispatch,
+  idempotency-key dedup, health endpoint, error status codes
+  (``infra/mock-tool-server/tests/test_server.py``)
+- Makefile targets: ``typecheck``, ``test-examples``, ``test-mock-server``,
+  ``test-all``
 - Idempotency-Key header dedup in mock-tool-server: repeated key returns
   cached response without re-executing the handler
   (``infra/mock-tool-server/server.py``)
@@ -83,9 +94,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   own per-framework directories
 - ``tools.py`` and ``compensations.py`` removed from
   ``langchain-support-agent/``; all agents import from ``example_tools``
+- Upgraded type annotations across SDK client and decorator modules to
+  pass strict mypy validation (``client.py``, ``decorators.py``,
+  ``test_decorators.py``)
 
 ### Fixed
 
+- Example agent projects now use standard ``setuptools.build_meta`` instead
+  of experimental ``setuptools.backends._legacy:_Backend`` (unavailable in
+  CI runner's setuptools version); added ``[tool.setuptools.packages.find]``
+  to ``langchain-support-agent`` for flat-layout discovery
+- ``ruff`` added to Python SDK dev dependencies (was missing, causing
+  ``make: ruff: No such file or directory`` in CI)
+- ``npm ci`` step added to CI workflow before ``make check`` (was missing,
+  causing ``npm run build`` to fail with no ``node_modules``)
+- ``protobuf-compiler`` install step added to CI workflow (was missing,
+  causing ``undolog-engine`` build to fail without ``protoc``)
 - `agent.py` now wraps raw ``@undolog_tool`` functions with ``StructuredTool``
   + context var for session injection (was crashing with missing ``_session``
   kwarg when called by ``create_react_agent``)
