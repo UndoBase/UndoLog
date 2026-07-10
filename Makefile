@@ -7,7 +7,7 @@
 
 GO_PB_DIR := services/undolog-proxy/internal/engine/pb
 
-.PHONY: proto proto-go proto-rust clean check fmt lint test typecheck test-all
+.PHONY: proto proto-go proto-rust clean check fmt lint test typecheck test-all demo-multi-tenant
 
 proto: proto-go proto-rust
 
@@ -63,6 +63,9 @@ test-examples:
 
 test-mock-server:
 	python -m pytest infra/mock-tool-server/tests/ -v --no-header
+
+demo-multi-tenant:
+	python examples/langchain-support-agent/multi_tenant_demo.py
 
 test-all: check test-examples test-mock-server
 
