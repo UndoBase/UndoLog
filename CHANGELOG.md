@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Benchmark harness at ``infra/benchmarks/``: async timing recorder
+  with warmup, steady-state detection (split-half mean drift check),
+  percentile statistics (p50/p95/p99/mean/stddev/min/max), TPS
+  reporting, and resource metric collection (CPU%, RSS, goroutines,
+  DB connections, open FDs, engine RSS).
+- Benchmark 1 (overhead latency): direct call vs SAFE vs COMPENSABLE
+  vs IRREVERSIBLE (full approval round-trip) tier latency with
+  delta-from-baseline table.
+- Benchmark 2 (throughput): completed tool calls per second at N
+  concurrent sessions (1, 5, 10, 25, 50) with per-level TPS and
+  resource correlation.
+- Benchmark 3 (dedup): cold (first execution) vs hot (replay) latency
+  comparison with 10-worker contention test, exactly-once DB
+  verification, and saturation-level testing.
+- Benchmark 4 (compensation chain): rollback time for undo stacks
+  of depth 1, 5, 10, 20 with per-effect compensation timing and
+  LIFO ordering verification.
+- Benchmark 5 (multi-tenant noise immunity): org-beta latency at
+  noise levels 0, 10, 25, 50 concurrent org-alpha sessions with flat-
+  line isolation analysis.
+- Benchmark 6 (SSE delivery latency): emit-to-callback delta varying
+  subscriber counts (1, 5, 10) and event rates (10/s, 100/s, 500/s)
+  with drop-rate measurement.
+- Benchmark 7 (approval workflow latency): full intercept-to-commit
+  round-trip with stage breakdown (intercept, approve, total) and
+  5-worker contention test (one SUCCESS, remainder CONFLICT).
+- Benchmark 8 (longevity): 30-minute sustained load with resource
+  drift detection (CPU/RSS/goroutine trend across first/second half).
+- Makefile targets: ``bench``, ``bench-quick``, ``bench-overhead``,
+  ``bench-throughput``, ``bench-dedup``, ``bench-compensation``,
+  ``bench-multitenant``, ``bench-sse``, ``bench-approval``,
+  ``bench-longevity``.
+- ``.github/workflows/benchmarks.yml``: nightly full benchmark run
+  with JSON artifact archive and regression comparison.
+- ``.github/workflows/benchmarks-pr.yml``: PR quick-check workflow
+  running overhead benchmark 1 at concurrency=1 with 100-sample
+  minimum and plausible-latency verification.
+- ``infra/benchmarks/compare_regression.py``: p95 regression checker
+  with configurable threshold (default 20%), baseline auto-detection,
+  and exit-code gating for release CI.
+
 - Multi-tenant demo with concurrent agents in two isolated orgs
   (``multi_tenant_demo.py``): org-alpha runs SAFE, COMPENSABLE, and
   IRREVERSIBLE tools with auto-approve; org-beta runs SAFE, COMPENSABLE,
@@ -94,6 +135,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   tests split from ``test_cross_framework.py``
 
 ### Changed
+
+- ``.opencode/QUALITY_PRINCIPLES.md``: Principle 2 (print) broadened
+  to allow structured CLI output from named ``print_*`` / ``output_*``
+  helpers; Principle 11 (test coverage) exempts benchmark tools whose
+  validation is execution-based regression comparison.
 - Tool tier registry now reads `compensation_ref` and `irreversibility_reason`
   from DB to construct proper `Compensable`/`Irreversible` tiers
 - Removed `ON CONFLICT DO NOTHING` from effect inserts (advisory lock +

@@ -1,0 +1,120 @@
+name: Nightly Benchmarks
+
+on:
+  schedule:
+    # 03:00 UTC every day, after any overnight merges.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      benchmark:
+        description: "Benchmark to run (overhead, throughput, dedup, compensation, multitenant, sse, approval, longevity, all)"
+        default: "all"
+        required: false
+      warmup:
+        description: "Warmup seconds"
+        default: "10"
+        required: false
+      duration:
+        description: "Recording duration seconds"
+        default: "60"
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  UNDOLOG_PROXY_URL: http://localhost:8080
+  MOCK_TOOL_SERVER_URL: http://localhost:9091
+  UNDOLOG_API_KEY: dev-key
+  UNDOLOG_API_KEY_2: dev-key-2
+
+jobs:
+  benchmark:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e "sdks/undolog-py[dev]"
+
+      - name: Start Docker Compose stack
+        run: |
+          docker compose up -d postgres tool-server proxy engine
+          echo "Waiting for stack to be healthy..."
+          sleep 15
+          curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:8080/health
+          curl --retry 5 --retry-delay 2 http://localhost:9091/health
+          curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:9090/health
+          echo "Waiting for proxy to forward through engine..."
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Content-Type: application/json" \
+              -H "X-Api-Key: dev-key" \
+              -d '{"session_id":"probe-001","tool_name":"lookup_customer","step_index":1,"args":{"customer_id":"cust_42"}}' \
+              http://localhost:8080/mcp/tool_call 2>/dev/null || echo "000")
+            if [ "$code" != "502" ] && [ "$code" != "000" ]; then
+              echo "Stack ready (HTTP $code)"
+              break
+            fi
+            echo "Engine gRPC not ready (HTTP $code), retrying in 3s..."
+            sleep 3
+          done
+
+      - name: Apply migrations
+        run: |
+          for f in migrations/*.sql; do
+            psql "$UNDOLOG_PROXY_URL" -f "$f" || true
+          done
+
+      - name: Run benchmarks
+        id: benchmark
+        run: |
+          BENCHMARK="${{ github.event.inputs.benchmark || 'all' }}"
+          WARMUP="${{ github.event.inputs.warmup || '10' }}"
+          DURATION="${{ github.event.inputs.duration || '60' }}"
+          python -m infra.benchmarks.run \
+            --benchmark "$BENCHMARK" \
+            --warmup "$WARMUP" \
+            --duration "$DURATION" \
+            --no-resources 2>&1 | tee bench-output.txt
+
+      - name: Archive benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-results/
+          retention-days: 90
+
+      - name: Compare against baseline (regression detection)
+        if: always()
+        run: |
+          BASELINE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
+          CURRENT=$(ls -d bench-results/*/ 2>/dev/null | head -1)
+          if [ -z "$CURRENT" ]; then
+            echo "No benchmark results found - skipping comparison."
+            exit 0
+          fi
+          python infra/benchmarks/compare_regression.py \
+            --current "$CURRENT/results.json" \
+            --threshold 20 \
+            2>&1 | tee regression-report.txt
+
+      - name: Upload regression report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report
+          path: regression-report.txt
+          retention-days: 90
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down

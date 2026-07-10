@@ -7,7 +7,7 @@
 
 GO_PB_DIR := services/undolog-proxy/internal/engine/pb
 
-.PHONY: proto proto-go proto-rust clean check fmt lint test typecheck test-all demo-multi-tenant
+.PHONY: proto proto-go proto-rust clean check fmt lint test typecheck test-all demo-multi-tenant bench bench-quick bench-overhead bench-throughput bench-dedup bench-compensation bench-multitenant bench-sse bench-approval bench-longevity
 
 proto: proto-go proto-rust
 
@@ -66,6 +66,38 @@ test-mock-server:
 
 demo-multi-tenant:
 	python examples/langchain-support-agent/multi_tenant_demo.py
+
+# ── Benchmarks ────────────────────────────────────────────────────────────
+
+bench:
+	python -m infra.benchmarks.run --warmup 5 --duration 15
+
+bench-quick:
+	python -m infra.benchmarks.run --quick
+
+bench-overhead:
+	python -m infra.benchmarks.run --benchmark overhead --warmup 5 --duration 15
+
+bench-throughput:
+	python -m infra.benchmarks.run --benchmark throughput --warmup 5 --duration 30
+
+bench-dedup:
+	python -m infra.benchmarks.run --benchmark dedup --warmup 5 --duration 15
+
+bench-compensation:
+	python -m infra.benchmarks.run --benchmark compensation --warmup 5 --duration 20
+
+bench-multitenant:
+	python -m infra.benchmarks.run --benchmark multitenant --warmup 5 --duration 20
+
+bench-sse:
+	python -m infra.benchmarks.run --benchmark sse --warmup 5 --duration 20
+
+bench-approval:
+	python -m infra.benchmarks.run --benchmark approval --warmup 5 --duration 20
+
+bench-longevity:
+	python -m infra.benchmarks.run --benchmark longevity --warmup 30 --duration 1800
 
 test-all: check test-examples test-mock-server
 
