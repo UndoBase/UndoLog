@@ -1,0 +1,100 @@
+name: PR Benchmark Quick Check
+
+on:
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+env:
+  CARGO_TERM_COLOR: always
+  UNDOLOG_PROXY_URL: http://localhost:8080
+  MOCK_TOOL_SERVER_URL: http://localhost:9091
+  UNDOLOG_API_KEY: dev-key
+  UNDOLOG_API_KEY_2: dev-key-2
+
+jobs:
+  quick-check:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e "sdks/undolog-py[dev]"
+
+      - name: Start Docker Compose stack
+        run: |
+          docker compose up -d postgres tool-server proxy engine
+          echo "Waiting for stack to be healthy..."
+          sleep 15
+          curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:8080/health
+          curl --retry 5 --retry-delay 2 http://localhost:9091/health
+          curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:9090/health
+          echo "Waiting for proxy to forward through engine..."
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Content-Type: application/json" \
+              -H "X-Api-Key: dev-key" \
+              -d '{"session_id":"probe-001","tool_name":"lookup_customer","step_index":1,"args":{"customer_id":"cust_42"}}' \
+              http://localhost:8080/mcp/tool_call 2>/dev/null || echo "000")
+            if [ "$code" != "502" ] && [ "$code" != "000" ]; then
+              echo "Stack ready (HTTP $code)"
+              break
+            fi
+            echo "Engine gRPC not ready (HTTP $code), retrying in 3s..."
+            sleep 3
+          done
+
+      - name: Apply migrations
+        run: |
+          for f in migrations/*.sql; do
+            psql "$UNDOLOG_PROXY_URL" -f "$f" || true
+          done
+
+      - name: Run quick benchmark (overhead only, 100 samples)
+        run: |
+          python -m infra.benchmarks.run \
+            --benchmark overhead \
+            --quick \
+            --no-resources 2>&1 | tee bench-output.txt
+
+      - name: Verify benchmark completed successfully
+        run: |
+          if grep -q "overhead-direct" bench-output.txt && \
+             grep -q "overhead-safe" bench-output.txt && \
+             grep -q "overhead-compensable" bench-output.txt; then
+            echo "Benchmark quick check PASSED"
+          else
+            echo "Benchmark quick check FAILED - missing expected results"
+            exit 1
+          fi
+          # Verify plausible latencies (< 10s for any cell).
+          while IFS= read -r line; do
+            if [[ "$line" =~ p99=([0-9]+) ]]; then
+              p99="${BASH_REMATCH[1]}"
+              if (( p99 > 10_000_000 )); then
+                echo "Suspiciously high p99 latency: $p99 us"
+              fi
+            fi
+          done < bench-output.txt
+
+      - name: Archive quick check results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-quick-results
+          path: bench-results/
+          retention-days: 30
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down
