@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Multi-tenant demo with concurrent agents in two isolated orgs
+  (``multi_tenant_demo.py``): org-alpha runs SAFE, COMPENSABLE, and
+  IRREVERSIBLE tools with auto-approve; org-beta runs SAFE, COMPENSABLE,
+  and a forced failure triggering compensation rollback.  SSE dashboard
+  consumer (``sse_dashboard.py``) subscribes to both org streams and
+  renders lifecycle events in real time.
+- Migration ``0004_seed_demo_org_two.sql``: seeds a second demo
+  organisation (org-beta) with matching tool registrations.
+- ``docker-compose.yml``: added second API key (``dev-key-2``) mapped to
+  the second org UUID.
+- ``Makefile``: ``demo-multi-tenant`` target.
+- ``.env.example``: ``UNDOLOG_API_KEY_2`` variable.
+
 - GitHub Actions CI workflow: runs ``make check`` on every push and
   pull request to main, plus example unit tests and mock-tool-server
   HTTP contract tests (``.github/workflows/ci.yml``)
