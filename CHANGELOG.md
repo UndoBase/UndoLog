@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- ``commit_effect()`` and ``fail_effect()`` in ``crates/undolog-store``:
+  replaced two-query (UPDATE + SELECT) pattern with a single CTE query
+  that returns both affected-row count and existence flag in one
+  round-trip.  Added ``warn!()`` log on the SAFE-tier skip path for
+  observability.  Eliminates the TOCTOU race window between the UPDATE
+  and existence check.  Resolved a ``502 commit_failed`` error for
+  unregistered tools sent through the proxy.
+
 ### Added
 
+- ``.github/actions/start-stack/action.yml``: shared composite action for
+  Docker Compose stack startup, HTTP health checks, gRPC functional probe,
+  and configurable API key input.
+- ``.github/workflows/e2e.yml``: end-to-end integration workflow triggered
+  on push to main that starts the full UndoLog stack and runs
+  ``test_live_stack.py``.
 - Benchmark harness at ``infra/benchmarks/``: async timing recorder
   with warmup, steady-state detection (split-half mean drift check),
   percentile statistics (p50/p95/p99/mean/stddev/min/max), TPS
@@ -136,6 +152,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- ``.github/workflows/benchmarks.yml``, ``.github/workflows/benchmarks-pr.yml``:
+  stack startup logic replaced with ``uses: ./.github/actions/start-stack``
+  shared action (removed 22-line inline shell block).
 - ``.opencode/QUALITY_PRINCIPLES.md``: Principle 2 (print) broadened
   to allow structured CLI output from named ``print_*`` / ``output_*``
   helpers; Principle 11 (test coverage) exempts benchmark tools whose
@@ -159,6 +178,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- ``.github/workflows/ci.yml``: removed ``|| true`` that was silently
+  swallowing example test suite failures; any test breakage now fails CI.
+- ``.github/actions/start-stack/action.yml``: removed dead ``psql`` step
+  that used an HTTP URL (``UNDOLOG_PROXY_URL``) as a PostgreSQL connection
+  string, always silently failing. Migrations are handled by Postgres
+  ``docker-entrypoint-initdb.d``.
+- ``api_key`` in start-stack action: changed from hardcoded ``dev-key`` to
+  an input parameter with default ``dev-key``, allowing callers to override.
 - Example agent projects now use standard ``setuptools.build_meta`` instead
   of experimental ``setuptools.backends._legacy:_Backend`` (unavailable in
   CI runner's setuptools version); added ``[tool.setuptools.packages.find]``

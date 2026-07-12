@@ -62,7 +62,7 @@ jobs:
         run: |
           for dir in examples/*-support-agent; do
             echo "=== Testing $dir ==="
-            (cd "$dir" && python -m pytest -v --no-header -m "not integration" 2>&1 || true)
+            (cd "$dir" && python -m pytest -v --no-header -m "not integration")
           done
 
       - name: Run mock-tool-server tests

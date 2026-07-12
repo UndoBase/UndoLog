@@ -31,34 +31,8 @@ jobs:
           pip install --upgrade pip
           pip install -e "sdks/undolog-py[dev]"
 
-      - name: Start Docker Compose stack
-        run: |
-          docker compose up -d postgres tool-server proxy engine
-          echo "Waiting for stack to be healthy..."
-          sleep 15
-          curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:8080/health
-          curl --retry 5 --retry-delay 2 http://localhost:9091/health
-          curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:9090/health
-          echo "Waiting for proxy to forward through engine..."
-          for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-              -H "Content-Type: application/json" \
-              -H "X-Api-Key: dev-key" \
-              -d '{"session_id":"probe-001","tool_name":"lookup_customer","step_index":1,"args":{"customer_id":"cust_42"}}' \
-              http://localhost:8080/mcp/tool_call 2>/dev/null || echo "000")
-            if [ "$code" != "502" ] && [ "$code" != "000" ]; then
-              echo "Stack ready (HTTP $code)"
-              break
-            fi
-            echo "Engine gRPC not ready (HTTP $code), retrying in 3s..."
-            sleep 3
-          done
-
-      - name: Apply migrations
-        run: |
-          for f in migrations/*.sql; do
-            psql "$UNDOLOG_PROXY_URL" -f "$f" || true
-          done
+      - name: Start stack
+        uses: ./.github/actions/start-stack
 
       - name: Run quick benchmark (overhead only, 100 samples)
         run: |

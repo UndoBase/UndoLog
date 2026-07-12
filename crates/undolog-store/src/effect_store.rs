@@ -13,7 +13,7 @@ use sqlx::{
     postgres::{PgConnection, PgRow},
     PgPool, Row,
 };
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use undolog_types::{
     effect::{CallSignature, EffectRecord, EffectState, ToolCall, ToolResult},
@@ -282,28 +282,40 @@ impl EffectStore {
     ) -> UndoLogResult<()> {
         let result_json = serde_json::to_value(&result)?;
 
-        let rows = sqlx::query(
+        let (affected, exists) = sqlx::query_as::<_, (i64, bool)>(
             r#"
-            UPDATE undolog_effect_log
-            SET state           = 'committed'::undolog_effect_state,
-                result_snapshot = $1,
-                committed_at    = now()
-            WHERE effect_id = $2
-              AND org_id    = $3
-              AND state     IN ('executing'::undolog_effect_state, 'approved'::undolog_effect_state)
+            WITH upd AS (
+                UPDATE undolog_effect_log
+                SET state           = 'committed'::undolog_effect_state,
+                    result_snapshot = $1,
+                    committed_at    = now()
+                WHERE effect_id = $2
+                  AND org_id    = $3
+                  AND state     IN ('executing'::undolog_effect_state, 'approved'::undolog_effect_state)
+                RETURNING 1
+            )
+            SELECT
+                (SELECT count(*) FROM upd) AS affected,
+                EXISTS(SELECT 1 FROM undolog_effect_log WHERE effect_id = $2 AND org_id = $3) AS exists
             "#,
         )
         .bind(&result_json)
         .bind(*effect_id.as_uuid())
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
+        .fetch_one(&self.pool)
+        .await?;
 
-        if rows == 0 {
-            return Err(UndoLogError::NotExecuting { effect_id: effect_id.to_string() });
+        if affected > 0 {
+            return Ok(());
         }
-        Ok(())
+        if !exists {
+            warn!(
+                effect_id = %effect_id,
+                "Commit called for non-existent effect (SAFE tier)"
+            );
+            return Ok(());
+        }
+        Err(UndoLogError::NotExecuting { effect_id: effect_id.to_string() })
     }
 
     // ── Transition: executing → pending (failure recorded) ───────────────
@@ -318,28 +330,39 @@ impl EffectStore {
     ) -> UndoLogResult<()> {
         let error_json = serde_json::json!({ "error": reason });
 
-        let rows = sqlx::query(
+        let (affected, exists) = sqlx::query_as::<_, (i64, bool)>(
             r#"
-            UPDATE undolog_effect_log
-            SET state           = 'pending'::undolog_effect_state,
-                result_snapshot = $1
-            WHERE effect_id = $2
-              AND org_id    = $3
-              AND state     = 'executing'::undolog_effect_state
+            WITH upd AS (
+                UPDATE undolog_effect_log
+                SET state           = 'pending'::undolog_effect_state,
+                    result_snapshot = $1
+                WHERE effect_id = $2
+                  AND org_id    = $3
+                  AND state     = 'executing'::undolog_effect_state
+                RETURNING 1
+            )
+            SELECT
+                (SELECT count(*) FROM upd) AS affected,
+                EXISTS(SELECT 1 FROM undolog_effect_log WHERE effect_id = $2 AND org_id = $3) AS exists
             "#,
         )
         .bind(&error_json)
         .bind(*effect_id.as_uuid())
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
+        .fetch_one(&self.pool)
+        .await?;
 
-        if rows == 0 {
-            return Err(UndoLogError::NotExecuting { effect_id: effect_id.to_string() });
+        if affected > 0 {
+            return Ok(());
         }
-
-        Ok(())
+        if !exists {
+            warn!(
+                effect_id = %effect_id,
+                "Fail called for non-existent effect (SAFE tier)"
+            );
+            return Ok(());
+        }
+        Err(UndoLogError::NotExecuting { effect_id: effect_id.to_string() })
     }
 
     // ── Replay path ───────────────────────────────────────────────────────
