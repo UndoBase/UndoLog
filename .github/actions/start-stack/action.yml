@@ -1,0 +1,57 @@
+name: Start UndoLog stack
+description: |
+  Start Docker Compose services, wait for HTTP health checks, and probe the
+  proxy-to-engine gRPC pipeline with a real tool call.
+
+inputs:
+  services:
+    description: Docker Compose services to start (space-separated)
+    required: false
+    default: postgres tool-server proxy engine
+  api_key:
+    description: API key for the proxy functional probe
+    required: false
+    default: dev-key
+
+runs:
+  using: composite
+  steps:
+    - name: Start containers
+      shell: bash
+      run: |
+        docker compose up -d ${{ inputs.services }}
+
+    - name: Wait for HTTP health endpoints
+      shell: bash
+      run: |
+        echo "--- Proxy health ---"
+        curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:8080/health
+        echo ""
+        echo "--- Tool server health ---"
+        curl --retry 5 --retry-delay 2 http://localhost:9091/health
+        echo ""
+        echo "--- Engine health ---"
+        curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:9090/health
+        echo ""
+
+    - name: Probe proxy-to-engine gRPC pipeline
+      shell: bash
+      run: |
+        echo "--- Functional probe ---"
+        for i in $(seq 1 30); do
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Api-Key: ${{ inputs.api_key }}" \
+            -d '{"session_id":"11111111-1111-1111-1111-111111111111","tool_name":"lookup_customer","step_index":1,"args":{"customer_id":"cust_42"}}' \
+            http://localhost:8080/mcp/tool_call 2>/dev/null || echo "000")
+          if [ "$code" != "502" ] && [ "$code" != "000" ]; then
+            echo "Stack ready (HTTP $code)"
+            break
+          fi
+          if [ "$i" -eq 30 ]; then
+            echo "ERROR: Stack never became ready after 30 retries"
+            exit 1
+          fi
+          echo "Engine gRPC not ready (HTTP $code), retrying in 3s..."
+          sleep 3
+        done

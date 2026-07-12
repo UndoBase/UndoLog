@@ -1,0 +1,44 @@
+name: E2E
+
+on:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  UNDOLOG_PROXY_URL: http://localhost:8080
+  MOCK_TOOL_SERVER_URL: http://localhost:9091
+  UNDOLOG_API_KEY: dev-key
+  UNDOLOG_API_KEY_2: dev-key-2
+
+jobs:
+  e2e:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install asyncpg
+          pip install -e "sdks/undolog-py[dev]"
+          pip install -e examples/example_tools
+          pip install -e examples/langchain-support-agent
+          pip install -e examples/langchain-support-agent[dev]
+
+      - name: Start stack
+        uses: ./.github/actions/start-stack
+
+      - name: Run integration tests
+        run: python -m pytest examples/langchain-support-agent/tests/test_live_stack.py -v
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down
