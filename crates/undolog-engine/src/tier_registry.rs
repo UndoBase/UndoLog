@@ -122,6 +122,11 @@ impl Default for TierRegistry {
 /// The task runs forever and is cancelled when the process exits.
 /// Errors during refresh are logged but do not crash the task - the
 /// registry continues serving the last known state.
+///
+/// IMPORTANT: The registry must be populated before this is called, either
+/// via a one-shot `refresh_all_orgs()` in the caller or by waiting for the
+/// schema to exist.  This loop is a refresh only: it expects the initial
+/// load to have happened already.
 pub fn spawn_refresh_loop(
     registry: TierRegistry,
     pool: sqlx::PgPool,
@@ -145,7 +150,10 @@ pub fn spawn_refresh_loop(
 }
 
 /// Reload every active tool from `undolog_tool_registry` into the registry.
-async fn refresh_all_orgs(registry: &TierRegistry, pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+pub(crate) async fn refresh_all_orgs(
+    registry: &TierRegistry,
+    pool: &sqlx::PgPool,
+) -> Result<(), sqlx::Error> {
     use sqlx::Row;
 
     let rows = sqlx::query(

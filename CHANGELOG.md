@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
+  for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
+  with 30s retry budget), then populate the ``TierRegistry`` synchronously
+  before spawning the background refresh loop.  Previously the registry was
+  empty for the first 60 seconds after startup, causing every tool to
+  silently default to SAFE tier (no effects logged, no replay, no approval
+  gating for IRREVERSIBLE tools).
 - ``commit_effect()`` and ``fail_effect()`` in ``crates/undolog-store``:
   replaced two-query (UPDATE + SELECT) pattern with a single CTE query
   that returns both affected-row count and existence flag in one
