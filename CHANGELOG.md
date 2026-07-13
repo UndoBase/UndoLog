@@ -219,6 +219,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   stuck in `awaiting_approval`
 - `approve()` now returns the correct `tool_version` from the effect record
   instead of an empty string
+- ``test_live_stack.py`` approval E2E tests: replaced hardcoded ``ticket_id``
+  values (``TKT-100``, ``TKT-300``, ``TKT-301``) with real ticket IDs from
+  ``create_ticket`` responses so that ``POST /approvals/{id}/approve``
+  executes ``escalate_case`` against an existing ticket.  Changed
+  ``customer_id="cust_2"`` to ``"cust_1"`` to match seed data.
 
 ### Security
 

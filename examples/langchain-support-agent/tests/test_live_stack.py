@@ -317,11 +317,18 @@ class TestApprovalLifecycle:
                 body="Body",
                 _session=session,
             )
+            ticket = await tools["create_ticket"](
+                customer_id="cust_1",
+                priority="high",
+                description="Test ticket for approve test",
+                _session=session,
+            )
+            ticket_id: str = ticket["ticket_id"]
 
             approval_id: str | None = None
             try:
                 await tools["escalate_case"](
-                    ticket_id="TKT-100",
+                    ticket_id=ticket_id,
                     reason="Critical",
                     _session=session,
                 )
@@ -426,11 +433,18 @@ class TestApprovalLifecycle:
                 body="Body",
                 _session=session,
             )
+            ticket = await tools["create_ticket"](
+                customer_id="cust_1",
+                priority="high",
+                description="Test ticket for double-approve test",
+                _session=session,
+            )
+            ticket_id: str = ticket["ticket_id"]
 
             approval_id: str | None = None
             try:
                 await tools["escalate_case"](
-                    ticket_id="TKT-300",
+                    ticket_id=ticket_id,
                     reason="Critical",
                     _session=session,
                 )
@@ -470,18 +484,25 @@ class TestApprovalLifecycle:
         """A second reject on the same approval returns 409 Conflict."""
         tools = get_tool_registry()
         async with UndoLogSession(org_id=org_id()) as session:
-            await tools["lookup_customer"](customer_id="cust_2", _session=session)
+            await tools["lookup_customer"](customer_id="cust_1", _session=session)
             await tools["send_email"](
                 to="eve@example.com",
                 subject="Double reject",
                 body="Body",
                 _session=session,
             )
+            ticket = await tools["create_ticket"](
+                customer_id="cust_1",
+                priority="high",
+                description="Test ticket for double-reject test",
+                _session=session,
+            )
+            ticket_id: str = ticket["ticket_id"]
 
             approval_id: str | None = None
             try:
                 await tools["escalate_case"](
-                    ticket_id="TKT-301",
+                    ticket_id=ticket_id,
                     reason="Critical",
                     _session=session,
                 )
