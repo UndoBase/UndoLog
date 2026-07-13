@@ -55,6 +55,7 @@ async def _approve(approval_id: str) -> None:
         resp = await http.post(
             f"{_PROXY_URL}/approvals/{approval_id}/approve",
             json={"actor": "benchmark", "note": "Auto-approved"},
+            headers={"X-Api-Key": _API_KEY},
             timeout=10.0,
         )
         resp.raise_for_status()

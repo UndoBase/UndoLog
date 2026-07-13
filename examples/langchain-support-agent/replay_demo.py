@@ -209,7 +209,7 @@ async def main() -> None:
         # ── Step 1: SAFE tool ─────────────────────────────────────────
         _step("1.  SAFE tool : always fresh (bypasses proxy)")
         async with UndoLogSession(org_id=_org_id()) as safe_session:
-            plan = await lookup_plan(plan_id="plan_enterprise", _session=safe_session)
+            plan = await lookup_plan(plan_id="enterprise", _session=safe_session)
         log.info("lookup_plan -> %s", json.dumps(plan))
         log.info("  (no proxy interaction : no effect log entry)")
 
