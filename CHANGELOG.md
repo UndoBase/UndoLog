@@ -72,7 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - ``infra/benchmarks/compare_regression.py``: p95 regression checker
   with configurable threshold (default 20%), baseline auto-detection,
   and exit-code gating for release CI.
-
+- TypeScript SDK at ``sdks/undolog-ts/`` with full API parity to the Python
+  SDK: ``ToolTier`` enum, typed error hierarchy, BLAKE3-based
+  ``callSignature()``, ``UndoLogSession`` with ``AsyncLocalStorage`` context,
+  ``UndoLogClient`` with intercept/commit/fail/approve/reject, and
+  ``wrapTool()`` higher-order decorator.  Includes 453 unit tests spanning
+  normal paths, error paths, and edge cases.
 - Multi-tenant demo with concurrent agents in two isolated orgs
   (``multi_tenant_demo.py``): org-alpha runs SAFE, COMPENSABLE, and
   IRREVERSIBLE tools with auto-approve; org-beta runs SAFE, COMPENSABLE,
