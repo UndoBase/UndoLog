@@ -14,6 +14,66 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./vercel-ai-sdk": {
+      "import": {
+        "types": "./dist/integrations/vercel-ai-sdk.d.ts",
+        "default": "./dist/integrations/vercel-ai-sdk.js"
+      },
+      "require": {
+        "types": "./dist/integrations/vercel-ai-sdk.d.cts",
+        "default": "./dist/integrations/vercel-ai-sdk.cjs"
+      }
+    },
+    "./langchain": {
+      "import": {
+        "types": "./dist/integrations/langchain.d.ts",
+        "default": "./dist/integrations/langchain.js"
+      },
+      "require": {
+        "types": "./dist/integrations/langchain.d.cts",
+        "default": "./dist/integrations/langchain.cjs"
+      }
+    },
+    "./openai": {
+      "import": {
+        "types": "./dist/integrations/openai.d.ts",
+        "default": "./dist/integrations/openai.js"
+      },
+      "require": {
+        "types": "./dist/integrations/openai.d.cts",
+        "default": "./dist/integrations/openai.cjs"
+      }
+    },
+    "./mastra": {
+      "import": {
+        "types": "./dist/integrations/mastra.d.ts",
+        "default": "./dist/integrations/mastra.js"
+      },
+      "require": {
+        "types": "./dist/integrations/mastra.d.cts",
+        "default": "./dist/integrations/mastra.cjs"
+      }
+    },
+    "./testing": {
+      "import": {
+        "types": "./dist/testing/index.d.ts",
+        "default": "./dist/testing/index.js"
+      },
+      "require": {
+        "types": "./dist/testing/index.d.cts",
+        "default": "./dist/testing/index.cjs"
+      }
+    },
+    "./mcp": {
+      "import": {
+        "types": "./dist/mcp/index.d.ts",
+        "default": "./dist/mcp/index.js"
+      },
+      "require": {
+        "types": "./dist/mcp/index.d.cts",
+        "default": "./dist/mcp/index.cjs"
+      }
     }
   },
   "main": "./dist/index.cjs",
@@ -48,11 +108,41 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "peerDependencies": {
+    "@langchain/core": "^0.3.0",
+    "@modelcontextprotocol/sdk": "1.0.0",
+    "ai": "^4.0.0",
+    "mastra": "^0.3.0",
+    "openai": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    },
+    "@langchain/core": {
+      "optional": true
+    },
+    "openai": {
+      "optional": true
+    },
+    "mastra": {
+      "optional": true
+    },
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@langchain/core": "^0.3.80",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "@types/node": "^22.0.0",
+    "msw": "^2.7.0",
     "tsup": "^8.4.0",
+    "typedoc": "^0.28.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.1.0"
+    "vitest": "^3.1.0",
+    "zod": "^3.24.0"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0"

@@ -6,6 +6,8 @@ import type { CompensationDescriptor } from "../../src/tier.js";
 import { AwaitingApprovalError } from "../../src/errors.js";
 import { UndoLogSession, runWithSession, getCurrentSession } from "../../src/session.js";
 
+const NOW = new Date().toISOString();
+
 function mockEffect(overrides?: Partial<EffectRecord>): EffectRecord {
   return {
     effectId: "eff_001",
@@ -15,7 +17,7 @@ function mockEffect(overrides?: Partial<EffectRecord>): EffectRecord {
     signature: "sig_xxx",
     status: "pending",
     tier: ToolTier.Compensable,
-    createdAt: "2026-01-01T00:00:00Z",
+    createdAt: NOW,
     ...overrides,
   };
 }
