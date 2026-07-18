@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- TypeScript SDK framework integrations: Vercel AI SDK adapter
+  (``undologTool``), LangChain adapter (``createUndologTool``), OpenAI
+  Agents SDK adapter (``undologFunctionTool``), Mastra adapter
+  (``undologMastraTool``), and MCP server (``createUndoLogMcpServer``).
+  Testing package with in-memory mock server, parity assertion helpers,
+  and factory functions. 7 sub-path exports (``/vercel-ai-sdk``,
+  ``/langchain``, ``/openai``, ``/mastra``, ``/mcp``, ``/testing``).
+  Includes 375 unit and integration tests.
 - ``.github/actions/start-stack/action.yml``: shared composite action for
   Docker Compose stack startup, HTTP health checks, gRPC functional probe,
   and configurable API key input.

@@ -12,6 +12,8 @@ import {
 } from "../../src/errors.js";
 import { UndoLogSession, runWithSession } from "../../src/session.js";
 
+const NOW = new Date().toISOString();
+
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -27,7 +29,7 @@ const mockEffect: EffectRecord = {
   signature: "abc123def456",
   status: "pending",
   tier: ToolTier.Safe,
-  createdAt: "2026-01-01T00:00:00Z",
+  createdAt: NOW,
 };
 
 let client: UndoLogClient;
@@ -417,7 +419,7 @@ describe("intercept() retry behavior", () => {
 
   it("throws TimeoutError when the request exceeds the deadline", async () => {
     vi.mocked(fetch).mockImplementation(
-      (_url: string, init?: RequestInit) =>
+      (_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal as AbortSignal | undefined;
           signal?.addEventListener("abort", () => {
