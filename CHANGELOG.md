@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- TypeScript SDK: bump ``@modelcontextprotocol/sdk`` peer dep to
+  ``^1.24.0``, dev dep to ``^1.29.0``, and add overrides for
+  ``langsmith@0.6.0`` and ``uuid@11.1.1`` to fix 6 CVE alerts.
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously
