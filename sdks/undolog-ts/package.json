@@ -4,6 +4,7 @@
   "description": "TypeScript SDK for the UndoLog effect-tracking and exactly-once execution system",
   "license": "MIT",
   "type": "module",
+  "author": "UndoBase <https://github.com/UndoBase>",
   "exports": {
     ".": {
       "import": {
@@ -82,9 +83,14 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude 'tests/integrations/live-stack.test.ts'",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "lint": "tsc --noEmit -p tsconfig.build.json",
@@ -95,11 +101,17 @@
     "exactly-once",
     "effect-tracking",
     "llm",
-    "mcp"
+    "mcp",
+    "typescript",
+    "sdk",
+    "tool-use",
+    "ai-agents",
+    "durable-execution"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/UndoBase/UndoLog.git"
+    "url": "https://github.com/UndoBase/UndoLog.git",
+    "directory": "sdks/undolog-ts"
   },
   "homepage": "https://github.com/UndoBase/UndoLog",
   "bugs": {

@@ -1,0 +1,206 @@
+name: TypeScript SDK CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/undolog-ts/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdks/undolog-ts/**"
+
+env:
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdks/undolog-ts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Python SDK (for parity fixtures)
+        run: |
+          pip install --upgrade pip
+          pip install -e ../undolog-py
+
+      - name: TypeScript type check
+        run: npm run typecheck
+
+      - name: Build bundle with metafile
+        run: npm run build -- --metafile
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Generate canonical JSON and BLAKE3 fixtures from Python
+        run: |
+          python << 'PYEOF'
+          import json
+          from undolog_sdk.signature import canonical_json, call_signature
+
+          SESSION_ID = "00000000-0000-0000-0000-000000000000"
+          STEP = 0
+
+          fixtures: list[tuple[str, object]] = [
+              ("empty_obj", {}),
+              ("empty_list", []),
+              ("single_key", {"a": 1}),
+              ("two_keys_sorted", {"z": 1, "a": 2}),
+              ("three_keys_sorted", {"c": 3, "a": 1, "b": 2}),
+              ("string_value", {"v": "hello"}),
+              ("int_value", {"v": 42}),
+              ("float_value", {"v": 3.14}),
+              ("true_value", {"v": True}),
+              ("null_value", {"v": None}),
+              ("int_list", {"v": [1, 2, 3]}),
+              ("mixed_list", {"v": [1, "a", True]}),
+              ("nested_list", {"v": [[1, 2], [3, 4]]}),
+              ("empty_list_val", {"v": []}),
+              ("list_with_dicts", {"v": [{"b": 1, "a": 2}]}),
+              ("nested_dict", {"x": {"a": 1, "z": 2}}),
+              ("double_nested", {"a": {"b": {"c": 1}}}),
+              ("mixed_nesting", {"a": {"b": [1, {"c": 2}]}}),
+              ("deep_nesting", {"l1": {"l2": {"l3": {"l4": 1}}}}),
+              ("nested_key_order", {"x": {"z": 9, "a": 1, "m": 5}}),
+              ("search_tool", {"query": "hello", "max_results": 10}),
+              ("email_tool", {"to": "bob@example.com", "subject": "Hi", "cc": []}),
+              ("transfer_tool", {"from": "alice", "to": "bob", "amount": 100.5}),
+              ("create_record", {"table": "users", "data": {"name": "Alice", "age": 30}}),
+              ("delete_tool", {"confirm": True, "resource": "db_prod"}),
+              ("unicode_chars", {"msg": "héllo 世界"}),
+              ("special_chars", {"q": "a&b=c"}),
+              ("numbers_various", {"int": 0, "neg": -1, "big": 999999}),
+              ("boolean_false", {"flag": False}),
+              ("list_of_lists", {"matrix": [[1, 2], [3, 4], [5, 6]]}),
+              ("mixed_types_1", {"a": 1, "b": "two", "c": None, "d": [True]}),
+              ("mixed_types_2", {"flag": True, "count": 0, "tags": ["x", "y"]}),
+              ("mixed_types_3", {"nested": {"x": 1}, "list": [{"a": 1}], "val": "end"}),
+              ("mixed_types_4", {"score": 98.6, "name": "test", "active": False}),
+              ("mixed_types_5", {"data": None, "meta": {"v": 2}}),
+              ("single_key_empty_val", {"x": {}}),
+              ("list_with_nested_empty", {"x": [{}]}),
+              ("dict_with_list_of_empty", {"x": [[], []]}),
+              ("many_keys", {"z": 9, "y": 8, "x": 7, "w": 6, "v": 5}),
+              ("zero_values", {"int": 0, "str": "", "lst": [], "dct": {}}),
+              ("long_string", {"text": "a" * 1000}),
+              ("json_string", {"json_str": '{"a":1}'}),
+              ("url_string", {"url": "https://example.com/path?q=1"}),
+              ("numeric_string", {"num": "12345"}),
+              ("whitespace_string", {"ws": "  spaced  "}),
+              ("tool_with_options", {"options": {"timeout": 30, "retry": True, "headers": {"x": "1"}}}),
+              ("batch_operation", {"operations": [{"type": "create", "data": {"id": 1}}, {"type": "delete", "data": {"id": 2}}]}),
+              ("filter_params", {"filter": {"where": {"age": {"gt": 18}}, "order": "name", "limit": 10}}),
+              ("complex_config", {"config": {"enabled": True, "values": [1, 2, 3], "meta": {"desc": "test", "tags": ["a", "b"]}}}),
+              ("full_example", {"session": "abc", "action": "run", "params": {"x": 1, "y": 2}, "debug": False}),
+          ]
+
+          results: dict[str, object] = {}
+          for name, args in fixtures:
+              results[name] = {
+                  "args": args,
+                  "canonical_json": canonical_json(args),
+                  "signature": call_signature(SESSION_ID, STEP, name, args),
+              }
+
+          cross_session = "550e8400-e29b-41d4-a716-446655440000"
+          cross_step = 1
+          cross_tool = "send_email"
+          cross_args = {"to": "alice@example.com", "subject": "Hello"}
+          results["cross_language"] = {
+              "args": cross_args,
+              "session": cross_session,
+              "step": cross_step,
+              "tool": cross_tool,
+              "canonical_json": canonical_json(cross_args),
+              "signature": call_signature(cross_session, cross_step, cross_tool, cross_args),
+          }
+
+          with open("/tmp/parity-fixtures.json", "w") as f:
+              json.dump(results, f, indent=2, sort_keys=True)
+
+          print(f"Generated {len(fixtures) + 1} Python parity fixtures")
+          PYEOF
+
+      - name: Verify TypeScript vs Python parity
+        run: |
+          node --input-type=module << 'NODEEOF'
+          import { readFileSync } from "node:fs";
+          const WS = process.env["GITHUB_WORKSPACE"];
+          const sdkDir = WS + "/sdks/undolog-ts";
+          const mod = await import(sdkDir + "/dist/index.js");
+          const { canonicalJson, callSignature } = mod;
+
+          const parity = JSON.parse(readFileSync("/tmp/parity-fixtures.json", "utf-8"));
+
+          let failures = 0;
+          let checks = 0;
+
+          for (const [name, fixture] of Object.entries(parity)) {
+            const session = fixture.session ?? "00000000-0000-0000-0000-000000000000";
+            const step = fixture.step ?? 0;
+            const tool = fixture.tool ?? name;
+
+            const tsJson = canonicalJson(fixture.args);
+            if (tsJson !== fixture.canonical_json) {
+              console.error(`FAIL canonicalJson [${name}]: Python=${fixture.canonical_json}  TS=${tsJson}`);
+              failures++;
+            }
+            checks++;
+
+            const tsSig = callSignature(session, step, tool, fixture.args);
+            if (tsSig !== fixture.signature) {
+              console.error(`FAIL signature [${name}]: Python=${fixture.signature}  TS=${tsSig}`);
+              failures++;
+            }
+            checks++;
+          }
+
+          if (failures > 0) {
+            console.error(`\n${failures} / ${checks} parity checks FAILED`);
+            process.exit(1);
+          }
+          console.log(`All ${checks} parity checks passed (${Object.keys(parity).length} fixtures)`);
+          NODEEOF
+
+      - name: Check bundle size via metafile
+        run: |
+          node --input-type=module << 'NODEEOF'
+          import { readFileSync } from "node:fs";
+          let total = 0;
+          for (const f of ["dist/metafile-cjs.json", "dist/metafile-esm.json"]) {
+            const meta = JSON.parse(readFileSync(f, "utf-8"));
+            for (const [file, info] of Object.entries(meta.outputs)) {
+              if (file.endsWith(".js") || file.endsWith(".cjs")) {
+                total += info.bytes;
+              }
+            }
+          }
+          const totalKb = (total / 1024).toFixed(1);
+          const maxBytes = 256 * 1024;
+          console.log(`Total JS bundle: ${totalKb} KB`);
+          if (total > maxBytes) {
+            console.error(`FAIL: Total bundle size ${totalKb} KB exceeds 256 KB`);
+            process.exit(1);
+          }
+          console.log(`Bundle size OK (${totalKb} KB < 256 KB)`);
+          NODEEOF

@@ -59,7 +59,7 @@ function escapeJsonString(s: string): string {
         }
     }
   }
-  return result + '"';
+  return `${result}"`;
 }
 
 /** Produce a deterministic, sorted-key JSON string suitable for hashing.
@@ -74,6 +74,12 @@ function escapeJsonString(s: string): string {
  * @param value - A JSON-compatible value (object, array, string, number,
  *   boolean, null).
  * @returns Compact JSON string with recursively sorted keys, no whitespace.
+ *
+ * @example
+ * ```ts
+ * canonicalJson({ b: 1, a: 2 }); // '{"a":2,"b":1}'
+ * canonicalJson("hello");        // '"hello"'
+ * ```
  */
 export function canonicalJson(value: unknown): string {
   if (value === null) {
@@ -158,6 +164,17 @@ function parseUuidBytes(uuid: string): Uint8Array {
  *   tool arguments. Will be canonicalised before hashing.
  * @returns 64-character lowercase hex string (BLAKE3-256).
  * @throws {TypeError} If ``sessionId`` is not a valid UUID.
+ *
+ * @example
+ * ```ts
+ * const sig = callSignature(
+ *   "550e8400-e29b-41d4-a716-446655440000",
+ *   0,
+ *   "send_email",
+ *   { to: "alice@example.com" },
+ * );
+ * console.log(sig); // 64-character hex string
+ * ```
  */
 export function callSignature(
   sessionId: string,

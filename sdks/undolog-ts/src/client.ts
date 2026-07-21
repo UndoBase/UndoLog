@@ -76,6 +76,17 @@ export interface InterceptParams {
  * to intercept, commit, fail, approve, and reject tool effects. Every mutating
  * request includes an auto-generated idempotency key for exactly-once
  * semantics.
+ *
+ * @example
+ * ```ts
+ * const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+ * const effect = await client.intercept({
+ *   toolName: "send_email",
+ *   args: { to: "user@example.com" },
+ *   tier: ToolTier.Compensable,
+ * });
+ * await client.commit(effect.effectId);
+ * ```
  */
 export class UndoLogClient {
   readonly #http: HttpClient;
@@ -109,6 +120,15 @@ export class UndoLogClient {
    * @returns The server-created effect record.
    * @throws {AwaitingApprovalError} If the tool tier is Irreversible. The
    *   effect is persisted on the server before the error is thrown.
+   *
+   * @example
+   * ```ts
+   * const effect = await client.intercept({
+   *   toolName: "send_email",
+   *   args: { to: "user@example.com" },
+   *   tier: ToolTier.Compensable,
+   * });
+   * ```
    */
   async intercept(params: InterceptParams): Promise<EffectRecord> {
     const session = getCurrentSession();
@@ -152,6 +172,12 @@ export class UndoLogClient {
    *
    * @param effectId - Effect identifier returned by ``intercept()``.
    * @returns Updated effect record reflecting committed status.
+   *
+   * @example
+   * ```ts
+   * const effect = await client.intercept({ /* ... *\/ });
+   * await client.commit(effect.effectId);
+   * ```
    */
   async commit(effectId: string): Promise<EffectRecord> {
     return this.#http.request<EffectRecord>({
@@ -167,6 +193,11 @@ export class UndoLogClient {
    * @param effectId - Effect identifier returned by ``intercept()``.
    * @param errorMessage - Human-readable description of the failure.
    * @returns Updated effect record reflecting failed status.
+   *
+   * @example
+   * ```ts
+   * await client.fail(effect.effectId, "Tool threw: connection refused");
+   * ```
    */
   async fail(effectId: string, errorMessage: string): Promise<EffectRecord> {
     return this.#http.request<EffectRecord>({
@@ -185,6 +216,11 @@ export class UndoLogClient {
    * @param approvalId - Approval identifier from the original
    *   ``AwaitingApprovalError`` (same as the effect identifier).
    * @returns Updated effect record reflecting approved status.
+   *
+   * @example
+   * ```ts
+   * await client.approve("550e8400-e29b-41d4-a716-446655440000");
+   * ```
    */
   async approve(approvalId: string): Promise<EffectRecord> {
     return this.#http.request<EffectRecord>({
@@ -204,6 +240,11 @@ export class UndoLogClient {
    *   ``AwaitingApprovalError`` (same as the effect identifier).
    * @param reason - Optional human-readable justification for the rejection.
    * @returns Updated effect record reflecting rejected status.
+   *
+   * @example
+   * ```ts
+   * await client.reject(approvalId, "User declined the operation");
+   * ```
    */
   async reject(approvalId: string, reason?: string): Promise<EffectRecord> {
     const body: Record<string, unknown> = { approvalId };
