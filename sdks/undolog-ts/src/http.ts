@@ -144,6 +144,15 @@ function buildUrl(
  *
  * @param options - Client configuration (base URL, auth, timeouts, retries).
  * @returns An ``HttpClient`` instance ready to issue requests.
+ *
+ * @example
+ * ```ts
+ * const httpClient = createHttpClient({
+ *   baseUrl: "http://localhost:8080",
+ *   apiKey: "sk-...",
+ * });
+ * const data = await httpClient.request({ path: "/v1/effects/list" });
+ * ```
  */
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const timeout = options.timeout ?? 30_000;

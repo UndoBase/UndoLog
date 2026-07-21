@@ -25,7 +25,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   round-trip.  Added ``warn!()`` log on the SAFE-tier skip path for
   observability.  Eliminates the TOCTOU race window between the UPDATE
   and existence check.  Resolved a ``502 commit_failed`` error for
-  unregistered tools sent through the proxy.
+   unregistered tools sent through the proxy.
+- ``.github/workflows/ci.yml``: removed ``|| true`` that was silently
+   swallowing example test suite failures; any test breakage now fails CI.
+- ``.github/actions/start-stack/action.yml``: removed dead ``psql`` step
+   that used an HTTP URL (``UNDOLOG_PROXY_URL``) as a PostgreSQL connection
+   string, always silently failing. Migrations are handled by Postgres
+   ``docker-entrypoint-initdb.d``.
+- ``api_key`` in start-stack action: changed from hardcoded ``dev-key`` to
+   an input parameter with default ``dev-key``, allowing callers to override.
+- Example agent projects now use standard ``setuptools.build_meta`` instead
+   of experimental ``setuptools.backends._legacy:_Backend`` (unavailable in
+   CI runner's setuptools version); added ``[tool.setuptools.packages.find]``
+   to ``langchain-support-agent`` for flat-layout discovery
+- ``ruff`` added to Python SDK dev dependencies (was missing, causing
+   ``make: ruff: No such file or directory`` in CI)
+- ``npm ci`` step added to CI workflow before ``make check`` (was missing,
+   causing ``npm run build`` to fail with no ``node_modules``)
+- ``protobuf-compiler`` install step added to CI workflow (was missing,
+   causing ``undolog-engine`` build to fail without ``protoc``)
+- CHANGELOG validation, commitlint, broken link check, and rustdoc
+   completeness steps added to the consolidated ``check`` job (were
+   separate jobs in the old workflow, dropped during consolidation)
+- ``agent.py`` now wraps raw ``@undolog_tool`` functions with ``StructuredTool``
+   + context var for session injection (was crashing with missing ``_session``
+   kwarg when called by ``create_react_agent``)
+- ``approve_effect()``, ``reject_effect()``, ``update_args_snapshot()`` now return
+   ``InvalidStateTransition`` on zero rows affected
+- ``set_active()`` now returns ``InvalidStateTransition`` when session is not in
+   ``awaiting_approval`` state
+- ``reject()`` reordered to load approval before resolving (prevents
+   ``ApprovalNotFound`` on the callback)
+- ``reject()`` now transitions session to ``halted`` state instead of leaving it
+   stuck in ``awaiting_approval``
+- ``approve()`` now returns the correct ``tool_version`` from the effect record
+   instead of an empty string
+- ``test_live_stack.py`` approval E2E tests: replaced hardcoded ``ticket_id``
+   values (``TKT-100``, ``TKT-300``, ``TKT-301``) with real ticket IDs from
+   ``create_ticket`` responses so that ``POST /approvals/{id}/approve``
+   executes ``escalate_case`` against an existing ticket.  Changed
+   ``customer_id="cust_2"`` to ``"cust_1"`` to match seed data.
 
 ### Added
 
@@ -101,7 +140,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the second org UUID.
 - ``Makefile``: ``demo-multi-tenant`` target.
 - ``.env.example``: ``UNDOLOG_API_KEY_2`` variable.
-
 - GitHub Actions CI workflow: runs ``make check`` on every push and
   pull request to main, plus example unit tests and mock-tool-server
   HTTP contract tests (``.github/workflows/ci.yml``)
@@ -135,27 +173,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   through the ``@undolog_tool`` decorator (``test_decorators.py``)
 - Auto-execute approved irreversible tools: proxy runs the tool and commits
   the result inline during the approve call (no separate retry needed)
-- Engine approves effect (`pending→approved`), resumes session, and returns
-  execution data to the proxy via gRPC `ApproveResponse`
+- Engine approves effect (``pending`` to ``approved``), resumes session, and returns
+  execution data to the proxy via gRPC ``ApproveResponse``
 - Session auto-creation on first intercept (no manual pre-creation required)
-- `approval_store.get()` for loading approval request data before resolution
-- `effect_store.update_args_snapshot()` for modified-args audit trail
-- `rows_affected()` guards on `approve_effect()`, `reject_effect()`,
-  `update_args_snapshot()` for safe state transitions
-- `approval_demo.py`: full approval lifecycle demo (SAFE → COMPENSABLE →
-  IRREVERSIBLE → AwaitingApprovalError → auto-approve via API)
-- `compensation_demo.py`: compensation lifecycle demo (pre-registered
+- ``approval_store.get()`` for loading approval request data before resolution
+- ``effect_store.update_args_snapshot()`` for modified-args audit trail
+- ``rows_affected()`` guards on ``approve_effect()``, ``reject_effect()``,
+  ``update_args_snapshot()`` for safe state transitions
+- ``approval_demo.py``: full approval lifecycle demo (SAFE to COMPENSABLE to
+  IRREVERSIBLE to AwaitingApprovalError to auto-approve via API)
+- ``compensation_demo.py``: compensation lifecycle demo (pre-registered
   compensation, LIFO rollback, custom retry policies)
-- `compensate_assign_engineer()` and `compensate_escalate()` handler functions
-- `replay_demo.py`: exactly-once execution via BLAKE3 signature dedup
-  (same session_id + step_index + tool_name + canonical args → Replay)
-- `compensate_charge_payment()` handler function for payment reversal
-- `infra/mock-tool-server/`: upstream MCP tool server for local demos
-- `migrations/0003_seed_demo_data.sql`: demo org + tool registrations
+- ``compensate_assign_engineer()`` and ``compensate_escalate()`` handler functions
+- ``replay_demo.py``: exactly-once execution via BLAKE3 signature dedup
+  (same session_id + step_index + tool_name + canonical args to Replay)
+- ``compensate_charge_payment()`` handler function for payment reversal
+- ``infra/mock-tool-server/``: upstream MCP tool server for local demos
+- ``migrations/0003_seed_demo_data.sql``: demo org + tool registrations
   (charge_payment, send_email, create_ticket, escalate_case)
-- docker-compose.yml: added `tool-server` service, fixed API key UUID format
-- `agent_stateful.py`: stateful LangGraph with ``interrupt``-based approval
-  branching (approve → continue, reject → halt), ``MemorySaver`` checkpointing
+- docker-compose.yml: added ``tool-server`` service, fixed API key UUID format
+- ``agent_stateful.py``: stateful LangGraph with ``interrupt``-based approval
+  branching (approve to continue, reject to halt), ``MemorySaver`` checkpointing
 - Interrupt lifecycle tests for ``agent_stateful.py``: AAE catch, approve
   resume, reject halt, checkpointer verification
 - ``examples/example_tools/`` package: shared tool registry and compensation
@@ -171,7 +209,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ``FunctionTool`` wrappers, ``pyproject.toml``, ``Makefile``, and 2 tests
 - ``test_crewai_agent.py``, ``test_semantic_kernel_agent.py``,
   ``test_llama_index_agent.py``: per-framework import and missing-API-key
-  tests split from ``test_cross_framework.py``
+   tests split from ``test_cross_framework.py``
 
 ### Changed
 
@@ -182,13 +220,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   to allow structured CLI output from named ``print_*`` / ``output_*``
   helpers; Principle 11 (test coverage) exempts benchmark tools whose
   validation is execution-based regression comparison.
-- Tool tier registry now reads `compensation_ref` and `irreversibility_reason`
-  from DB to construct proper `Compensable`/`Irreversible` tiers
-- Removed `ON CONFLICT DO NOTHING` from effect inserts (advisory lock +
-  `find_by_signature` provide sufficient deduplication)
+- Tool tier registry now reads ``compensation_ref`` and ``irreversibility_reason``
+  from DB to construct proper ``Compensable``/``Irreversible`` tiers
+- Removed ``ON CONFLICT DO NOTHING`` from effect inserts (advisory lock +
+  ``find_by_signature`` provide sufficient deduplication)
 - Approve and reject flows wrap all DB writes in a single PG transaction
   for cross-store atomicity (no partial state on failure)
-- Approval handler applies `requestTimeout` context to prevent hanging HTTP
+- Approval handler applies ``requestTimeout`` context to prevent hanging HTTP
   connections during post-approval tool execution
 - ``vanilla_agent.py``, ``crewai_agent.py``, ``semantic_kernel_agent.py``,
   ``llama_index_agent.py`` moved from ``langchain-support-agent/`` to their
@@ -199,54 +237,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   pass strict mypy validation (``client.py``, ``decorators.py``,
   ``test_decorators.py``)
 
-### Fixed
-
-- ``.github/workflows/ci.yml``: removed ``|| true`` that was silently
-  swallowing example test suite failures; any test breakage now fails CI.
-- ``.github/actions/start-stack/action.yml``: removed dead ``psql`` step
-  that used an HTTP URL (``UNDOLOG_PROXY_URL``) as a PostgreSQL connection
-  string, always silently failing. Migrations are handled by Postgres
-  ``docker-entrypoint-initdb.d``.
-- ``api_key`` in start-stack action: changed from hardcoded ``dev-key`` to
-  an input parameter with default ``dev-key``, allowing callers to override.
-- Example agent projects now use standard ``setuptools.build_meta`` instead
-  of experimental ``setuptools.backends._legacy:_Backend`` (unavailable in
-  CI runner's setuptools version); added ``[tool.setuptools.packages.find]``
-  to ``langchain-support-agent`` for flat-layout discovery
-- ``ruff`` added to Python SDK dev dependencies (was missing, causing
-  ``make: ruff: No such file or directory`` in CI)
-- ``npm ci`` step added to CI workflow before ``make check`` (was missing,
-  causing ``npm run build`` to fail with no ``node_modules``)
-- ``protobuf-compiler`` install step added to CI workflow (was missing,
-  causing ``undolog-engine`` build to fail without ``protoc``)
-- CHANGELOG validation, commitlint, broken link check, and rustdoc
-  completeness steps added to the consolidated ``check`` job (were
-  separate jobs in the old workflow, dropped during consolidation)
-- `agent.py` now wraps raw ``@undolog_tool`` functions with ``StructuredTool``
-  + context var for session injection (was crashing with missing ``_session``
-  kwarg when called by ``create_react_agent``)
-- `approve_effect()`, `reject_effect()`, `update_args_snapshot()` now return
-  `InvalidStateTransition` on zero rows affected
-- `set_active()` now returns `InvalidStateTransition` when session is not in
-  `awaiting_approval` state
-- `reject()` reordered to load approval before resolving (prevents
-  `ApprovalNotFound` on the callback)
-- `reject()` now transitions session to `halted` state instead of leaving it
-  stuck in `awaiting_approval`
-- `approve()` now returns the correct `tool_version` from the effect record
-  instead of an empty string
-- ``test_live_stack.py`` approval E2E tests: replaced hardcoded ``ticket_id``
-  values (``TKT-100``, ``TKT-300``, ``TKT-301``) with real ticket IDs from
-  ``create_ticket`` responses so that ``POST /approvals/{id}/approve``
-  executes ``escalate_case`` against an existing ticket.  Changed
-  ``customer_id="cust_2"`` to ``"cust_1"`` to match seed data.
-
 ### Security
 
 - Bump google.golang.org/grpc to v1.79.3 (CVE-2026-33186, CRITICAL)
 - Force postcss to >=8.5.10 via npm overrides (CVE-2026-41305, MODERATE)
 - Bump golang.org/x/net to v0.56.0 (CVE-2025-22872, CVE-2025-22870,
-  CVE-2026-XXXXX, MODERATE)
+  MODERATE)
 - Bump js-yaml to v3.15.0 (quadratic-complexity DoS in merge key
   handling, MODERATE)
 - Fix incomplete HTML sanitization in heading extraction (CodeQL HIGH)
@@ -254,12 +250,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add permissions block to all CI jobs (CodeQL MEDIUM)
 - Remove scripts/ from version control (local tooling only)
 
-## [0.1.0] - 2025-11-01
+## [0.1.0] - 2026-05-24
 
 ### Added
 
 - Initial release of UndoLog: effect-tracking and exactly-once rollback system
-- Python SDK with `@undolog_tool` decorator for tier annotation
+- Python SDK with ``@undolog_tool`` decorator for tier annotation
 - Go MCP proxy for HTTP/gRPC translation
 - Rust effect engine with PostgreSQL-backed state machine
 - Saga orchestrator for multi-step compensation
@@ -268,4 +264,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Deterministic call signature via BLAKE3 hashing
 - Advisory locks for tool call deduplication
 - Pre-registered compensation for crash safety
-- Website and documentation at undobase.com
+- Website and documentation at https://undolog.undobase.com

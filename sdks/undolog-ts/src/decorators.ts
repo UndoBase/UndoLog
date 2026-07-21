@@ -7,9 +7,8 @@
  * @module
  */
 
-import { UndoLogClient, type EffectRecord } from "./client.js";
+import { UndoLogClient } from "./client.js";
 import { ToolTier, type CompensationDescriptor, isSafe } from "./tier.js";
-import { AwaitingApprovalError } from "./errors.js";
 
 /** Describes a tool function and its UndoLog metadata.
  *
@@ -80,6 +79,17 @@ export type WrappedTool<
  * @param definition - Tool metadata and implementation.
  * @returns An async function with the same call signature as the original
  *   tool.
+ *
+ * @example
+ * ```ts
+ * const sendEmail = wrapTool(client, {
+ *   name: "send_email",
+ *   tier: ToolTier.Compensable,
+ *   fn: async ({ to, subject }) => ({ sent: true }),
+ *   compensation: { fnName: "recall_email" },
+ * });
+ * const result = await sendEmail({ to: "a@b.com", subject: "Hi" });
+ * ```
  */
 export function wrapTool<
   TArgs extends Record<string, unknown>,
@@ -95,20 +105,12 @@ export function wrapTool<
       return fn(args);
     }
 
-    let effect: EffectRecord;
-    try {
-      effect = await client.intercept({
-        toolName: name,
-        args,
-        tier,
-        compensation,
-      });
-    } catch (err) {
-      if (err instanceof AwaitingApprovalError) {
-        throw err;
-      }
-      throw err;
-    }
+    const effect = await client.intercept({
+      toolName: name,
+      args,
+      tier,
+      compensation,
+    });
 
     const isReplay = effect.status === "committed";
 

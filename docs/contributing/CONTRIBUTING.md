@@ -98,6 +98,37 @@ AI-generated PRs follow the same standards. Additional rules:
 
 See [Part 7 of COMMIT_AND_PR_STANDARDS.md](COMMIT_AND_PR_STANDARDS.md#part-7--ai-agent-contribution-rules) for the full rules.
 
+## Releasing the TypeScript SDK
+
+The `@undobase/undolog-sdk` package is published to npm from CI with Sigstore provenance.
+
+### Prerequisites
+
+1. **GitHub OIDC** must be enabled in the repository settings. This allows the `npm publish --provenance` step to obtain a short-lived signing certificate without a static token. See `.github/workflows/release-sdk.yml` for the exact UI paths and configuration checklist.
+2. An `NPM_TOKEN` (an npm automation token with publish scope for the `@undobase` org) must be set in the repository secrets.
+
+### Manual release
+
+1. Update the version in `sdks/undolog-ts/package.json` (or use `npm version`).
+2. Commit the version bump with a conventional commit message (e.g. `feat(sdk): release v0.2.0`).
+3. Tag the commit with the package name and version:
+   ```
+   git tag @undobase/undolog-sdk@v0.2.0
+   git push origin @undobase/undolog-sdk@v0.2.0
+   ```
+4. The `.github/workflows/release-sdk.yml` workflow builds, tests, and publishes automatically.
+
+### Dry run
+
+A dry-run publish can be triggered locally:
+
+```bash
+cd sdks/undolog-ts
+npm publish --dry-run
+```
+
+This shows the tarball contents and checks that the `files` field covers all expected assets.
+
 ## Questions
 
 Open a discussion on the repository or reach out to the maintainers. For code-specific questions, comment on the relevant issue or PR.

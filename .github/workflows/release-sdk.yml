@@ -1,0 +1,59 @@
+# Release workflow for @undobase/undolog-sdk.
+#
+# Triggered when a tag matching the package name is pushed (e.g.
+# @undobase/undolog-sdk@v0.1.0).  Builds, tests, and publishes to npm
+# with Sigstore provenance.  Requires GitHub OIDC to be enabled in the
+# repository settings so that npm publish --provenance can obtain a
+# signing certificate without a long-lived token.
+#
+# OIDC configuration (repository settings):
+#   Settings > Actions > General > Workflow permissions
+#     -> Allow GitHub Actions to create and approve pull requests
+#     -> Allow GitHub Actions to create OpenID Connect tokens (on by default)
+#   Settings > Secrets and variables > Actions
+#     -> Add NPM_TOKEN (npm automation token with publish scope for @undobase)
+#
+# Tag format:  @undobase/undolog-sdk@v<major>.<minor>.<patch>
+# Use scripts/release.sh to create and push the tag automatically.
+
+name: Release TypeScript SDK
+
+on:
+  push:
+    tags:
+      - "@undobase/undolog-sdk@v*.*.*"
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: sdks/undolog-ts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm with provenance
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

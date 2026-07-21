@@ -43,6 +43,14 @@ export class UndoLogSession {
 
   /**
    * @param options - Session configuration (sessionId, metadata).
+   *
+   * @example
+   * ```ts
+   * const session = new UndoLogSession({
+   *   sessionId: "550e8400-e29b-41d4-a716-446655440000",
+   *   metadata: { userId: "abc-123" },
+   * });
+   * ```
    */
   constructor(options: SessionOptions = {}) {
     this.sessionId = options.sessionId ?? randomUUID();
@@ -59,6 +67,12 @@ export class UndoLogSession {
   /** Advance the step counter by one and return the new value.
    *
    * @returns The incremented step index.
+   *
+   * @example
+   * ```ts
+   * session.nextStep(); // returns 1
+   * session.nextStep(); // returns 2
+   * ```
    */
   nextStep(): number {
     this.#stepIndex += 1;
@@ -87,6 +101,15 @@ export function getCurrentSession(): UndoLogSession | undefined {
  *   create a new one.
  * @param fn - The function to execute within the session context.
  * @returns The return value of ``fn``.
+ *
+ * @example
+ * ```ts
+ * const session = new UndoLogSession({ metadata: { userId: "42" } });
+ * const result = await runWithSession(session, async () => {
+ *   // getCurrentSession() returns `session` inside this scope
+ *   return doSomething();
+ * });
+ * ```
  */
 export function runWithSession<T>(
   sessionOrOptions: UndoLogSession | SessionOptions,
