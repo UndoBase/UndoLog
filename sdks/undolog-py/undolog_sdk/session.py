@@ -14,8 +14,10 @@ Usage::
 
 from __future__ import annotations
 
+import types
 import uuid
 from dataclasses import dataclass, field
+from typing import Self
 
 
 @dataclass
@@ -37,14 +39,14 @@ class UndoLogSession:
     _step_index: int = field(default=0, repr=False)
     """Internal step counter. Incremented by ``next_step()``."""
 
-    async def __aenter__(self) -> UndoLogSession:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: object | None,
+        exc_tb: types.TracebackType | None,
     ) -> None:
         pass
 

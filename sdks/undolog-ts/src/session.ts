@@ -16,6 +16,9 @@ export interface SessionOptions {
   sessionId?: string;
   /** Arbitrary key-value metadata attached to the session. */
   metadata?: Record<string, unknown>;
+  /** Initial step index. Useful when restoring session state from a previous
+   *  snapshot where a specific step count must be preserved. */
+  stepIndex?: number;
 }
 
 /** Internal store held in AsyncLocalStorage. */
@@ -56,7 +59,7 @@ export class UndoLogSession {
     this.sessionId = options.sessionId ?? randomUUID();
     this.startTime = Date.now();
     this.metadata = { ...options.metadata };
-    this.#stepIndex = 0;
+    this.#stepIndex = options.stepIndex ?? 0;
   }
 
   /** Current step index (0-based). */
@@ -68,6 +71,9 @@ export class UndoLogSession {
    *
    * @returns The incremented step index.
    *
+   * @throws {RangeError} When the step counter has reached or exceeded
+   *   ``Number.MAX_SAFE_INTEGER`` and cannot be safely incremented further.
+   *
    * @example
    * ```ts
    * session.nextStep(); // returns 1
@@ -75,6 +81,11 @@ export class UndoLogSession {
    * ```
    */
   nextStep(): number {
+    if (this.#stepIndex >= Number.MAX_SAFE_INTEGER) {
+      throw new RangeError(
+        "Step counter overflow: cannot exceed Number.MAX_SAFE_INTEGER",
+      );
+    }
     this.#stepIndex += 1;
     return this.#stepIndex;
   }

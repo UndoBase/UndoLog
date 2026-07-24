@@ -329,3 +329,49 @@ describe("nesting", () => {
     expect(returned).toBe(session);
   });
 });
+
+// ── Step counter overflow guard ──────────────────────────────────────────────
+
+describe("step counter overflow guard", () => {
+  it("does not throw when stepIndex is below MAX_SAFE_INTEGER", () => {
+    const session = new UndoLogSession({
+      stepIndex: Number.MAX_SAFE_INTEGER - 1,
+    });
+    expect(() => session.nextStep()).not.toThrow();
+    expect(session.stepIndex).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("throws RangeError when stepIndex equals MAX_SAFE_INTEGER", () => {
+    const session = new UndoLogSession({
+      stepIndex: Number.MAX_SAFE_INTEGER,
+    });
+    expect(() => session.nextStep()).toThrow(RangeError);
+    expect(() => session.nextStep()).toThrow(
+      "Step counter overflow: cannot exceed Number.MAX_SAFE_INTEGER",
+    );
+    expect(session.stepIndex).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("throws RangeError when stepIndex exceeds MAX_SAFE_INTEGER", () => {
+    const session = new UndoLogSession({
+      stepIndex: Number.MAX_SAFE_INTEGER + 1,
+    });
+    expect(() => session.nextStep()).toThrow(RangeError);
+    expect(session.stepIndex).toBe(Number.MAX_SAFE_INTEGER + 1);
+  });
+
+  it("rejects initial stepIndex set below zero", () => {
+    const session = new UndoLogSession({ stepIndex: -1 });
+    expect(session.stepIndex).toBe(-1);
+    expect(() => session.nextStep()).not.toThrow();
+  });
+
+  it("preserves the step after a single guarded call near the boundary", () => {
+    const session = new UndoLogSession({
+      stepIndex: Number.MAX_SAFE_INTEGER - 1,
+    });
+    session.nextStep();
+    expect(session.stepIndex).toBe(Number.MAX_SAFE_INTEGER);
+    expect(() => session.nextStep()).toThrow(RangeError);
+  });
+});

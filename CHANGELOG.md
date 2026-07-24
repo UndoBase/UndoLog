@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- TypeScript SDK: ``canonicalJson`` now rejects IEEE 754 special values
+  (``NaN``, ``Infinity``), serialises ``-0`` as ``"-0"``, supports
+  ``toJSON()`` on custom objects, and maps ``undefined`` to ``null`` in
+  nested values.  ``callSignature`` validates ``sessionId`` and
+  ``stepIndex`` parameters with strict type/range checks.
+  ``UndoLogSession`` supports ``stepIndex`` in ``SessionOptions`` and
+  throws ``RangeError`` on counter overflow at
+  ``Number.MAX_SAFE_INTEGER``.  435 tests pass, all cross-language
+  signatures verified byte-for-byte identical with Python SDK (35
+  fixtures).
 - TypeScript SDK: bump ``@modelcontextprotocol/sdk`` peer dep to
   ``^1.24.0``, dev dep to ``^1.29.0``, and add overrides for
   ``langsmith@0.6.0`` and ``uuid@11.1.1`` to fix 6 CVE alerts.

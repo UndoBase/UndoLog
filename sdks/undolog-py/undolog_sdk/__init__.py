@@ -16,9 +16,9 @@ from undolog_sdk.decorators import AwaitingApprovalError, undolog_tool
 from undolog_sdk.tier import CompensationDescriptor, ToolTier
 
 __all__ = [
-    "undolog_tool",
-    "UndoLogClient",
-    "ToolTier",
-    "CompensationDescriptor",
     "AwaitingApprovalError",
+    "CompensationDescriptor",
+    "ToolTier",
+    "UndoLogClient",
+    "undolog_tool",
 ]
