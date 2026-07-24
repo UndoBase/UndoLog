@@ -71,9 +71,19 @@ function escapeJsonString(s: string): string {
  * Non-ASCII characters are escaped (``ensure_ascii`` semantics) to match
  * Python's ``json.dumps(..., ensure_ascii=True)`` and Rust ``serde_json``.
  *
+ * IEEE 754 special values are rejected: ``NaN``, ``Infinity``, and
+ * ``-Infinity`` throw a ``TypeError``. Negative zero (``-0``) is serialised as
+ * ``"-0"`` to match Python SDK behaviour.
+ *
+ * ``undefined`` values inside objects are serialised as ``null`` (matching
+ * Python ``json.dumps`` behaviour where ``None`` maps to ``null``). Top-level
+ * ``undefined`` is forbidden and throws a ``TypeError``.
+ *
  * @param value - A JSON-compatible value (object, array, string, number,
  *   boolean, null).
  * @returns Compact JSON string with recursively sorted keys, no whitespace.
+ * @throws {TypeError} If ``value`` is ``undefined``, ``NaN``, ``Infinity``,
+ *   ``-Infinity``, or an unsupported type.
  *
  * @example
  * ```ts
@@ -85,15 +95,37 @@ export function canonicalJson(value: unknown): string {
   if (value === null) {
     return "null";
   }
+  if (typeof value === "undefined") {
+    throw new TypeError("Cannot serialise top-level undefined value");
+  }
   if (typeof value === "boolean") {
     return value ? "true" : "false";
   }
   if (typeof value === "number") {
+    if (Number.isNaN(value)) {
+      throw new TypeError("Cannot serialise NaN");
+    }
+    if (!Number.isFinite(value)) {
+      throw new TypeError("Cannot serialise infinite value");
+    }
+    if (Object.is(value, -0)) {
+      return "-0";
+    }
     return JSON.stringify(value);
   }
   if (typeof value === "string") {
     return escapeJsonString(value);
   }
+  // Call toJSON() if present (covers Date, custom toJSON, nested chains).
+  // This must come before the array and object branches to match
+  // JSON.stringify semantics.
+  if (
+    typeof value === "object"
+    && typeof (value as Record<string, unknown>).toJSON === "function"
+  ) {
+    return canonicalJson((value as { toJSON: () => unknown }).toJSON());
+  }
+
   if (Array.isArray(value)) {
     const items = value.map((v) => canonicalJson(v));
     return `[${items.join(",")}]`;
@@ -101,7 +133,10 @@ export function canonicalJson(value: unknown): string {
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
     const keys = Object.keys(obj).sort();
-    const pairs = keys.map((k) => `${escapeJsonString(k)}:${canonicalJson(obj[k])}`);
+    const pairs = keys.map((k) => {
+      const v = obj[k];
+      return `${escapeJsonString(k)}:${v === undefined ? "null" : canonicalJson(v)}`;
+    });
     return `{${pairs.join(",")}}`;
   }
   throw new TypeError(`Cannot serialise value of type ${typeof value}`);
@@ -143,6 +178,28 @@ function parseUuidBytes(uuid: string): Uint8Array {
   return bytes;
 }
 
+/** Assert that a value is a non-negative integer.
+ *
+ * @param n - Value to validate.
+ * @param name - Parameter name for the error message.
+ * @throws {TypeError} If ``n`` is not a number, not finite, not an integer,
+ *   or negative.
+ */
+function assertNonNegativeInt(n: number, name: string): void {
+  if (typeof n !== "number") {
+    throw new TypeError(`${name} must be a number, got ${typeof n}`);
+  }
+  if (!Number.isFinite(n)) {
+    throw new TypeError(`${name} must be a finite number`);
+  }
+  if (!Number.isInteger(n)) {
+    throw new TypeError(`${name} must be an integer`);
+  }
+  if (n < 0) {
+    throw new TypeError(`${name} must be non-negative`);
+  }
+}
+
 /** Compute the canonical BLAKE3 call signature for a tool call.
  *
  * Every SDK (Rust, Python, TypeScript, C#) MUST produce the same 64-character
@@ -163,7 +220,8 @@ function parseUuidBytes(uuid: string): Uint8Array {
  * @param args - JSON-compatible object (dict, list, etc.) representing the
  *   tool arguments. Will be canonicalised before hashing.
  * @returns 64-character lowercase hex string (BLAKE3-256).
- * @throws {TypeError} If ``sessionId`` is not a valid UUID.
+ * @throws {TypeError} If ``sessionId`` is not a string or not a valid UUID.
+ * @throws {TypeError} If ``stepIndex`` is not a non-negative integer.
  *
  * @example
  * ```ts
@@ -182,6 +240,10 @@ export function callSignature(
   toolName: string,
   args: unknown,
 ): string {
+  if (typeof sessionId !== "string") {
+    throw new TypeError(`sessionId must be a string, got ${typeof sessionId}`);
+  }
+  assertNonNegativeInt(stepIndex, "stepIndex");
   const sidBytes = parseUuidBytes(sessionId);
   const canon = canonicalJson(args);
   const nameBytes = new TextEncoder().encode(toolName);

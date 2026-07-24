@@ -15,9 +15,7 @@ import uuid
 from typing import Any
 
 import pytest
-
 from undolog_sdk.signature import call_signature, canonical_json
-
 
 # ── Canonical JSON ─────────────────────────────────────────────────────────
 

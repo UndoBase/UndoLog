@@ -12,13 +12,11 @@ Verifies:
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-
-from typing import Any
-
 from undolog_sdk import AwaitingApprovalError, ToolTier, undolog_tool
 from undolog_sdk.client import InterceptResponse, UndoLogClient
 from undolog_sdk.session import UndoLogSession

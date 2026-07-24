@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import httpx
 
@@ -37,13 +37,13 @@ class InterceptResponse:
     outcome: str
     """One of ``Execute``, ``Replay``, ``AwaitingApproval``."""
 
-    effect_id: Optional[str] = None
+    effect_id: str | None = None
     """Effect log entry identifier - present for all outcomes."""
 
-    approval_id: Optional[str] = None
+    approval_id: str | None = None
     """Approval request identifier - present only for AwaitingApproval."""
 
-    cached_result: Optional[dict[str, Any]] = None
+    cached_result: dict[str, Any] | None = None
     """Cached tool result - present only for Replay."""
 
 
