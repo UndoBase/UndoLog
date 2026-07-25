@@ -10,6 +10,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+
 from undolog_sdk import AwaitingApprovalError, ToolTier, undolog_tool
 from undolog_sdk.client import InterceptResponse
 from undolog_sdk.session import UndoLogSession
