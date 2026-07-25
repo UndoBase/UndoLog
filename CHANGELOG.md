@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- deps: upgrade ``google.golang.org/grpc`` to v1.82.1 to fix 3
+  High/Medium CVEs: xDS RBAC authorization bypass (fail-open),
+  HTTP/2 Rapid Reset DoS bypass, and RBAC engine panic via
+  crafted NOT rules (GHSA-hrxh-6v49-42gf).
 - TypeScript SDK: ``canonicalJson`` now rejects IEEE 754 special values
   (``NaN``, ``Infinity``), serialises ``-0`` as ``"-0"``, supports
   ``toJSON()`` on custom objects, and maps ``undefined`` to ``null`` in
