@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- deps: upgrade next to 15.5.22 to fix 8 vulnerabilities (2 High
+  SSRF, 2 High DoS, 4 Moderate cache confusion/endpoint disclosure).
 - deps: upgrade postcss to 8.5.18 via npm overrides to fix path
   traversal in previous source map auto-loading (``sourceMappingURL``,
   HIGH).
