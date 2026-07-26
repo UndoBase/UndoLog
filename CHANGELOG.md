@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- deps: upgrade postcss to 8.5.18 via npm overrides to fix path
+  traversal in previous source map auto-loading (``sourceMappingURL``,
+  HIGH).
 - deps: upgrade sharp to 0.35.3 to fix 4 inherited libvips CVEs
   (CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591,
   HIGH).
@@ -262,7 +265,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Security
 
 - Bump google.golang.org/grpc to v1.79.3 (CVE-2026-33186, CRITICAL)
-- Force postcss to >=8.5.10 via npm overrides (CVE-2026-41305, MODERATE)
+- Force postcss to >=8.5.18 via npm overrides (CVE-2026-41305 MODERATE,
+  path traversal in sourceMappingURL HIGH)
 - Bump golang.org/x/net to v0.56.0 (CVE-2025-22872, CVE-2025-22870,
   MODERATE)
 - Bump js-yaml to v3.15.0 (quadratic-complexity DoS in merge key
