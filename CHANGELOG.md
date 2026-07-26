@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- deps: upgrade sharp to 0.35.3 to fix 4 inherited libvips CVEs
+  (CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591,
+  HIGH).
 - deps: upgrade ``@hono/node-server`` to 2.0.10 to fix
   unauthenticated memory-leak DoS via aborted WebSocket handshake.
 - deps: upgrade ``@hono/node-server`` to 2.0.5 and ``esbuild`` to
