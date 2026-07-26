@@ -18,6 +18,9 @@ thiserror.workspace   = true
 tokio.workspace       = true
 tracing.workspace     = true
 
+# pin transitive dep (pulled via reqwest -> quinn -> quinn-proto)
+quinn-proto.workspace = true
+
 undolog-types.workspace = true
 undolog-store.workspace  = true
 
