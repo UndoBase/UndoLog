@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- deps: upgrade ``@hono/node-server`` to 2.0.10 to fix
+  unauthenticated memory-leak DoS via aborted WebSocket handshake.
 - deps: upgrade ``@hono/node-server`` to 2.0.5 and ``esbuild`` to
   0.28.1 to fix path traversal on Windows (GHSA-frvp-7c67-39w9,
   GHSA-g7r4-m6w7-qqqr).
