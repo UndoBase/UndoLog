@@ -110,6 +110,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (identical tool calls always returned ``"executed"`` instead of
   ``"replayed"``).  Default registry refresh interval reduced from 60 s to
   15 s so the background loop catches up quickly in development.
+- Mock tool-server: ``_handle_escalate`` now auto-creates the escalated
+  ticket if it doesn't exist (approval integration tests passed
+  non-existent ticket IDs).  Added ``integration_test_tool`` echo handler
+  for the tool registration lifecycle test.
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously
