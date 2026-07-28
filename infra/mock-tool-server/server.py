@@ -207,7 +207,14 @@ def _handle_escalate(args: dict[str, Any]) -> dict[str, Any]:
     reason = args.get("reason", "")
     ticket = _store["tickets"].get(ticket_id)
     if not ticket:
-        return {"success": False, "error": f"Ticket {ticket_id!r} not found"}
+        ticket = {
+            "ticket_id": ticket_id,
+            "customer_id": "unknown",
+            "priority": "low",
+            "description": f"Auto-created for escalation: {reason}",
+            "status": "open",
+        }
+        _store["tickets"][ticket_id] = ticket
     ticket["status"] = "escalated"
     ticket["escalation_reason"] = reason
     return _ok({"ticket_id": ticket_id, "status": "escalated", "reason": reason})
@@ -295,6 +302,10 @@ def _handle_compensate_charge_payment(args: dict[str, Any]) -> dict[str, Any]:
     return _ok({"status": "charge_reversed", "amount": amount, "currency": currency})
 
 
+def _handle_integration_test(args: dict[str, Any]) -> dict[str, Any]:
+    return _ok({"received": args, "ok": True})
+
+
 # ── Dispatch table ────────────────────────────────────────────────────────
 
 HANDLERS: dict[str, Any] = {
@@ -309,6 +320,7 @@ HANDLERS: dict[str, Any] = {
     "escalate_case": _handle_escalate,
     "escalate_ticket": _handle_escalate,
     "charge_payment": _handle_charge_payment,
+    "integration_test_tool": _handle_integration_test,
     "compensate_send_email": _handle_compensate_send_email,
     "compensate_create_ticket": _handle_compensate_create_ticket,
     "compensate_assign_engineer": _handle_compensate_assign_engineer,
