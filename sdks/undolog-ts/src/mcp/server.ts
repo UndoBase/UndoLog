@@ -21,6 +21,7 @@ import type { UndoLogClient } from "../client.js";
 import { wrapTool } from "../decorators.js";
 import type { ToolDefinition } from "../decorators.js";
 import type { ToolTier, CompensationDescriptor } from "../tier.js";
+import { AwaitingApprovalError } from "../errors.js";
 
 /**
  * A tool registration accepted by ``createUndoLogMcpServer()``.
@@ -212,6 +213,22 @@ export function createUndoLogMcpServer(
           ],
         };
       } catch (err) {
+        if (err instanceof AwaitingApprovalError) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  type: "approval_required",
+                  toolName: err.toolName,
+                  approvalId: err.approvalId,
+                  message: err.message,
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
         const message =
           err instanceof Error ? err.message : String(err);
         return {
