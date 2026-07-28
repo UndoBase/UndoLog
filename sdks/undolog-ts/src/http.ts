@@ -124,7 +124,8 @@ function buildUrl(
   while (normalizedBase.endsWith("/")) {
     normalizedBase = normalizedBase.slice(0, -1);
   }
-  let url = `${normalizedBase}${path}`;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  let url = `${normalizedBase}${normalizedPath}`;
   if (query) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
@@ -237,6 +238,13 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
           err instanceof Error
             ? new UndoLogError("NETWORK_ERROR", err.message)
             : new UndoLogError("NETWORK_ERROR", String(err));
+
+        // Never retry mutating requests on network errors. The server may have
+        // processed the request already and lost the response. A retry would
+        // re-execute the side effect, defeating exactly-once guarantees.
+        if (method === "POST" || method === "PUT") {
+          throw wrappedError;
+        }
 
         if (attempt < retries) {
           const delay = calculateBackoff(attempt);

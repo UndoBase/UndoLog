@@ -361,20 +361,19 @@ describe("intercept() retry behavior", () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("retries on network error and succeeds on second attempt", async () => {
+  it("does not retry on network error for mutating requests", async () => {
     const mockFetch = vi.mocked(fetch);
-    mockFetch
-      .mockRejectedValueOnce(new TypeError("fetch failed"))
-      .mockResolvedValueOnce(jsonResponse(mockEffect));
+    mockFetch.mockRejectedValue(new TypeError("fetch failed"));
 
-    client = new UndoLogClient({ baseUrl: "http://localhost:8080", maxRetries: 1 });
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080", maxRetries: 2 });
 
-    const promise = client.intercept(buildDefaultParams());
-    await vi.advanceTimersByTimeAsync(3000);
-    const result = await promise;
+    const promise = client.intercept(buildDefaultParams()).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(15000);
+    const err = await promise;
 
-    expect(result).toEqual(mockEffect);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(err).toBeInstanceOf(UndoLogError);
+    expect((err as UndoLogError).code).toBe("NETWORK_ERROR");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("exhausts retries on persistent 429 and throws last error", async () => {
@@ -393,20 +392,7 @@ describe("intercept() retry behavior", () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it("exhausts retries on persistent network error", async () => {
-    const mockFetch = vi.mocked(fetch);
-    mockFetch.mockImplementation(() => Promise.reject(new TypeError("fetch failed")));
 
-    client = new UndoLogClient({ baseUrl: "http://localhost:8080", maxRetries: 2 });
-
-    const promise = client.intercept(buildDefaultParams()).catch((e) => e);
-    await vi.advanceTimersByTimeAsync(15000);
-    const err = await promise;
-
-    expect(err).toBeInstanceOf(UndoLogError);
-    expect((err as UndoLogError).code).toBe("NETWORK_ERROR");
-    expect(mockFetch).toHaveBeenCalledTimes(3);
-  });
 
   it("does not retry on non-retryable 4xx", async () => {
     const mockFetch = vi.mocked(fetch);

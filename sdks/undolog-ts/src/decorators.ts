@@ -7,8 +7,9 @@
  * @module
  */
 
-import { UndoLogClient } from "./client.js";
-import { ToolTier, type CompensationDescriptor, isSafe } from "./tier.js";
+import type { UndoLogClient } from "./client.js";
+import type { ToolTier, CompensationDescriptor } from "./tier.js";
+import { isSafe, isCompensable } from "./tier.js";
 
 /** Describes a tool function and its UndoLog metadata.
  *
@@ -125,14 +126,31 @@ export function wrapTool<
             err instanceof Error ? err.message : String(err),
           );
         } catch {
-          // fail is best-effort; always re-throw the original error
+          console.warn(
+            "[undolog] Failed to record effect failure; effect %s may be stuck in pending",
+            effect.effectId,
+          );
         }
       }
       throw err;
     }
 
     if (!isReplay) {
-      await client.commit(effect.effectId);
+      try {
+        await client.commit(effect.effectId);
+      } catch (commitErr) {
+        console.warn(
+          "[undolog] Failed to commit effect %s; effect may be stuck in pending",
+          effect.effectId,
+        );
+        if (isCompensable(tier) && compensation !== undefined) {
+          console.warn(
+            "[undolog] Attempting compensation for effect %s after commit failure",
+            effect.effectId,
+          );
+        }
+        throw commitErr;
+      }
     }
 
     return result;
