@@ -14,6 +14,17 @@ import { UndoLogSession, runWithSession } from "../../src/session.js";
 
 const NOW = new Date().toISOString();
 
+function proxyInterceptResponse(
+  overrides?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    status: "executed",
+    effect_id: "eff_001",
+    result: { ok: true },
+    ...overrides,
+  };
+}
+
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -80,82 +91,50 @@ describe("constructor", () => {
 // ---------------------------------------------------------------------------
 
 describe("intercept()", () => {
-  it("returns the effect record from the server for Safe tier", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(mockEffect));
+  it("sends POST /mcp/tool_call and returns an effect record for executed status", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
     const result = await client.intercept(buildDefaultParams());
 
-    expect(result).toEqual(mockEffect);
+    expect(result.effectId).toBe("eff_001");
+    expect(result.status).toBe("pending");
+    expect(result.sessionId).toBe("00000000-0000-0000-0000-000000000000");
+    expect(result.toolName).toBe("send_email");
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/v1/effects/intercept",
+      "http://localhost:8080/mcp/tool_call",
       expect.objectContaining({ method: "POST" }),
     );
   });
 
-  it("sends toolName, args, tier, sessionId, stepIndex, and signature in the body", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(mockEffect));
+  it("sends session_id, tool_name, step_index, and args in the body", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
     await client.intercept(buildDefaultParams());
 
     const body = parseRequestBody();
-    expect(body.sessionId).toBe("00000000-0000-0000-0000-000000000000");
-    expect(body.stepIndex).toBe(0);
-    expect(body.toolName).toBe("send_email");
+    expect(body.session_id).toBe("00000000-0000-0000-0000-000000000000");
+    expect(body.step_index).toBe(0);
+    expect(body.tool_name).toBe("send_email");
     expect(body.args).toEqual({ to: "user@example.com", subject: "Hello" });
-    expect(body.tier).toBe("safe");
-    expect(body).toHaveProperty("signature");
-    expect(typeof body.signature).toBe("string");
+    expect(body.tool_version).toBe("1.0.0");
   });
 
-  it("includes compensation descriptor for Compensable tier", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(mockEffect));
+  it("does not send tier, signature, or compensation to the proxy", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
-    const compensation: CompensationDescriptor = {
-      fnName: "undo_send_email",
-      fnVersion: "1.0.0",
-      args: { to: "user@example.com" },
-    };
-
-    await client.intercept(buildDefaultParams({ tier: ToolTier.Compensable, compensation }));
+    await client.intercept(buildDefaultParams());
 
     const body = parseRequestBody();
-    expect(body.compensation).toEqual(compensation);
-  });
-
-  it("does not include compensation when absent", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(mockEffect));
-    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
-
-    await client.intercept(buildDefaultParams({ tier: ToolTier.Compensable }));
-
-    const body = parseRequestBody();
+    expect(body).not.toHaveProperty("tier");
+    expect(body).not.toHaveProperty("signature");
     expect(body).not.toHaveProperty("compensation");
   });
 
-  it("throws AwaitingApprovalError for Irreversible tier", async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      jsonResponse({ ...mockEffect, tier: ToolTier.Irreversible }),
-    );
-    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
-
-    const err = await client
-      .intercept(buildDefaultParams({ tier: ToolTier.Irreversible }))
-      .catch((e) => e);
-
-    expect(err).toBeInstanceOf(AwaitingApprovalError);
-    expect((err as AwaitingApprovalError).toolName).toBe("send_email");
-    expect((err as AwaitingApprovalError).approvalId).toBe("eff_001");
-    expect((err as AwaitingApprovalError).args).toEqual({
-      to: "user@example.com",
-      subject: "Hello",
-    });
-  });
-
   it("uses explicit sessionId and stepIndex when provided", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(mockEffect));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
     await client.intercept({
@@ -167,12 +146,12 @@ describe("intercept()", () => {
     });
 
     const body = parseRequestBody();
-    expect(body.sessionId).toBe("00000000-0000-4000-a000-000000000001");
-    expect(body.stepIndex).toBe(42);
+    expect(body.session_id).toBe("00000000-0000-4000-a000-000000000001");
+    expect(body.step_index).toBe(42);
   });
 
   it("uses active session context when no explicit sessionId or stepIndex", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(mockEffect));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
     const session = new UndoLogSession({ sessionId: "00000000-0000-4000-a000-000000000002" });
@@ -186,14 +165,14 @@ describe("intercept()", () => {
     );
 
     const body = parseRequestBody();
-    expect(body.sessionId).toBe("00000000-0000-4000-a000-000000000002");
-    expect(body.stepIndex).toBe(0);
+    expect(body.session_id).toBe("00000000-0000-4000-a000-000000000002");
+    expect(body.step_index).toBe(0);
     expect(session.stepIndex).toBe(1);
   });
 
   it("auto-increments the session step index across multiple intercepts", async () => {
     vi.mocked(fetch).mockImplementation(() =>
-      Promise.resolve(jsonResponse(mockEffect)),
+      Promise.resolve(jsonResponse(proxyInterceptResponse())),
     );
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -211,15 +190,15 @@ describe("intercept()", () => {
       (vi.mocked(fetch).mock.calls[1]?.[1] as RequestInit).body as string,
     ) as Record<string, unknown>;
 
-    expect(firstBody.stepIndex).toBe(0);
-    expect(firstBody.toolName).toBe("a");
-    expect(secondBody.stepIndex).toBe(1);
-    expect(secondBody.toolName).toBe("b");
+    expect(firstBody.step_index).toBe(0);
+    expect(firstBody.tool_name).toBe("a");
+    expect(secondBody.step_index).toBe(1);
+    expect(secondBody.tool_name).toBe("b");
     expect(session.stepIndex).toBe(2);
   });
 
   it("does not auto-increment when explicit stepIndex is provided", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(mockEffect));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
     const session = new UndoLogSession({ sessionId: "00000000-0000-4000-a000-000000000004" });
@@ -235,11 +214,11 @@ describe("intercept()", () => {
 
     expect(session.stepIndex).toBe(0);
     const body = parseRequestBody();
-    expect(body.stepIndex).toBe(5);
+    expect(body.step_index).toBe(5);
   });
 
   it("generates a random sessionId when no session context and no explicit sessionId", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(mockEffect));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
     await client.intercept({
@@ -249,9 +228,39 @@ describe("intercept()", () => {
     });
 
     const body = parseRequestBody();
-    expect(body.sessionId).toBeDefined();
-    expect(typeof body.sessionId).toBe("string");
-    expect(body.sessionId).not.toBe("");
+    expect(body.session_id).toBeDefined();
+    expect(typeof body.session_id).toBe("string");
+    expect(body.session_id).not.toBe("");
+  });
+
+  it("returns committed status for replayed proxy response", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(proxyInterceptResponse({ status: "replayed" })),
+    );
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const result = await client.intercept(buildDefaultParams());
+
+    expect(result.status).toBe("committed");
+  });
+
+  it("throws AwaitingApprovalError for pending_approval proxy response", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({ status: "pending_approval", approval_id: "aprv_001" }),
+    );
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const err = await client
+      .intercept(buildDefaultParams({ tier: ToolTier.Irreversible }))
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(AwaitingApprovalError);
+    expect((err as AwaitingApprovalError).toolName).toBe("send_email");
+    expect((err as AwaitingApprovalError).approvalId).toBe("aprv_001");
+    expect((err as AwaitingApprovalError).args).toEqual({
+      to: "user@example.com",
+      subject: "Hello",
+    });
   });
 });
 
@@ -285,7 +294,7 @@ describe("intercept() error mapping", () => {
     const err = await client.intercept(buildDefaultParams()).catch((e) => e);
     expect(err).toBeInstanceOf(NotFoundError);
     expect((err as NotFoundError).resourceType).toBe("endpoint");
-    expect((err as NotFoundError).resourceId).toContain("/v1/effects/intercept");
+    expect((err as NotFoundError).resourceId).toContain("/mcp/tool_call");
   });
 
   it("maps HTTP 409 to UndoLogError with code CONFLICT", async () => {
@@ -333,7 +342,7 @@ describe("intercept() retry behavior", () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch
       .mockResolvedValueOnce(jsonResponse({ error: "rate limited" }, 429))
-      .mockResolvedValueOnce(jsonResponse(mockEffect));
+      .mockResolvedValueOnce(jsonResponse(proxyInterceptResponse()));
 
     client = new UndoLogClient({ baseUrl: "http://localhost:8080", maxRetries: 1 });
 
@@ -341,7 +350,7 @@ describe("intercept() retry behavior", () => {
     await vi.advanceTimersByTimeAsync(3000);
     const result = await promise;
 
-    expect(result).toEqual(mockEffect);
+    expect(result.effectId).toBe("eff_001");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
@@ -349,7 +358,7 @@ describe("intercept() retry behavior", () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch
       .mockResolvedValueOnce(jsonResponse({ error: "unavailable" }, 503))
-      .mockResolvedValueOnce(jsonResponse(mockEffect));
+      .mockResolvedValueOnce(jsonResponse(proxyInterceptResponse()));
 
     client = new UndoLogClient({ baseUrl: "http://localhost:8080", maxRetries: 1 });
 
@@ -357,7 +366,7 @@ describe("intercept() retry behavior", () => {
     await vi.advanceTimersByTimeAsync(3000);
     const result = await promise;
 
-    expect(result).toEqual(mockEffect);
+    expect(result.effectId).toBe("eff_001");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
@@ -391,8 +400,6 @@ describe("intercept() retry behavior", () => {
     expect(err).toBeInstanceOf(UndoLogError);
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
-
-
 
   it("does not retry on non-retryable 4xx", async () => {
     const mockFetch = vi.mocked(fetch);
@@ -430,9 +437,9 @@ describe("intercept() retry behavior", () => {
 // ---------------------------------------------------------------------------
 
 describe("commit()", () => {
-  it("POSTs to /v1/effects/commit and returns the updated effect record", async () => {
+  it("PUTs to /effects/{effectId}/commit and returns the updated record", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      jsonResponse({ ...mockEffect, status: "committed" }),
+      jsonResponse({ effectId: "eff_001", status: "committed" }),
     );
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -440,20 +447,27 @@ describe("commit()", () => {
 
     expect(result.status).toBe("committed");
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/v1/effects/commit",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ effectId: "eff_001" }),
-      }),
+      "http://localhost:8080/effects/eff_001/commit",
+      expect.objectContaining({ method: "PUT" }),
     );
   });
 
-  it("propagates HTTP errors from the server", async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse({ message: "effect not found" }, 404));
+  it("gracefully handles 404 (proxy already committed inline)", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ message: "not found" }, 404));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
-    const err = await client.commit("eff_missing").catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundError);
+    const result = await client.commit("eff_001");
+
+    expect(result.status).toBe("committed");
+    expect(result.effectId).toBe("eff_001");
+  });
+
+  it("propagates non-404 HTTP errors from the server", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ message: "unauthorized" }, 401));
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const err = await client.commit("eff_001").catch((e) => e);
+    expect(err).toBeInstanceOf(AuthenticationError);
   });
 });
 
@@ -462,9 +476,9 @@ describe("commit()", () => {
 // ---------------------------------------------------------------------------
 
 describe("fail()", () => {
-  it("POSTs to /v1/effects/fail with effectId and error message", async () => {
+  it("PUTs to /effects/{effectId}/fail with error message", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      jsonResponse({ ...mockEffect, status: "failed" }),
+      jsonResponse({ effectId: "eff_001", status: "failed" }),
     );
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -472,18 +486,25 @@ describe("fail()", () => {
 
     expect(result.status).toBe("failed");
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/v1/effects/fail",
+      "http://localhost:8080/effects/eff_001/fail",
       expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          effectId: "eff_001",
-          error: "Something went wrong",
-        }),
+        method: "PUT",
+        body: JSON.stringify({ error: "Something went wrong" }),
       }),
     );
   });
 
-  it("propagates HTTP errors from the server", async () => {
+  it("gracefully handles 404 (proxy already failed inline)", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ message: "not found" }, 404));
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const result = await client.fail("eff_001", "error");
+
+    expect(result.status).toBe("failed");
+    expect(result.effectId).toBe("eff_001");
+  });
+
+  it("propagates non-404 HTTP errors from the server", async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ message: "unauthorized" }, 401));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -497,9 +518,9 @@ describe("fail()", () => {
 // ---------------------------------------------------------------------------
 
 describe("approve()", () => {
-  it("POSTs to /v1/effects/approve with approvalId", async () => {
+  it("POSTs to /approvals/{id}/approve", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      jsonResponse({ ...mockEffect, status: "approved" }),
+      jsonResponse({ effectId: "eff_001", status: "approved" }),
     );
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -507,11 +528,8 @@ describe("approve()", () => {
 
     expect(result.status).toBe("approved");
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/v1/effects/approve",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ approvalId: "eff_001" }),
-      }),
+      "http://localhost:8080/approvals/eff_001/approve",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 
@@ -530,9 +548,9 @@ describe("approve()", () => {
 // ---------------------------------------------------------------------------
 
 describe("reject()", () => {
-  it("POSTs to /v1/effects/reject with approvalId and no reason", async () => {
+  it("POSTs to /approvals/{id}/reject", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      jsonResponse({ ...mockEffect, status: "rejected" }),
+      jsonResponse({ effectId: "eff_001", status: "rejected" }),
     );
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -540,17 +558,14 @@ describe("reject()", () => {
 
     expect(result.status).toBe("rejected");
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/v1/effects/reject",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ approvalId: "eff_001" }),
-      }),
+      "http://localhost:8080/approvals/eff_001/reject",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 
   it("includes reason in the body when provided", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      jsonResponse({ ...mockEffect, status: "rejected" }),
+      jsonResponse({ effectId: "eff_001", status: "rejected" }),
     );
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -559,7 +574,7 @@ describe("reject()", () => {
     expect(fetch).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        body: JSON.stringify({ approvalId: "eff_001", reason: "User declined" }),
+        body: JSON.stringify({ reason: "User declined" }),
       }),
     );
   });
