@@ -114,6 +114,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ticket if it doesn't exist (approval integration tests passed
   non-existent ticket IDs).  Added ``integration_test_tool`` echo handler
   for the tool registration lifecycle test.
+- Rust engine: added ``info!`` logging in ``intercept()`` to print the
+  computed BLAKE3 signature hex, canonical args, and
+  ``find_by_signature`` result for debugging the replay test failure.
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously
