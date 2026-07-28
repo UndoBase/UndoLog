@@ -66,9 +66,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function safeJsonParse(text: string): Record<string, unknown> | undefined {
+function safeJsonParse(text: string): unknown {
   try {
-    return JSON.parse(text) as Record<string, unknown>;
+    return JSON.parse(text) as unknown;
   } catch {
     return undefined;
   }
@@ -93,16 +93,17 @@ function calculateBackoff(attempt: number, response?: Response): number {
 
 function mapHttpError(
   status: number,
-  body: Record<string, unknown> | undefined,
+  body: unknown,
   url: string,
 ): UndoLogError {
+  const bodyRecord = body as Record<string, unknown> | undefined;
   const message =
-    (body?.message as string) ?? (body?.error as string) ?? `HTTP ${status}`;
+    (bodyRecord?.message as string) ?? (bodyRecord?.error as string) ?? `HTTP ${status}`;
   switch (status) {
     case 401:
       return new AuthenticationError("invalid", message);
     case 403:
-      return new AuthenticationError("expired", message);
+      return new AuthenticationError("forbidden", message);
     case 404:
       return new NotFoundError("endpoint", url, message);
     case 409:
@@ -141,6 +142,21 @@ function buildUrl(
   return url;
 }
 
+/** Strip credentials from a URL string for safe inclusion in error messages. */
+function sanitizeUrl(raw: string): string {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.username || parsed.password) {
+      parsed.username = "";
+      parsed.password = "";
+      return parsed.toString();
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
 /** Create a configured ``HttpClient``.
  *
  * @param options - Client configuration (base URL, auth, timeouts, retries).
@@ -173,9 +189,9 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      ...authHeaders,
       ...options.headers,
       ...requestOptions.headers,
+      ...authHeaders,
     };
 
     if (
@@ -213,7 +229,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
           return parsedBody as T;
         }
 
-        const error = mapHttpError(response.status, parsedBody, url);
+        const error = mapHttpError(response.status, parsedBody, sanitizeUrl(url));
 
         if (isRetryable(response.status) && attempt < retries) {
           const delay = calculateBackoff(attempt, response);
@@ -231,7 +247,13 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         }
 
         if (err instanceof DOMException && err.name === "AbortError") {
-          throw new TimeoutError(`${method} ${url}`, timeout);
+          throw new TimeoutError(`${method} ${sanitizeUrl(url)}`, timeout);
+        }
+
+        // Fallback for runtimes where AbortError is not a DOMException
+        // (e.g. Deno, Cloudflare Workers).
+        if (err instanceof Error && err.name === "AbortError") {
+          throw new TimeoutError(`${method} ${sanitizeUrl(url)}`, timeout);
         }
 
         const wrappedError =

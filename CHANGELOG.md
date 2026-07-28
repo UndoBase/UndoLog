@@ -72,6 +72,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ``AwaitingApprovalError`` instead of unstructured text.
 - TypeScript SDK: add 6 unit tests for MCP server covering
   ``ListTools``, ``CallTool`` (valid/invalid/error/approval).
+- TypeScript SDK: add ``MissingSessionError`` error class and
+  ``requireCurrentSession()`` which throws a clear error instead of
+  returning ``undefined`` when no session context is active. Export
+  both from the package barrel.
+- TypeScript SDK: add ``claimStepIndex()`` to ``UndoLogSession`` for
+  an atomic read-increment of the step counter, eliminating the race
+  between reading ``stepIndex`` and calling ``nextStep()`` in
+  concurrent ``intercept()`` calls.
+- TypeScript SDK: add ``getEffect(effectId)`` and
+  ``getSession(sessionId)`` methods to ``UndoLogClient`` so callers
+  can query effect/session state after a network error.
+- TypeScript SDK: HTTP 403 now maps to ``reason`` ``"forbidden"``
+  instead of ``"expired"``, preventing infinite token-refresh loops.
+- TypeScript SDK: ``UndoLogError`` sets prototype chain explicitly
+  (``Object.setPrototypeOf``) so ``instanceof`` works cross-realm.
+- TypeScript SDK: AbortError detection falls back to ``err.name``
+  check for non-Node.js runtimes (Deno, CF Workers).
+- TypeScript SDK: auth headers always win in header merge order,
+  preventing per-request header override of the API key.
+- TypeScript SDK: ``safeJsonParse`` return type changed to ``unknown``
+  for sounder type flow.
+- TypeScript SDK: error messages sanitize credentials from URLs to
+  prevent API key disclosure in ``TimeoutError`` and ``NotFoundError``.
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously

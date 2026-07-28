@@ -9,6 +9,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+import { MissingSessionError } from "./errors.js";
 
 /** Options for creating a new UndoLogSession. */
 export interface SessionOptions {
@@ -89,6 +90,28 @@ export class UndoLogSession {
     this.#stepIndex += 1;
     return this.#stepIndex;
   }
+
+  /** Atomically read and increment the step counter.
+   *
+   * Returns the current value before incrementing, then advances by one.
+   * Useful in concurrent scenarios where a caller needs the current step
+   * index and must ensure no other caller observes the same value.
+   *
+   * @returns The step index before incrementing.
+   *
+   * @throws {RangeError} When the step counter has reached or exceeded
+   *   ``Number.MAX_SAFE_INTEGER`` and cannot be safely incremented further.
+   */
+  claimStepIndex(): number {
+    const current = this.#stepIndex;
+    if (current >= Number.MAX_SAFE_INTEGER) {
+      throw new RangeError(
+        "Step counter overflow: cannot exceed Number.MAX_SAFE_INTEGER",
+      );
+    }
+    this.#stepIndex += 1;
+    return current;
+  }
 }
 
 /** Retrieve the currently active session from the async context.
@@ -99,6 +122,22 @@ export class UndoLogSession {
  */
 export function getCurrentSession(): UndoLogSession | undefined {
   return als.getStore()?.session;
+}
+
+/** Retrieve the currently active session or throw.
+ *
+ * Same as ``getCurrentSession()`` but throws ``MissingSessionError``
+ * instead of returning ``undefined`` when no session context is active.
+ *
+ * @returns The active session (never ``undefined``).
+ * @throws {MissingSessionError} If no session context is active.
+ */
+export function requireCurrentSession(): UndoLogSession {
+  const session = als.getStore()?.session;
+  if (session === undefined) {
+    throw new MissingSessionError();
+  }
+  return session;
 }
 
 /** Execute a function within an UndoLogSession async context.
