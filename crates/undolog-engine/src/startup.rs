@@ -88,11 +88,31 @@ pub async fn build_engine(
 
     // Load tools from the DB so the registry is populated before the engine
     // handles its first request.  The background loop keeps it fresh.
-    if let Err(e) = crate::tier_registry::refresh_all_orgs(&*registry.read().await, &pool).await {
-        tracing::warn!(error = %e, "Initial registry load failed - retrying in background");
-    } else {
-        let count = registry.read().await.total_count().await;
-        info!(total_tools = count, "TierRegistry loaded from database");
+    //
+    // Retry with back-off because seed-data migrations (0003, 0004) may not
+    // have finished yet when the table first appears.  Without this retry the
+    // engine can start with an empty registry, defaulting every tool to SAFE
+    // and silently disabling replay detection for the first 60 s.
+    for attempt in 0u32..SCHEMA_WAIT_RETRIES {
+        match crate::tier_registry::refresh_all_orgs(&*registry.read().await, &pool).await {
+            Err(e) => {
+                tracing::warn!(attempt, error = %e, "Registry load failed, retrying");
+            }
+            Ok(()) => {
+                let count = registry.read().await.total_count().await;
+                if count > 0 {
+                    info!(total_tools = count, "TierRegistry loaded from database");
+                    break;
+                }
+                tracing::warn!(
+                    attempt,
+                    "No tool registrations found (seed data may not be applied yet)"
+                );
+            }
+        }
+        if attempt + 1 < SCHEMA_WAIT_RETRIES {
+            tokio::time::sleep(SCHEMA_WAIT_DELAY).await;
+        }
     }
 
     // Spawn the refresh loop (runs in background, re-loads from DB periodically).

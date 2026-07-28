@@ -95,14 +95,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   for sounder type flow.
 - TypeScript SDK: error messages sanitize credentials from URLs to
   prevent API key disclosure in ``TimeoutError`` and ``NotFoundError``.
-- TypeScript SDK: align all API paths with the UndoLog proxy —
+- TypeScript SDK: align all API paths with the UndoLog proxy -
   ``intercept()`` now sends ``POST /mcp/tool_call`` instead of
   ``POST /v1/effects/intercept``; ``commit()`` and ``fail()`` use
   ``PUT /effects/{id}/commit`` and ``PUT /effects/{id}/fail`` with
   graceful 404 handling; ``approve()`` and ``reject()`` use
   ``POST /approvals/{id}/approve`` and ``POST /approvals/{id}/reject``.
   Fixes live-stack integration test failures (HTTP 404 on every effect
-  lifecycle endpoint).
+   lifecycle endpoint).
+- Rust engine: ``build_engine()`` now retries the initial ``refresh_all_orgs()``
+  call until at least one tool registration is found (30 attempts, 1 s apart),
+  preventing the engine from defaulting every tool to SAFE when seed-data
+  migrations have not yet finished.  Fixes live-stack replay detection
+  (identical tool calls always returned ``"executed"`` instead of
+  ``"replayed"``).  Default registry refresh interval reduced from 60 s to
+  15 s so the background loop catches up quickly in development.
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously
