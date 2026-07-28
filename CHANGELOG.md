@@ -117,6 +117,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Rust engine: added ``info!`` logging in ``intercept()`` to print the
   computed BLAKE3 signature hex, canonical args, and
   ``find_by_signature`` result for debugging the replay test failure.
+- Rust engine: ``resolve_tier`` now falls back to a name-only lookup
+  (``find_by_name``) when the exact ``(org_id, tool_name, tool_version)``
+  match fails and the caller did not supply a ``tool_version``.  Prevents
+  silent default to SAFE tier for raw API callers who omit the version
+  field.  Removed debug ``info!`` logging from the ``intercept()`` hot
+  path (the temporary logging added above was only needed for root-cause
+  analysis).
+- TypeScript SDK: ``live-stack`` integration test replay idempotency
+  payloads now include ``tool_version: "1.0.0"`` so the raw HTTP path
+  matches the registered seed tool instead of defaulting to SAFE tier.
+  All 15 integration tests pass.
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously
