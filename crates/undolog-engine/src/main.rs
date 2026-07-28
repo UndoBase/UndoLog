@@ -31,7 +31,7 @@ const ENV_LOCK_RETRY_MS: &str = "UNDOLOG_LOCK_RETRY_MS";
 const DEFAULT_GRPC_ADDR: &str = "0.0.0.0:50051";
 const DEFAULT_HEALTH_ADDR: &str = "0.0.0.0:9090";
 const DEFAULT_LOG_LEVEL: &str = "info";
-const DEFAULT_REGISTRY_REFRESH_SECS: &str = "60";
+const DEFAULT_REGISTRY_REFRESH_SECS: &str = "15";
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
