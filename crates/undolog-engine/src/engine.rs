@@ -17,7 +17,7 @@ use tracing::{debug, info, instrument};
 use undolog_store::{ApprovalStore, EffectStore, SessionStore};
 use undolog_types::{
     approval::{ApprovalAction, ApprovalRequest, ApprovalState},
-    effect::{ToolCall, ToolResult},
+    effect::{canonical_json, ToolCall, ToolResult},
     errors::UndoLogError,
     ids::{ApprovalRequestId, EffectId, OrgId, SessionId},
     tier::ToolTier,
@@ -123,6 +123,16 @@ impl EffectEngine {
 
         let signature = call.signature();
 
+        let canon = canonical_json(&call.args);
+        info!(
+            sig_hex = %signature,
+            session_id = %call.session_id,
+            step = call.step_index,
+            tool = %call.tool_name,
+            canon_args = %canon,
+            "Intercept: computed call signature"
+        );
+
         // Acquire advisory lock to prevent concurrent writes with the same signature.
         self.effect_store
             .acquire_advisory_lock(
@@ -133,9 +143,13 @@ impl EffectEngine {
             .await?;
 
         // Check for replay: has this call already been intercepted?
-        if let Some(existing) =
-            self.effect_store.find_by_signature(&call.org_id, &signature).await?
-        {
+        let found = self.effect_store.find_by_signature(&call.org_id, &signature).await?;
+        info!(
+            sig_hex = %signature,
+            found = found.is_some(),
+            "Intercept: find_by_signature result"
+        );
+        if let Some(existing) = found {
             // Increment replay counter.
             self.effect_store.mark_replayed(&call.org_id, &existing.effect_id).await?;
 
