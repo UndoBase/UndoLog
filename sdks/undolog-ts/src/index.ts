@@ -2,6 +2,7 @@ export { UndoLogClient } from "./client.js";
 export type {
   EffectStatus,
   EffectRecord,
+  SessionRecord,
   UndoLogClientOptions,
   InterceptParams,
 } from "./client.js";
@@ -17,6 +18,7 @@ export {
   ConfigurationError,
   EffectLogError,
   EffectLogConcurrencyError,
+  MissingSessionError,
   NotFoundError,
   SerializationError,
   TimeoutError,
@@ -28,7 +30,7 @@ export {
 export { createHttpClient } from "./http.js";
 export type { HttpClientOptions, RequestOptions, HttpClient } from "./http.js";
 
-export { UndoLogSession, getCurrentSession, runWithSession } from "./session.js";
+export { UndoLogSession, getCurrentSession, requireCurrentSession, runWithSession } from "./session.js";
 export type { SessionOptions } from "./session.js";
 
 export { canonicalJson, callSignature } from "./signature.js";

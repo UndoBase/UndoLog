@@ -262,7 +262,7 @@ describe("error mapping", () => {
 
     const err = await client.request({ path: "/test" }).catch((e) => e);
     expect(err).toBeInstanceOf(AuthenticationError);
-    expect((err as AuthenticationError).reason).toBe("expired");
+    expect((err as AuthenticationError).reason).toBe("forbidden");
   });
 
   it("maps 404 to NotFoundError", async () => {

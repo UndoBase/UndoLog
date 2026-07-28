@@ -25,6 +25,7 @@ export class UndoLogError extends Error {
     this.name = "UndoLogError";
     this.code = code;
     this.timestamp = Date.now();
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
@@ -36,6 +37,7 @@ export const ErrorCodes = {
   CONFIGURATION_INVALID: "CONFIGURATION_INVALID",
   EFFECT_LOG_CONCURRENCY: "EFFECT_LOG_CONCURRENCY",
   EFFECT_LOG_FAILED: "EFFECT_LOG_FAILED",
+  MISSING_SESSION: "MISSING_SESSION",
   NOT_FOUND: "NOT_FOUND",
   SERIALIZATION_FAILED: "SERIALIZATION_FAILED",
   TIMEOUT: "TIMEOUT",
@@ -167,6 +169,20 @@ export class EffectLogConcurrencyError extends EffectLogError {
     this.name = "EffectLogConcurrencyError";
     this.expectedVersion = expectedVersion;
     this.actualVersion = actualVersion;
+  }
+}
+
+/**
+ * No active session context available.
+ *
+ * @remarks
+ * Thrown by ``requireCurrentSession()`` when called outside of any
+ * ``runWithSession()`` scope.
+ */
+export class MissingSessionError extends UndoLogError {
+  constructor(message?: string) {
+    super(ErrorCodes.MISSING_SESSION, message ?? "No active session context");
+    this.name = "MissingSessionError";
   }
 }
 

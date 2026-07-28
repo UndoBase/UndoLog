@@ -11,8 +11,8 @@ import { createHttpClient } from "./http.js";
 import type { HttpClient } from "./http.js";
 import { getCurrentSession } from "./session.js";
 import { callSignature } from "./signature.js";
-import { ToolTier, requiresApproval } from "./tier.js";
-import type { CompensationDescriptor } from "./tier.js";
+import { requiresApproval } from "./tier.js";
+import type { ToolTier, CompensationDescriptor } from "./tier.js";
 import { AwaitingApprovalError } from "./errors.js";
 
 /** Lifecycle status of an effect in the UndoLog. */
@@ -36,6 +36,18 @@ export interface EffectRecord {
   tier: ToolTier;
   /** RFC 3339 timestamp of creation. */
   createdAt: string;
+}
+
+/** Record returned by the UndoLog server for a session query. */
+export interface SessionRecord {
+  /** Session UUID. */
+  sessionId: string;
+  /** Current step count. */
+  stepCount: number;
+  /** RFC 3339 timestamp of session creation. */
+  createdAt: string;
+  /** Arbitrary metadata attached at creation time. */
+  metadata: Record<string, unknown>;
 }
 
 /** Options for constructing an UndoLogClient. */
@@ -255,6 +267,42 @@ export class UndoLogClient {
       method: "POST",
       path: "/v1/effects/reject",
       body,
+    });
+  }
+
+  /**
+   * Query the server for a specific effect record.
+   *
+   * @param effectId - Effect identifier returned by ``intercept()``.
+   * @returns The effect record with current status.
+   *
+   * @example
+   * ```ts
+   * const effect = await client.getEffect(effectId);
+   * ```
+   */
+  async getEffect(effectId: string): Promise<EffectRecord> {
+    return this.#http.request<EffectRecord>({
+      method: "GET",
+      path: `/v1/effects/${encodeURIComponent(effectId)}`,
+    });
+  }
+
+  /**
+   * Query the server for a specific session record.
+   *
+   * @param sessionId - Session UUID.
+   * @returns The session record with metadata and step count.
+   *
+   * @example
+   * ```ts
+   * const session = await client.getSession(sessionId);
+   * ```
+   */
+  async getSession(sessionId: string): Promise<SessionRecord> {
+    return this.#http.request<SessionRecord>({
+      method: "GET",
+      path: `/v1/sessions/${encodeURIComponent(sessionId)}`,
     });
   }
 }

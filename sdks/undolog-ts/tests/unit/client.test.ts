@@ -269,13 +269,13 @@ describe("intercept() error mapping", () => {
     expect((err as AuthenticationError).reason).toBe("invalid");
   });
 
-  it("maps HTTP 403 to AuthenticationError with reason expired", async () => {
+  it("maps HTTP 403 to AuthenticationError with reason forbidden", async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: "token expired" }, 403));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
     const err = await client.intercept(buildDefaultParams()).catch((e) => e);
     expect(err).toBeInstanceOf(AuthenticationError);
-    expect((err as AuthenticationError).reason).toBe("expired");
+    expect((err as AuthenticationError).reason).toBe("forbidden");
   });
 
   it("maps HTTP 404 to NotFoundError", async () => {
@@ -570,6 +570,6 @@ describe("reject()", () => {
 
     const err = await client.reject("eff_001").catch((e) => e);
     expect(err).toBeInstanceOf(AuthenticationError);
-    expect((err as AuthenticationError).reason).toBe("expired");
+    expect((err as AuthenticationError).reason).toBe("forbidden");
   });
 });
