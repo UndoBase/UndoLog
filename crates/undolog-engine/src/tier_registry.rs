@@ -94,6 +94,18 @@ impl TierRegistry {
         inner.by_org.get(&org_id.to_string()).and_then(|m| m.get(&key)).cloned()
     }
 
+    /// Look up a tool registration by name alone, ignoring version.
+    ///
+    /// Used as a fallback when the caller does not supply a tool_version.
+    /// Returns the first matching registration (arbitrary if multiple versions exist).
+    pub async fn find_by_name(&self, org_id: &OrgId, tool_name: &str) -> Option<ToolRegistration> {
+        let inner = self.inner.read().await;
+        inner
+            .by_org
+            .get(&org_id.to_string())
+            .and_then(|m| m.iter().find(|(k, _)| k.1 == tool_name).map(|(_, v)| v.clone()))
+    }
+
     /// Total registered tool count across all orgs (for health checks).
     pub async fn total_count(&self) -> usize {
         let inner = self.inner.read().await;

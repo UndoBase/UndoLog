@@ -17,7 +17,7 @@ use tracing::{debug, info, instrument};
 use undolog_store::{ApprovalStore, EffectStore, SessionStore};
 use undolog_types::{
     approval::{ApprovalAction, ApprovalRequest, ApprovalState},
-    effect::{canonical_json, ToolCall, ToolResult},
+    effect::{ToolCall, ToolResult},
     errors::UndoLogError,
     ids::{ApprovalRequestId, EffectId, OrgId, SessionId},
     tier::ToolTier,
@@ -123,16 +123,6 @@ impl EffectEngine {
 
         let signature = call.signature();
 
-        let canon = canonical_json(&call.args);
-        info!(
-            sig_hex = %signature,
-            session_id = %call.session_id,
-            step = call.step_index,
-            tool = %call.tool_name,
-            canon_args = %canon,
-            "Intercept: computed call signature"
-        );
-
         // Acquire advisory lock to prevent concurrent writes with the same signature.
         self.effect_store
             .acquire_advisory_lock(
@@ -144,11 +134,6 @@ impl EffectEngine {
 
         // Check for replay: has this call already been intercepted?
         let found = self.effect_store.find_by_signature(&call.org_id, &signature).await?;
-        info!(
-            sig_hex = %signature,
-            found = found.is_some(),
-            "Intercept: find_by_signature result"
-        );
         if let Some(existing) = found {
             // Increment replay counter.
             self.effect_store.mark_replayed(&call.org_id, &existing.effect_id).await?;
@@ -444,19 +429,26 @@ impl EffectEngine {
 
     /// Resolve the tool's tier from the registry.
     ///
-    /// Falls back to `Safe` if the tool is not registered.
+    /// Falls back to `Safe` if the tool is not registered. When no version
+    /// is specified and the exact match fails, falls back to a version-less
+    /// lookup so that callers using the raw API without a tool_version still
+    /// find the registered tool.
     async fn resolve_tier(&self, org_id: &OrgId, tool_name: &str, tool_version: &str) -> ToolTier {
         let registry = self.registry.read().await;
         if let Some(registration) = registry.get(org_id, tool_name, tool_version).await {
-            registration.tier
-        } else {
-            debug!(
-                tool = %tool_name,
-                version = %tool_version,
-                "Tool not registered; defaulting to Safe tier"
-            );
-            ToolTier::Safe
+            return registration.tier;
         }
+        if tool_version.is_empty() {
+            if let Some(registration) = registry.find_by_name(org_id, tool_name).await {
+                return registration.tier;
+            }
+        }
+        debug!(
+            tool = %tool_name,
+            version = %tool_version,
+            "Tool not registered; defaulting to Safe tier"
+        );
+        ToolTier::Safe
     }
 }
 

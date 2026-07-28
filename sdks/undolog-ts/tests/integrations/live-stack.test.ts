@@ -449,6 +449,7 @@ describe("replay idempotency", { timeout: 30000 }, () => {
     const payload = {
       session_id: testSessionId,
       tool_name: "charge_payment",
+      tool_version: "1.0.0",
       step_index: 1,
       args,
     };
@@ -475,6 +476,7 @@ describe("replay idempotency", { timeout: 30000 }, () => {
     const payload1 = {
       session_id: testSessionId,
       tool_name: "charge_payment",
+      tool_version: "1.0.0",
       step_index: 1,
       args: { amount: 100, currency: "USD" },
     };
@@ -482,6 +484,7 @@ describe("replay idempotency", { timeout: 30000 }, () => {
     const payload2 = {
       session_id: testSessionId,
       tool_name: "charge_payment",
+      tool_version: "1.0.0",
       step_index: 2,
       args: { amount: 200, currency: "EUR" },
     };
