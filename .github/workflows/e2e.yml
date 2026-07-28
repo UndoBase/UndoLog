@@ -36,8 +36,25 @@ jobs:
       - name: Start stack
         uses: ./.github/actions/start-stack
 
-      - name: Run integration tests
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install TypeScript SDK dependencies
+        run: npm ci
+        working-directory: sdks/undolog-ts
+
+      - name: Build TypeScript SDK
+        run: npm run build
+        working-directory: sdks/undolog-ts
+
+      - name: Run Python integration tests
         run: python -m pytest examples/langchain-support-agent/tests/test_live_stack.py -v
+
+      - name: Run TypeScript integration tests
+        run: npm run test:integration
+        working-directory: sdks/undolog-ts
 
       - name: Stop stack
         if: always()

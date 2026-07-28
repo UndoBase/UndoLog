@@ -65,9 +65,9 @@ export interface UndologVercelTool<
  * @example
  *     import { tool } from "ai";
  *     import { z } from "zod";
- *     import { UndoLogClient } from "@undobase/undolog-sdk";
- *     import { undologTool } from "@undobase/undolog-sdk/vercel-ai-sdk";
- *     import { ToolTier } from "@undobase/undolog-sdk";
+ *     import { UndoLogClient } from "@undolog/sdk";
+ *     import { undologTool } from "@undolog/sdk/vercel-ai-sdk";
+ *     import { ToolTier } from "@undolog/sdk";
  *
  *     const client = new UndoLogClient({
  *       baseUrl: "http://localhost:8080",

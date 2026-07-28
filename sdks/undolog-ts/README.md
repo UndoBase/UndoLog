@@ -1,4 +1,4 @@
-# @undobase/undolog-sdk
+# @undolog/sdk
 
 TypeScript SDK for the UndoLog effect-tracking and exactly-once execution system.
 
@@ -9,7 +9,7 @@ rollback for recoverable operations.
 ## Installation
 
 ```bash
-npm install @undobase/undolog-sdk
+npm install @undolog/sdk
 ```
 
 The package ships as both ESM and CommonJS and includes full TypeScript declaration
@@ -19,18 +19,18 @@ files. It requires Node.js 18 or later.
 
 | Package                   | Import path                          | Required for              |
 | ------------------------- | ------------------------------------ | ------------------------- |
-| `ai` (Vercel AI SDK)      | `@undobase/undolog-sdk/vercel-ai-sdk` | Vercel AI SDK integration  |
-| `@langchain/core`         | `@undobase/undolog-sdk/langchain`    | LangChain integration      |
-| `openai`                  | `@undobase/undolog-sdk/openai`       | OpenAI Agents SDK          |
-| `mastra`                  | `@undobase/undolog-sdk/mastra`       | Mastra integration         |
-| `@modelcontextprotocol/sdk` | `@undobase/undolog-sdk/mcp`        | MCP server                 |
+| `ai` (Vercel AI SDK)      | `@undolog/sdk/vercel-ai-sdk` | Vercel AI SDK integration  |
+| `@langchain/core`         | `@undolog/sdk/langchain`    | LangChain integration      |
+| `openai`                  | `@undolog/sdk/openai`       | OpenAI Agents SDK          |
+| `mastra`                  | `@undolog/sdk/mastra`       | Mastra integration         |
+| `@modelcontextprotocol/sdk` | `@undolog/sdk/mcp`        | MCP server                 |
 
 ## Quickstart
 
 ### 1. Create a client
 
 ```typescript
-import { UndoLogClient } from "@undobase/undolog-sdk";
+import { UndoLogClient } from "@undolog/sdk";
 
 const client = new UndoLogClient({
   baseUrl: "http://localhost:8080",
@@ -41,7 +41,7 @@ const client = new UndoLogClient({
 ### 2. Wrap a tool
 
 ```typescript
-import { wrapTool, ToolTier } from "@undobase/undolog-sdk";
+import { wrapTool, ToolTier } from "@undolog/sdk";
 
 const sendEmail = wrapTool(client, {
   name: "send_email",
@@ -64,7 +64,7 @@ const result = await sendEmail({ to: "user@example.com", subject: "Hello" });
 ### 3. Run with session
 
 ```typescript
-import { UndoLogSession, runWithSession } from "@undobase/undolog-sdk";
+import { UndoLogSession, runWithSession } from "@undolog/sdk";
 
 const session = new UndoLogSession({ metadata: { userId: "abc-123" } });
 
@@ -80,7 +80,7 @@ const output = await runWithSession(session, async () => {
 ### 4. Handle approval (irreversible tools)
 
 ```typescript
-import { AwaitingApprovalError } from "@undobase/undolog-sdk";
+import { AwaitingApprovalError } from "@undolog/sdk";
 
 const deleteUser = wrapTool(client, {
   name: "delete_user",
@@ -109,8 +109,8 @@ try {
 ```typescript
 import { tool } from "ai";
 import { z } from "zod";
-import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
-import { undologTool } from "@undobase/undolog-sdk/vercel-ai-sdk";
+import { UndoLogClient, ToolTier } from "@undolog/sdk";
+import { undologTool } from "@undolog/sdk/vercel-ai-sdk";
 
 const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -138,8 +138,8 @@ const weatherTool = undologTool(
 
 ```typescript
 import { z } from "zod";
-import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
-import { createUndologTool } from "@undobase/undolog-sdk/langchain";
+import { UndoLogClient, ToolTier } from "@undolog/sdk";
+import { createUndologTool } from "@undolog/sdk/langchain";
 
 const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -160,8 +160,8 @@ const weatherTool = createUndologTool(
 ### OpenAI Agents SDK
 
 ```typescript
-import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
-import { undologFunctionTool } from "@undobase/undolog-sdk/openai";
+import { UndoLogClient, ToolTier } from "@undolog/sdk";
+import { undologFunctionTool } from "@undolog/sdk/openai";
 
 const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -186,8 +186,8 @@ const weatherTool = undologFunctionTool(
 ### Mastra
 
 ```typescript
-import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
-import { undologMastraTool } from "@undobase/undolog-sdk/mastra";
+import { UndoLogClient, ToolTier } from "@undolog/sdk";
+import { undologMastraTool } from "@undolog/sdk/mastra";
 
 const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
@@ -209,8 +209,8 @@ const reverseTool = undologMastraTool(
 Expose UndoLog-wrapped tools as MCP tools over stdio transport:
 
 ```typescript
-import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
-import { createUndoLogMcpServer, connectStdio } from "@undobase/undolog-sdk/mcp";
+import { UndoLogClient, ToolTier } from "@undolog/sdk";
+import { createUndoLogMcpServer, connectStdio } from "@undolog/sdk/mcp";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
@@ -244,8 +244,8 @@ The `testing` sub-path provides a fully in-memory mock server so you can
 test your UndoLog integration without a real server:
 
 ```typescript
-import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
-import { mockServer, createMockEffect, createMockSession } from "@undobase/undolog-sdk/testing";
+import { UndoLogClient, ToolTier } from "@undolog/sdk";
+import { mockServer, createMockEffect, createMockSession } from "@undolog/sdk/testing";
 
 // Create a mock server and inject its HttpClient
 const server = mockServer();
@@ -275,7 +275,7 @@ Cross-language parity assertions are also provided:
 import {
   assertCanonicalJsonParity,
   assertSignatureParity,
-} from "@undobase/undolog-sdk/testing";
+} from "@undolog/sdk/testing";
 
 const result = assertCanonicalJsonParity(
   { b: 1, a: 2 },
@@ -311,7 +311,7 @@ import {
   AwaitingApprovalError,
   AuthenticationError,
   NotFoundError,
-} from "@undobase/undolog-sdk";
+} from "@undolog/sdk";
 
 try {
   await client.intercept({ toolName: "t", args: {}, tier: ToolTier.Irreversible });

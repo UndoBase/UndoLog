@@ -100,7 +100,7 @@ See [Part 7 of COMMIT_AND_PR_STANDARDS.md](COMMIT_AND_PR_STANDARDS.md#part-7--ai
 
 ## Releasing the TypeScript SDK
 
-The `@undobase/undolog-sdk` package is published to npm from CI with Sigstore provenance.
+The `@undolog/sdk` package is published to npm from CI with Sigstore provenance.
 
 ### Prerequisites
 
@@ -113,8 +113,8 @@ The `@undobase/undolog-sdk` package is published to npm from CI with Sigstore pr
 2. Commit the version bump with a conventional commit message (e.g. `feat(sdk): release v0.2.0`).
 3. Tag the commit with the package name and version:
    ```
-   git tag @undobase/undolog-sdk@v0.2.0
-   git push origin @undobase/undolog-sdk@v0.2.0
+   git tag @undolog/sdk@v0.2.0
+   git push origin @undolog/sdk@v0.2.0
    ```
 4. The `.github/workflows/release-sdk.yml` workflow builds, tests, and publishes automatically.
 

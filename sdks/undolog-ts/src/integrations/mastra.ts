@@ -84,8 +84,8 @@ export interface UndologMastraTool<
  * ```typescript
  * import { createTool } from "@mastra/core/tools";
  * import { z } from "zod";
- * import { undologMastraTool } from "@undobase/undolog-sdk/mastra";
- * import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
+ * import { undologMastraTool } from "@undolog/sdk/mastra";
+ * import { UndoLogClient, ToolTier } from "@undolog/sdk";
  *
  * const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
  *

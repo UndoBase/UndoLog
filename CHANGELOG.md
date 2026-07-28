@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Rename TypeScript SDK from ``@undobase/undolog-sdk`` to ``@undolog/sdk``
+  across import paths, JSDoc examples, README, CI workflows, and
+  release tooling. Requires ``@undolog`` scope ownership on npm.
+
+### Added
+
+- TypeScript SDK: ``test:integration`` script (``npm run test:integration``)
+  runs live-stack tests against the full Docker stack.
+- E2E CI (``e2e.yml``): run TypeScript SDK live-stack integration tests
+  alongside the existing Python E2E tests.
+
 ### Fixed
 
 - deps: upgrade next to 15.5.22 to fix 8 vulnerabilities (2 High

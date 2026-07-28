@@ -8,8 +8,8 @@
  * Run with: npx tsx examples/langchain.ts
  */
 
-import { UndoLogClient, ToolTier, wrapTool, UndoLogSession, runWithSession } from "@undobase/undolog-sdk";
-import { mockServer } from "@undobase/undolog-sdk/testing";
+import { UndoLogClient, ToolTier, wrapTool, UndoLogSession, runWithSession } from "@undolog/sdk";
+import { mockServer } from "@undolog/sdk/testing";
 
 async function main() {
   const server = mockServer();

@@ -4,12 +4,12 @@
  * parity assertion helpers for cross-language signature testing, and factory
  * functions for creating session and effect test doubles.
  *
- * Import from ``@undobase/undolog-sdk/testing``.
+ * Import from ``@undolog/sdk/testing``.
  *
  * @example
  * ```ts
- * import { mockServer, createMockEffect } from "@undobase/undolog-sdk/testing";
- * import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
+ * import { mockServer, createMockEffect } from "@undolog/sdk/testing";
+ * import { UndoLogClient, ToolTier } from "@undolog/sdk";
  *
  * const server = mockServer();
  * const client = new UndoLogClient({

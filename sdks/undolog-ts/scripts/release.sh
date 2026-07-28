@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ------------------------------------------------------------------
-# Manual release script for @undobase/undolog-sdk.
+# Manual release script for @undolog/sdk.
 #
 # Usage:  ./scripts/release.sh <version>
 # Example: ./scripts/release.sh 0.2.0
@@ -23,7 +23,7 @@ if [ $# -ne 1 ]; then
 fi
 
 VERSION="$1"
-TAG="@undobase/undolog-sdk@v${VERSION}"
+TAG="@undolog/sdk@v${VERSION}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SDK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

@@ -1,5 +1,5 @@
 {
-  "name": "@undobase/undolog-sdk",
+  "name": "@undolog/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for the UndoLog effect-tracking and exactly-once execution system",
   "license": "MIT",
@@ -91,6 +91,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:unit": "vitest run --exclude 'tests/integrations/live-stack.test.ts'",
+    "test:integration": "vitest run tests/integrations/live-stack.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "lint": "tsc --noEmit -p tsconfig.build.json",

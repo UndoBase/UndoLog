@@ -66,9 +66,9 @@ export interface UndologOpenAITool<
  *   UndoLog approval workflow before ``execute`` runs.
  *
  * @example
- *     import { UndoLogClient } from "@undobase/undolog-sdk";
- *     import { undologFunctionTool } from "@undobase/undolog-sdk/openai";
- *     import { ToolTier } from "@undobase/undolog-sdk";
+ *     import { UndoLogClient } from "@undolog/sdk";
+ *     import { undologFunctionTool } from "@undolog/sdk/openai";
+ *     import { ToolTier } from "@undolog/sdk";
  *
  *     const client = new UndoLogClient({
  *       baseUrl: "http://localhost:8080",

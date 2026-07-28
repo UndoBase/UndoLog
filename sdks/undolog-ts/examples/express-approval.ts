@@ -10,8 +10,8 @@
  */
 
 import * as http from "node:http";
-import { UndoLogClient, ToolTier, wrapTool, AwaitingApprovalError, UndoLogSession, runWithSession } from "@undobase/undolog-sdk";
-import { mockServer } from "@undobase/undolog-sdk/testing";
+import { UndoLogClient, ToolTier, wrapTool, AwaitingApprovalError, UndoLogSession, runWithSession } from "@undolog/sdk";
+import { mockServer } from "@undolog/sdk/testing";
 
 async function main() {
   const server = mockServer();
