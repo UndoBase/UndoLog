@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TypeScript SDK: ``wrapTool`` now logs a warning when ``fail()``
   itself fails; previously the error was silently swallowed, leaving
   effects stuck in a terminal-error-retry loop.
+- TypeScript SDK: MCP ``CallTool`` handler returns structured JSON
+  (``{ type, toolName, approvalId, message }``) for
+  ``AwaitingApprovalError`` instead of unstructured text.
+- TypeScript SDK: add 6 unit tests for MCP server covering
+  ``ListTools``, ``CallTool`` (valid/invalid/error/approval).
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously
