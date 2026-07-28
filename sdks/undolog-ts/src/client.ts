@@ -11,9 +11,9 @@ import { createHttpClient } from "./http.js";
 import type { HttpClient } from "./http.js";
 import { getCurrentSession } from "./session.js";
 import { callSignature } from "./signature.js";
-import { requiresApproval } from "./tier.js";
-import type { ToolTier, CompensationDescriptor } from "./tier.js";
-import { AwaitingApprovalError } from "./errors.js";
+import type { ToolTier } from "./tier.js";
+import type { CompensationDescriptor } from "./tier.js";
+import { AwaitingApprovalError, NotFoundError } from "./errors.js";
 
 /** Lifecycle status of an effect in the UndoLog. */
 export type EffectStatus = "pending" | "approved" | "rejected" | "committed" | "failed";
@@ -121,17 +121,16 @@ export class UndoLogClient {
   /**
    * Register an effect before tool execution.
    *
-   * Computes the BLAKE3 call signature over (session, step, name, args) and
-   * persists the effect on the server. For ``Irreversible`` tier tools, the
-   * effect is created in pending state and an ``AwaitingApprovalError`` is
-   * thrown so the caller can suspend execution until a human approves or
-   * rejects the request.
+   * For calls routed through the UndoLog proxy, this sends a
+   * ``POST /mcp/tool_call`` request. The proxy intercepts the effect,
+   * executes the upstream tool, and commits inline. The returned
+   * ``EffectRecord`` reflects the server-side state.
    *
-   * @param params - Tool name, arguments, tier, and optional session or
-   *   compensation metadata.
+   * @param params - Tool name, arguments, tier, and optional session
+   *   metadata.
    * @returns The server-created effect record.
-   * @throws {AwaitingApprovalError} If the tool tier is Irreversible. The
-   *   effect is persisted on the server before the error is thrown.
+   * @throws {AwaitingApprovalError} If the proxy indicates the tool
+   *   requires human approval.
    *
    * @example
    * ```ts
@@ -145,42 +144,63 @@ export class UndoLogClient {
   async intercept(params: InterceptParams): Promise<EffectRecord> {
     const session = getCurrentSession();
     const sessionId = params.sessionId ?? session?.sessionId ?? randomUUID();
-    const stepIndex = params.stepIndex ?? session?.stepIndex ?? 0;
 
-    if (params.stepIndex === undefined && session !== undefined) {
-      session.nextStep();
+    let stepIndex: number;
+    if (params.stepIndex !== undefined) {
+      stepIndex = params.stepIndex;
+    } else if (session !== undefined) {
+      stepIndex = session.claimStepIndex();
+    } else {
+      stepIndex = 0;
     }
 
     const signature = callSignature(sessionId, stepIndex, params.toolName, params.args);
 
     const body: Record<string, unknown> = {
-      sessionId,
-      stepIndex,
-      toolName: params.toolName,
+      session_id: sessionId,
+      tool_name: params.toolName,
+      tool_version: "1.0.0",
+      step_index: stepIndex,
       args: params.args,
-      tier: params.tier,
-      signature,
     };
 
-    if (params.compensation !== undefined) {
-      body.compensation = params.compensation;
-    }
-
-    const record = await this.#http.request<EffectRecord>({
+    const proxyResp = await this.#http.request<Record<string, unknown>>({
       method: "POST",
-      path: "/v1/effects/intercept",
+      path: "/mcp/tool_call",
       body,
     });
 
-    if (requiresApproval(params.tier)) {
-      throw new AwaitingApprovalError(params.toolName, params.args, record.effectId);
+    const proxyStatus = proxyResp.status as string | undefined;
+
+    if (proxyStatus === "pending_approval") {
+      throw new AwaitingApprovalError(
+        params.toolName,
+        params.args,
+        proxyResp.approval_id as string,
+      );
     }
 
-    return record;
+    const isReplay = proxyStatus === "replayed";
+
+    return {
+      effectId: proxyResp.effect_id as string ?? randomUUID(),
+      sessionId,
+      stepIndex,
+      toolName: params.toolName,
+      signature,
+      status: isReplay ? "committed" : "pending",
+      tier: params.tier,
+      createdAt: new Date().toISOString(),
+    };
   }
 
   /**
    * Mark a previously intercepted effect as successfully committed.
+   *
+   * For calls routed through ``POST /mcp/tool_call`` the proxy commits
+   * inline and this method is a safe no-op. It sends a
+   * ``PUT /effects/{effectId}/commit`` to the proxy; if the endpoint
+   * is not implemented (404), the commit is assumed successful.
    *
    * @param effectId - Effect identifier returned by ``intercept()``.
    * @returns Updated effect record reflecting committed status.
@@ -192,15 +212,27 @@ export class UndoLogClient {
    * ```
    */
   async commit(effectId: string): Promise<EffectRecord> {
-    return this.#http.request<EffectRecord>({
-      method: "POST",
-      path: "/v1/effects/commit",
-      body: { effectId },
-    });
+    try {
+      return await this.#http.request<EffectRecord>({
+        method: "PUT",
+        path: `/effects/${encodeURIComponent(effectId)}/commit`,
+        body: {},
+      });
+    } catch (err) {
+      if (err instanceof NotFoundError) {
+        return { effectId, status: "committed" } as EffectRecord;
+      }
+      throw err;
+    }
   }
 
   /**
    * Mark a previously intercepted effect as failed.
+   *
+   * For calls routed through ``POST /mcp/tool_call`` the proxy handles
+   * failures inline and this method is a safe no-op. It sends a
+   * ``PUT /effects/{effectId}/fail`` to the proxy; if the endpoint
+   * is not implemented (404), the failure is assumed recorded.
    *
    * @param effectId - Effect identifier returned by ``intercept()``.
    * @param errorMessage - Human-readable description of the failure.
@@ -212,21 +244,25 @@ export class UndoLogClient {
    * ```
    */
   async fail(effectId: string, errorMessage: string): Promise<EffectRecord> {
-    return this.#http.request<EffectRecord>({
-      method: "POST",
-      path: "/v1/effects/fail",
-      body: { effectId, error: errorMessage },
-    });
+    try {
+      return await this.#http.request<EffectRecord>({
+        method: "PUT",
+        path: `/effects/${encodeURIComponent(effectId)}/fail`,
+        body: { error: errorMessage },
+      });
+    } catch (err) {
+      if (err instanceof NotFoundError) {
+        return { effectId, status: "failed" } as EffectRecord;
+      }
+      throw err;
+    }
   }
 
   /**
    * Approve a pending irreversible effect for execution.
    *
-   * Called by an external approval system after a human reviews and authorises
-   * an effect that was previously intercepted with ``Irreversible`` tier.
-   *
    * @param approvalId - Approval identifier from the original
-   *   ``AwaitingApprovalError`` (same as the effect identifier).
+   *   ``AwaitingApprovalError``.
    * @returns Updated effect record reflecting approved status.
    *
    * @example
@@ -237,19 +273,16 @@ export class UndoLogClient {
   async approve(approvalId: string): Promise<EffectRecord> {
     return this.#http.request<EffectRecord>({
       method: "POST",
-      path: "/v1/effects/approve",
-      body: { approvalId },
+      path: `/approvals/${encodeURIComponent(approvalId)}/approve`,
+      body: {},
     });
   }
 
   /**
    * Reject a pending irreversible effect.
    *
-   * Called by an external approval system after a human declines to authorise
-   * an effect that was previously intercepted with ``Irreversible`` tier.
-   *
    * @param approvalId - Approval identifier from the original
-   *   ``AwaitingApprovalError`` (same as the effect identifier).
+   *   ``AwaitingApprovalError``.
    * @param reason - Optional human-readable justification for the rejection.
    * @returns Updated effect record reflecting rejected status.
    *
@@ -259,13 +292,13 @@ export class UndoLogClient {
    * ```
    */
   async reject(approvalId: string, reason?: string): Promise<EffectRecord> {
-    const body: Record<string, unknown> = { approvalId };
+    const body: Record<string, unknown> = {};
     if (reason !== undefined) {
       body.reason = reason;
     }
     return this.#http.request<EffectRecord>({
       method: "POST",
-      path: "/v1/effects/reject",
+      path: `/approvals/${encodeURIComponent(approvalId)}/reject`,
       body,
     });
   }

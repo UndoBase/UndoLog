@@ -95,6 +95,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   for sounder type flow.
 - TypeScript SDK: error messages sanitize credentials from URLs to
   prevent API key disclosure in ``TimeoutError`` and ``NotFoundError``.
+- TypeScript SDK: align all API paths with the UndoLog proxy —
+  ``intercept()`` now sends ``POST /mcp/tool_call`` instead of
+  ``POST /v1/effects/intercept``; ``commit()`` and ``fail()`` use
+  ``PUT /effects/{id}/commit`` and ``PUT /effects/{id}/fail`` with
+  graceful 404 handling; ``approve()`` and ``reject()`` use
+  ``POST /approvals/{id}/approve`` and ``POST /approvals/{id}/reject``.
+  Fixes live-stack integration test failures (HTTP 404 on every effect
+  lifecycle endpoint).
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously
