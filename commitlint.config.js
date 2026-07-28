@@ -14,6 +14,7 @@ module.exports = {
         "types",
         "saga",
         "proxy",
+        "sdk",
         "sdk-py",
         "sdk-ts",
         "dashboard",

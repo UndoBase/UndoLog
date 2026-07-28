@@ -6,13 +6,13 @@
  * adapter. Useful for understanding the underlying primitives.
  *
  * For the framework-specific adapter, see undologTool() from
- * @undobase/undolog-sdk/vercel-ai-sdk.
+ * @undolog/sdk/vercel-ai-sdk.
  *
  * Run with: npx tsx examples/vercel-ai-sdk.ts
  */
 
-import { UndoLogClient, ToolTier, UndoLogSession, runWithSession } from "@undobase/undolog-sdk";
-import { mockServer } from "@undobase/undolog-sdk/testing";
+import { UndoLogClient, ToolTier, UndoLogSession, runWithSession } from "@undolog/sdk";
+import { mockServer } from "@undolog/sdk/testing";
 
 async function main() {
   const server = mockServer();

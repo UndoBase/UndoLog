@@ -7,8 +7,8 @@
  * Run with: npx tsx examples/basic.ts
  */
 
-import { UndoLogClient, ToolTier, wrapTool, UndoLogSession, runWithSession } from "@undobase/undolog-sdk";
-import { mockServer } from "@undobase/undolog-sdk/testing";
+import { UndoLogClient, ToolTier, wrapTool, UndoLogSession, runWithSession } from "@undolog/sdk";
+import { mockServer } from "@undolog/sdk/testing";
 
 async function main() {
   // Create a mock server so this example works without a real UndoLog backend.

@@ -45,9 +45,9 @@ export interface UndologLangchainToolOptions {
  *
  * @example
  *     import { z } from "zod";
- *     import { UndoLogClient } from "@undobase/undolog-sdk";
- *     import { createUndologTool } from "@undobase/undolog-sdk/langchain";
- *     import { ToolTier } from "@undobase/undolog-sdk";
+ *     import { UndoLogClient } from "@undolog/sdk";
+ *     import { createUndologTool } from "@undolog/sdk/langchain";
+ *     import { ToolTier } from "@undolog/sdk";
  *
  *     const client = new UndoLogClient({
  *       baseUrl: "http://localhost:8080",

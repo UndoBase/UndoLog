@@ -91,11 +91,11 @@ export interface UndoLogMcpServerOptions {
  *
  * @example
  * ```typescript
- * import { UndoLogClient, ToolTier } from "@undobase/undolog-sdk";
+ * import { UndoLogClient, ToolTier } from "@undolog/sdk";
  * import {
  *   createUndoLogMcpServer,
  *   StdioServerTransport,
- * } from "@undobase/undolog-sdk/mcp";
+ * } from "@undolog/sdk/mcp";
  *
  * const client = new UndoLogClient({
  *   baseUrl: "http://localhost:8080",
