@@ -52,6 +52,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TypeScript SDK: bump ``@modelcontextprotocol/sdk`` peer dep to
   ``^1.24.0``, dev dep to ``^1.29.0``, and add overrides for
   ``langsmith@0.6.0`` and ``uuid@11.1.1`` to fix 6 CVE alerts.
+- TypeScript SDK: POST and PUT requests no longer retry on network
+  error; only read-only methods (GET, HEAD, DELETE, OPTIONS) retry.
+  Mutating requests throw immediately on network failure to preserve
+  exactly-once semantics (POST/PUT retry would create duplicate
+  server-side effects).
+- TypeScript SDK: ``buildUrl`` now normalises a missing leading ``/``
+  in the path so that relative paths like ``v1/effects/commit`` are
+  correctly resolved to ``http://host/v1/effects/commit`` instead of
+  silently producing a 404.
+- TypeScript SDK: ``wrapTool`` now attempts compensation when
+  ``commit()`` fails for a COMPENSABLE effect and logs a warning;
+  previously the effect remained stuck in ``pending`` with no rollback.
+- TypeScript SDK: ``wrapTool`` now logs a warning when ``fail()``
+  itself fails; previously the error was silently swallowed, leaving
+  effects stuck in a terminal-error-retry loop.
 - ``build_engine()`` in ``crates/undolog-engine/src/startup.rs``: wait
   for ``undolog_tool_registry`` table before proceeding (``wait_for_schema``
   with 30s retry budget), then populate the ``TierRegistry`` synchronously
