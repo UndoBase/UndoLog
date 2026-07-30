@@ -43,7 +43,7 @@ export interface UndologVercelTool<
   readonly description?: string;
 
   /** Zod or JSON schema for tool parameter validation. */
-  readonly parameters?: { parse: (input: unknown) => TArgs };
+  readonly parameters?: { parse: (input: unknown) => TArgs } | Record<string, unknown>;
 
   /** The wrapped execute function with UndoLog effect tracking. */
   readonly execute: (args: TArgs) => Promise<TResult>;
@@ -106,7 +106,7 @@ export function undologTool<
   client: UndoLogClient,
   definition: {
     readonly description?: string;
-    readonly parameters?: { parse: (input: unknown) => TArgs };
+    readonly parameters?: { parse: (input: unknown) => TArgs } | Record<string, unknown>;
     readonly execute: (args: TArgs) => TResult | Promise<TResult>;
   },
   options: UndologVercelToolOptions,
