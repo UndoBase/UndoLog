@@ -128,7 +128,7 @@ describe("createUndologTool SAFE bypass", () => {
 
     const result = await tool.func({ key: "val" });
     expect(result).toBe("safe_result");
-    expect(func).toHaveBeenCalledWith({ key: "val" });
+    expect(func).toHaveBeenCalledWith({ key: "val" }, undefined);
     expect(intercept).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
   });
@@ -176,7 +176,7 @@ describe("createUndologTool Compensable flow", () => {
       args: { arg: 1 },
       tier: ToolTier.Compensable,
     });
-    expect(func).toHaveBeenCalledWith({ arg: 1 });
+    expect(func).toHaveBeenCalledWith({ arg: 1 }, undefined);
     expect(commit).toHaveBeenCalledWith("eff_001");
   });
 

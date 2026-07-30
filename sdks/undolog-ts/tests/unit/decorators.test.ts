@@ -50,7 +50,7 @@ describe("SAFE bypass", () => {
     const tool = wrapTool(client, { name: "safe_tool", tier: ToolTier.Safe, fn });
 
     await expect(tool({ key: "val" })).resolves.toBe("safe_result");
-    expect(fn).toHaveBeenCalledWith({ key: "val" });
+    expect(fn).toHaveBeenCalledWith({ key: "val" }, undefined);
     expect(intercept).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
   });
@@ -91,7 +91,7 @@ describe("Execute flow (Compensable)", () => {
       args: { arg: 1 },
       tier: ToolTier.Compensable,
     });
-    expect(fn).toHaveBeenCalledWith({ arg: 1 });
+    expect(fn).toHaveBeenCalledWith({ arg: 1 }, undefined);
     expect(commit).toHaveBeenCalledWith("eff_001");
   });
 

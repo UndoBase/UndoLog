@@ -92,7 +92,7 @@ describe("undologMastraTool structure", () => {
 });
 
 describe("undologMastraTool execute passes through context", () => {
-  it("accepts and ignores the optional context argument", async () => {
+  it("forwards the optional context argument to the underlying execute", async () => {
     const execute = vi.fn().mockResolvedValue("done");
 
     const tool = undologMastraTool(
@@ -105,9 +105,26 @@ describe("undologMastraTool execute passes through context", () => {
       { toolName: "ctx_tool", tier: ToolTier.Safe },
     );
 
-    const context = { mastra: true };
+    const context = { mastra: true, runId: "run_123" };
     await expect(tool.execute({ arg: 1 }, context)).resolves.toBe("done");
-    expect(execute).toHaveBeenCalledWith({ arg: 1 });
+    expect(execute).toHaveBeenCalledWith({ arg: 1 }, context);
+  });
+
+  it("works when context is omitted", async () => {
+    const execute = vi.fn().mockResolvedValue("done");
+
+    const tool = undologMastraTool(
+      client,
+      {
+        id: "ctx_tool",
+        description: "Context tool",
+        execute,
+      },
+      { toolName: "ctx_tool", tier: ToolTier.Safe },
+    );
+
+    await expect(tool.execute({ arg: 1 })).resolves.toBe("done");
+    expect(execute).toHaveBeenCalledWith({ arg: 1 }, undefined);
   });
 });
 
@@ -124,7 +141,7 @@ describe("undologMastraTool SAFE bypass", () => {
     );
 
     await expect(tool.execute({ key: "val" })).resolves.toBe("safe_result");
-    expect(execute).toHaveBeenCalledWith({ key: "val" });
+    expect(execute).toHaveBeenCalledWith({ key: "val" }, undefined);
     expect(intercept).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
   });
@@ -161,7 +178,7 @@ describe("undologMastraTool Compensable flow", () => {
       args: { arg: 1 },
       tier: ToolTier.Compensable,
     });
-    expect(execute).toHaveBeenCalledWith({ arg: 1 });
+    expect(execute).toHaveBeenCalledWith({ arg: 1 }, undefined);
     expect(commit).toHaveBeenCalledWith("eff_001");
   });
 

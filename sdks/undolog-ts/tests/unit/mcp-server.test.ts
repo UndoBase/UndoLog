@@ -71,7 +71,7 @@ describe("UndoLogMcpServer", () => {
     expect(JSON.parse(result.content[0].text as string)).toEqual({
       result: "hello",
     });
-    expect(fn).toHaveBeenCalledWith({ name: "world" });
+    expect(fn).toHaveBeenCalledWith({ name: "world" }, undefined);
   });
 
   it("returns isError for an unknown tool name", async () => {
