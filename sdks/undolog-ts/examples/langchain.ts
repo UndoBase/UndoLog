@@ -8,8 +8,10 @@
  * Run with: npx tsx examples/langchain.ts
  */
 
-import { UndoLogClient, ToolTier, wrapTool, UndoLogSession, runWithSession } from "@undolog/sdk";
+import { UndoLogClient, ToolTier, UndoLogSession, runWithSession } from "@undolog/sdk";
+import { createUndologTool } from "@undolog/sdk/langchain";
 import { mockServer } from "@undolog/sdk/testing";
+import { z } from "zod";
 
 async function main() {
   const server = mockServer();
@@ -19,21 +21,26 @@ async function main() {
     httpClient: server.httpClient,
   });
 
-  // Manually wrap a tool with the core wrapTool() function.
-  // (Directly using createUndologTool would require @langchain/core at runtime.)
-  const getWeather = wrapTool(client, {
-    name: "get_weather",
-    description: "Get the weather for a location",
-    tier: ToolTier.Safe,
-    fn: async ({ location }: { location: string }) => {
-      return `It is 72\u00b0F in ${location}`;
+  const getWeather = createUndologTool(
+    client,
+    {
+      name: "get_weather",
+      description: "Get the weather for a location",
+      schema: z.object({ location: z.string() }),
+      func: async ({ location }) => {
+        return `It is 72\u00b0F in ${location}`;
+      },
     },
-  });
+    {
+      toolName: "get_weather",
+      tier: ToolTier.Safe,
+    },
+  );
 
   const session = new UndoLogSession({ metadata: { source: "langchain-example" } });
 
   await runWithSession(session, async () => {
-    const result = await getWeather({ location: "London" });
+    const result = await getWeather.invoke({ location: "London" });
     console.log("Tool output:", result);
   });
 
