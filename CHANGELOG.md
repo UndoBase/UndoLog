@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Rename TypeScript SDK from ``@undobase/undolog-sdk`` to ``@undolog/sdk``
   across import paths, JSDoc examples, README, CI workflows, and
   release tooling. Requires ``@undolog`` scope ownership on npm.
+- TypeScript SDK: ``examples/langchain.ts`` now uses ``createUndologTool``
+  matching its docstring (was ``wrapTool``). ``examples/raw-intercept.ts``
+  run command fixed from stale ``vercel-ai-sdk.ts`` to ``raw-intercept.ts``.
 
 ### Added
 

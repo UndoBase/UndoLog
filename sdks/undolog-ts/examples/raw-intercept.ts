@@ -8,7 +8,7 @@
  * For the framework-specific adapter, see undologTool() from
  * @undolog/sdk/vercel-ai-sdk.
  *
- * Run with: npx tsx examples/vercel-ai-sdk.ts
+ * Run with: npx tsx examples/raw-intercept.ts
  */
 
 import { UndoLogClient, ToolTier, UndoLogSession, runWithSession } from "@undolog/sdk";
