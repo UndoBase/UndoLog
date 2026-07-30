@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   docstring corrected to ``mastra`` (was ``@mastra/core``). ``ToolDefinition.fn``
   and ``wrapTool`` now accept an optional ``context`` argument, enabling Mastra
   execution context to be forwarded through the effect lifecycle.
+- TypeScript SDK: ``langchain.ts`` - removed redundant ``toolName`` from
+  ``UndologLangchainToolOptions``; ``config.name`` is the single source of
+  truth for the effect name. ``func`` return type relaxed from ``string`` to
+  ``unknown`` to match ``DynamicStructuredTool``'s actual contract.
 
 ### Added
 

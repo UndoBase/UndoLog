@@ -50,7 +50,7 @@ let defaultOptions: UndologLangchainToolOptions;
 
 beforeEach(() => {
   client = new UndoLogClient({ baseUrl: "http://localhost:9999" });
-  defaultOptions = { toolName: "test_tool", tier: ToolTier.Compensable };
+  defaultOptions = { tier: ToolTier.Compensable };
 });
 
 describe("createUndologTool structure", () => {
@@ -83,7 +83,7 @@ describe("createUndologTool structure", () => {
         schema,
         func: async ({ location }) => `Weather in ${location}`,
       },
-      { toolName: "weather", tier: ToolTier.Safe },
+      { tier: ToolTier.Safe },
     );
 
     expect(tool.schema).toBe(schema);
@@ -101,7 +101,7 @@ describe("createUndologTool structure", () => {
         schema,
         func: async () => "done",
       },
-      { toolName: "no_params", tier: ToolTier.Safe },
+      { tier: ToolTier.Safe },
     );
 
     expect(tool.name).toBe("no_params");
@@ -123,7 +123,7 @@ describe("createUndologTool SAFE bypass", () => {
         schema: z.object({ key: z.string() }),
         func,
       },
-      { toolName: "safe_tool", tier: ToolTier.Safe },
+      { tier: ToolTier.Safe },
     );
 
     const result = await tool.func({ key: "val" });
@@ -144,7 +144,7 @@ describe("createUndologTool SAFE bypass", () => {
         schema: z.object({}),
         func,
       },
-      { toolName: "safe_tool", tier: ToolTier.Safe },
+      { tier: ToolTier.Safe },
     );
 
     await expect(tool.func({})).rejects.toThrow("safe_fail");
@@ -165,7 +165,7 @@ describe("createUndologTool Compensable flow", () => {
         schema: z.object({ arg: z.number() }),
         func,
       },
-      { toolName: "comp_tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     const result = await tool.func({ arg: 1 });
@@ -193,7 +193,7 @@ describe("createUndologTool Compensable flow", () => {
         schema: z.object({}),
         func,
       },
-      { toolName: "failing_tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     await expect(tool.func({})).rejects.toThrow("exec_fail");
@@ -213,7 +213,6 @@ describe("createUndologTool Compensable flow", () => {
         func: vi.fn().mockResolvedValue("ok"),
       },
       {
-        toolName: "comp_tool",
         tier: ToolTier.Compensable,
         compensation: { fnName: "undo_comp", args: { x: 1 } },
       },
@@ -239,7 +238,7 @@ describe("createUndologTool Compensable flow", () => {
         schema: z.object({}),
         func: vi.fn().mockResolvedValue("ok"),
       },
-      { toolName: "no_comp_tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     await tool.func({});
@@ -263,7 +262,7 @@ describe("createUndologTool Irreversible flow", () => {
         schema: z.object({}),
         func,
       },
-      { toolName: "irr_tool", tier: ToolTier.Irreversible },
+      { tier: ToolTier.Irreversible },
     );
 
     await expect(tool.func({})).rejects.toThrow(AwaitingApprovalError);
@@ -282,7 +281,7 @@ describe("createUndologTool Irreversible flow", () => {
         schema: z.object({ name: z.string() }),
         func: vi.fn(),
       },
-      { toolName: "delete_db", tier: ToolTier.Irreversible },
+      { tier: ToolTier.Irreversible },
     );
 
     const err = await tool.func({ name: "prod" }).catch((e: unknown) => e);
@@ -308,7 +307,7 @@ describe("createUndologTool replay flow", () => {
         schema: z.object({}),
         func,
       },
-      { toolName: "replay_tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     const result = await tool.func({});
@@ -330,7 +329,7 @@ describe("createUndologTool replay flow", () => {
         schema: z.object({}),
         func,
       },
-      { toolName: "replay_tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     await expect(tool.func({})).rejects.toThrow("replay_err");
@@ -352,7 +351,7 @@ describe("createUndologTool missing session", () => {
         schema: z.object({}),
         func,
       },
-      { toolName: "no_session_tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     await expect(tool.func({})).resolves.toBe("result");
@@ -373,7 +372,7 @@ describe("createUndologTool error propagation", () => {
         schema: z.object({}),
         func,
       },
-      { toolName: "tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     await expect(tool.func({})).rejects.toThrow("network_err");
@@ -392,7 +391,7 @@ describe("createUndologTool error propagation", () => {
         schema: z.object({}),
         func: vi.fn().mockRejectedValue(new Error("original_err")),
       },
-      { toolName: "tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     await expect(tool.func({})).rejects.toThrow("original_err");
@@ -410,7 +409,7 @@ describe("createUndologTool error propagation", () => {
         schema: z.object({}),
         func: vi.fn().mockResolvedValue("done"),
       },
-      { toolName: "tool", tier: ToolTier.Compensable },
+      { tier: ToolTier.Compensable },
     );
 
     await expect(tool.func({})).rejects.toThrow("commit_fail");

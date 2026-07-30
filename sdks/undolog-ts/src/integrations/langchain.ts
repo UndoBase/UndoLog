@@ -19,9 +19,6 @@ import type { ToolTier, CompensationDescriptor } from "../tier.js";
  * Options for wrapping a LangChain tool with UndoLog effect tracking.
  */
 export interface UndologLangchainToolOptions {
-  /** Logical tool name registered with the UndoLog service. */
-  readonly toolName: string;
-
   /** Effect tier classification. */
   readonly tier: ToolTier;
 
@@ -64,7 +61,6 @@ export interface UndologLangchainToolOptions {
  *         },
  *       },
  *       {
- *         toolName: "get_weather",
  *         tier: ToolTier.Safe,
  *       },
  *     );
@@ -75,7 +71,7 @@ export interface UndologLangchainToolOptions {
  * @param client - Configured UndoLog client instance.
  * @param config - LangChain tool configuration (name, description, schema,
  *   func).
- * @param options - UndoLog metadata (tool name, tier, compensation).
+ * @param options - UndoLog metadata (tier, compensation).
  * @returns A DynamicStructuredTool instance with UndoLog effect tracking.
  */
 export function createUndologTool<T extends ZodTypeAny>(
@@ -84,17 +80,17 @@ export function createUndologTool<T extends ZodTypeAny>(
     readonly name: string;
     readonly description: string;
     readonly schema: T;
-    readonly func: (input: z.infer<T>) => string | Promise<string>;
+    readonly func: (input: z.infer<T>) => unknown | Promise<unknown>;
   },
   options: UndologLangchainToolOptions,
 ): DynamicStructuredTool<T> {
-  const { toolName, tier, compensation } = options;
+  const { tier, compensation } = options;
 
-  const toolDef: ToolDefinition<Record<string, unknown>, string> = {
-    name: toolName,
+  const toolDef: ToolDefinition = {
+    name: config.name,
     description: config.description,
     tier,
-    fn: config.func as (args: Record<string, unknown>) => string | Promise<string>,
+    fn: config.func as (args: Record<string, unknown>) => unknown | Promise<unknown>,
     compensation,
   };
 
@@ -104,6 +100,6 @@ export function createUndologTool<T extends ZodTypeAny>(
     name: config.name,
     description: config.description,
     schema: config.schema,
-    func: wrappedExecute as (input: z.infer<T>) => Promise<string>,
+    func: wrappedExecute as (input: z.infer<T>) => Promise<unknown>,
   });
 }
