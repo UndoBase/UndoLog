@@ -15,21 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TypeScript SDK: ``examples/langchain.ts`` now uses ``createUndologTool``
   matching its docstring (was ``wrapTool``). ``examples/raw-intercept.ts``
   run command fixed from stale ``vercel-ai-sdk.ts`` to ``raw-intercept.ts``.
-- TypeScript SDK: ``openai.ts`` docstrings corrected from ``openai-agents``
-  to ``openai`` throughout (module, interface, function, example). ``mastra.ts``
-  docstring corrected to ``mastra`` (was ``@mastra/core``). ``ToolDefinition.fn``
-  and ``wrapTool`` now accept an optional ``context`` argument, enabling Mastra
-  execution context to be forwarded through the effect lifecycle.
+- TypeScript SDK: ``openai.ts``/``mastra.ts`` docstrings corrected;
+  ``ToolDefinition.fn`` and ``wrapTool`` accept optional ``context``.
 - TypeScript SDK: ``langchain.ts`` - removed redundant ``toolName`` from
-  ``UndologLangchainToolOptions``; ``config.name`` is the single source of
-  truth for the effect name. ``func`` return type relaxed from ``string`` to
-  ``unknown`` to match ``DynamicStructuredTool``'s actual contract.
-- TypeScript SDK: ``vercel-ai-sdk.ts`` - ``parameters`` type relaxed to
-  accept ``Record<string, unknown>`` (plain JSON Schema) in addition to
-  ``{ parse: ... }`` (Zod-like schemas), matching ``ai`` v4's actual API.
-- TypeScript SDK: ``mcp/server.ts`` - JSDoc ``@example`` now imports
-  ``StdioServerTransport`` from ``@modelcontextprotocol/sdk/server/stdio.js``
-  instead of the non-existent ``@undolog/sdk/mcp`` export.
+  options; ``func`` return type relaxed to ``unknown``.
+- TypeScript SDK: ``vercel-ai-sdk.ts`` - ``parameters`` accepts
+  ``Record<string, unknown>`` (plain JSON Schema) alongside Zod schemas.
+- TypeScript SDK: ``mcp/server.ts`` - JSDoc ``@example`` imports
+  ``StdioServerTransport`` from correct package.
+- TypeScript SDK: ``README.md`` - removed dead ``connectStdio`` import;
+  Compensable compensation ``Optional`` (was ``Required``).
+- TypeScript SDK: ``package.json``/``README.md`` - license corrected to
+  Apache-2.0 (was MIT).
 
 ### Added
 

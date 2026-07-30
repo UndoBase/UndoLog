@@ -210,7 +210,7 @@ Expose UndoLog-wrapped tools as MCP tools over stdio transport:
 
 ```typescript
 import { UndoLogClient, ToolTier } from "@undolog/sdk";
-import { createUndoLogMcpServer, connectStdio } from "@undolog/sdk/mcp";
+import { createUndoLogMcpServer } from "@undolog/sdk/mcp";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
@@ -298,7 +298,7 @@ console.log(sigResult.pass); // true (when signature matches)
 | Tier          | Behaviour                                                              | Compensation | Approval |
 | ------------- | ---------------------------------------------------------------------- | ------------ | -------- |
 | `Safe`        | Executes immediately; no effect log entry.                             | None         | No       |
-| `Compensable` | Effect is logged; can be undone via a compensation function.           | Required     | No       |
+| `Compensable` | Effect is logged; can be undone via a compensation function.           | Optional     | No       |
 | `Irreversible`| Effect is logged; execution requires explicit human approval.          | None         | Yes      |
 
 ## Error handling
@@ -332,4 +332,4 @@ Full API reference is generated with TypeDoc. See the
 
 ## License
 
-MIT
+Apache 2.0

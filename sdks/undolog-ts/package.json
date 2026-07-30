@@ -2,7 +2,7 @@
   "name": "@undolog/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for the UndoLog effect-tracking and exactly-once execution system",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "author": "UndoBase <https://github.com/UndoBase>",
   "exports": {
