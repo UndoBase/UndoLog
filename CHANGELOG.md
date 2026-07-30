@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ``UndologLangchainToolOptions``; ``config.name`` is the single source of
   truth for the effect name. ``func`` return type relaxed from ``string`` to
   ``unknown`` to match ``DynamicStructuredTool``'s actual contract.
+- TypeScript SDK: ``vercel-ai-sdk.ts`` - ``parameters`` type relaxed to
+  accept ``Record<string, unknown>`` (plain JSON Schema) in addition to
+  ``{ parse: ... }`` (Zod-like schemas), matching ``ai`` v4's actual API.
 
 ### Added
 
