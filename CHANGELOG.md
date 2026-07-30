@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TypeScript SDK: ``examples/langchain.ts`` now uses ``createUndologTool``
   matching its docstring (was ``wrapTool``). ``examples/raw-intercept.ts``
   run command fixed from stale ``vercel-ai-sdk.ts`` to ``raw-intercept.ts``.
+- TypeScript SDK: ``openai.ts`` docstrings corrected from ``openai-agents``
+  to ``openai`` throughout (module, interface, function, example). ``mastra.ts``
+  docstring corrected to ``mastra`` (was ``@mastra/core``). ``ToolDefinition.fn``
+  and ``wrapTool`` now accept an optional ``context`` argument, enabling Mastra
+  execution context to be forwarded through the effect lifecycle.
 
 ### Added
 

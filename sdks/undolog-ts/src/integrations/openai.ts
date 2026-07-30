@@ -1,8 +1,8 @@
-/** Integration with the OpenAI Agents SDK (`openai` / `openai-agents`).
+/** Integration with OpenAI (`openai`).
  *
  * Provides the ``undologFunctionTool()`` factory that wraps a tool
  * definition with UndoLog effect tracking, enabling exactly-once execution
- * and human-in-the-loop approval for OpenAI Agents SDK tool calls.
+ * and human-in-the-loop approval for OpenAI tool calls.
  *
  * @module
  */
@@ -13,7 +13,7 @@ import type { ToolDefinition } from "../decorators.js";
 import { ToolTier, type CompensationDescriptor } from "../tier.js";
 
 /**
- * Options for wrapping an OpenAI Agents SDK function tool with UndoLog
+ * Options for wrapping an OpenAI tool function with UndoLog
  * effect tracking.
  */
 export interface UndologOpenAIToolOptions {
@@ -28,8 +28,7 @@ export interface UndologOpenAIToolOptions {
 }
 
 /**
- * A tool object compatible with the OpenAI Agents SDK ``functionTool``
- * shape.
+ * A tool object compatible with OpenAI's function calling shape.
  *
  * @typeParam TArgs - Parsed argument type of the tool.
  * @typeParam TResult - Return type of the tool's execute function.
@@ -53,7 +52,7 @@ export interface UndologOpenAITool<
 
 /**
  * Wraps a tool definition with UndoLog effect tracking, producing an
- * object compatible with the OpenAI Agents SDK ``functionTool`` shape.
+ * object compatible with OpenAI's function calling shape.
  *
  * The factory wraps the tool's ``execute`` function via the core
  * ``wrapTool()`` higher-order function. Each invocation creates an effect
@@ -94,8 +93,8 @@ export interface UndologOpenAITool<
  *       },
  *     );
  *
- *     // Use with OpenAI Agents SDK:
- *     // const agent = new Agent({ name: "WeatherBot", tools: [weatherTool] });
+ *     // Use with OpenAI assistants API:
+ *     // const run = await client.beta.assistants.createRun(assistantId, { tools: [weatherTool] });
  *
  * @typeParam TArgs - Parsed argument type of the tool (must extend
  *   ``Record<string, unknown>``).
@@ -104,7 +103,7 @@ export interface UndologOpenAITool<
  * @param definition - Tool name, description, parameters schema, and
  *   execute function.
  * @param options - UndoLog metadata (tool name, tier, compensation).
- * @returns A tool object compatible with the OpenAI Agents SDK.
+ * @returns A tool object compatible with OpenAI's function calling shape.
  */
 export function undologFunctionTool<
   TArgs extends Record<string, unknown>,

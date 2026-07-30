@@ -90,7 +90,7 @@ describe("undologTool SAFE bypass", () => {
     );
 
     await expect(tool.execute({ key: "val" })).resolves.toBe("safe_result");
-    expect(execute).toHaveBeenCalledWith({ key: "val" });
+    expect(execute).toHaveBeenCalledWith({ key: "val" }, undefined);
     expect(intercept).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
   });
@@ -127,7 +127,7 @@ describe("undologTool Compensable flow", () => {
       args: { arg: 1 },
       tier: ToolTier.Compensable,
     });
-    expect(execute).toHaveBeenCalledWith({ arg: 1 });
+    expect(execute).toHaveBeenCalledWith({ arg: 1 }, undefined);
     expect(commit).toHaveBeenCalledWith("eff_001");
   });
 

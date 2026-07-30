@@ -33,7 +33,7 @@ export interface ToolDefinition<
   readonly tier: ToolTier;
 
   /** The actual tool implementation. */
-  readonly fn: (args: TArgs) => TResult | Promise<TResult>;
+  readonly fn: (args: TArgs, context?: unknown) => TResult | Promise<TResult>;
 
   /** Compensation descriptor for Compensable-tier tools. */
   readonly compensation?: CompensationDescriptor;
@@ -47,7 +47,7 @@ export interface ToolDefinition<
 export type WrappedTool<
   TArgs extends Record<string, unknown> = Record<string, unknown>,
   TResult = unknown,
-> = (args: TArgs) => Promise<TResult>;
+> = (args: TArgs, context?: unknown) => Promise<TResult>;
 
 /** Wraps a tool function with UndoLog effect tracking.
  *
@@ -101,9 +101,9 @@ export function wrapTool<
 ): WrappedTool<TArgs, TResult> {
   const { name, tier, fn, compensation } = definition;
 
-  return async (args: TArgs): Promise<TResult> => {
+  return async (args: TArgs, context?: unknown): Promise<TResult> => {
     if (isSafe(tier)) {
-      return fn(args);
+      return fn(args, context);
     }
 
     const effect = await client.intercept({
@@ -117,7 +117,7 @@ export function wrapTool<
 
     let result: TResult;
     try {
-      result = await fn(args);
+      result = await fn(args, context);
     } catch (err) {
       if (!isReplay) {
         try {

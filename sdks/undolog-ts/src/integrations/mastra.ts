@@ -1,4 +1,4 @@
-/** Integration with Mastra (`@mastra/core`).
+/** Integration with Mastra (`mastra`).
  *
  * Provides the ``undologMastraTool()`` factory that wraps a Mastra tool
  * definition with UndoLog effect tracking.  The returned object is
@@ -51,10 +51,8 @@ export interface UndologMastraTool<
   /** Executes the tool with UndoLog effect tracking.
    *
    * @param inputData - Validated input arguments.
-   * @param context - Mastra execution context (passed through to the
-   *   original execute function but ignored by the UndoLog wrapper;
-   *   use the original ``createTool`` and wrap the result if you need
-   *   full context access inside the tool body).
+   * @param context - Mastra execution context (forwarded through to the
+   *   underlying tool function).
    * @returns The tool's output.
    */
   readonly execute: (
@@ -124,7 +122,7 @@ export function undologMastraTool<
     name: toolName,
     description: definition.description,
     tier,
-    fn: definition.execute,
+    fn: (inputData, context) => definition.execute(inputData, context),
     compensation,
   };
   const wrappedExecute = wrapTool(client, toolDef);
@@ -135,7 +133,7 @@ export function undologMastraTool<
     outputSchema: definition.outputSchema,
     execute: async (
       inputData: TInput,
-      _context?: unknown,
-    ): Promise<TOutput> => wrappedExecute(inputData),
+      context?: unknown,
+    ): Promise<TOutput> => wrappedExecute(inputData, context),
   };
 }
