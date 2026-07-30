@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TypeScript SDK: ``vercel-ai-sdk.ts`` - ``parameters`` type relaxed to
   accept ``Record<string, unknown>`` (plain JSON Schema) in addition to
   ``{ parse: ... }`` (Zod-like schemas), matching ``ai`` v4's actual API.
+- TypeScript SDK: ``mcp/server.ts`` - JSDoc ``@example`` now imports
+  ``StdioServerTransport`` from ``@modelcontextprotocol/sdk/server/stdio.js``
+  instead of the non-existent ``@undolog/sdk/mcp`` export.
 
 ### Added
 
