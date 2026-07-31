@@ -80,12 +80,11 @@ describe("UndoLogSession lifecycle", () => {
 describe("step monotonicity", () => {
   it("steps are strictly increasing", () => {
     const session = new UndoLogSession();
-    const values: number[] = [];
-    for (let i = 0; i < 100; i++) {
-      values.push(session.nextStep());
-    }
-    for (let i = 1; i < values.length; i++) {
-      expect(values[i]).toBeGreaterThan(values[i - 1]);
+    let previous = session.nextStep();
+    for (let i = 1; i < 100; i++) {
+      const current = session.nextStep();
+      expect(current).toBeGreaterThan(previous);
+      previous = current;
     }
   });
 
@@ -103,13 +102,12 @@ describe("step monotonicity", () => {
 
   it("stepIndex never decreases", () => {
     const session = new UndoLogSession();
-    const snapshots: number[] = [];
+    let previous = session.stepIndex;
     for (let i = 0; i < 10; i++) {
-      snapshots.push(session.stepIndex);
+      const current = session.stepIndex;
+      expect(current).toBeGreaterThanOrEqual(previous);
       session.nextStep();
-    }
-    for (let i = 1; i < snapshots.length; i++) {
-      expect(snapshots[i]).toBeGreaterThanOrEqual(snapshots[i - 1]);
+      previous = current;
     }
   });
 
@@ -146,7 +144,7 @@ describe("context propagation", () => {
     runWithSession({ metadata: { source: "test" } }, () => {
       const current = getCurrentSession();
       expect(current).toBeDefined();
-      expect(current!.metadata).toEqual({ source: "test" });
+      expect(current?.metadata).toEqual({ source: "test" });
     });
   });
 

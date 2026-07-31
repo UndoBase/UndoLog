@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { UndoLogClient } from "../../src/client.js";
-import type { EffectRecord } from "../../src/client.js";
 import { ToolTier } from "../../src/tier.js";
-import type { CompensationDescriptor } from "../../src/tier.js";
 import {
   AuthenticationError,
   AwaitingApprovalError,
@@ -12,8 +10,6 @@ import {
   ValidationError,
 } from "../../src/errors.js";
 import { UndoLogSession, runWithSession } from "../../src/session.js";
-
-const NOW = new Date().toISOString();
 
 function proxyInterceptResponse(
   overrides?: Record<string, unknown>,
@@ -32,17 +28,6 @@ function jsonResponse(data: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
-
-const mockEffect: EffectRecord = {
-  effectId: "eff_001",
-  sessionId: "00000000-0000-0000-0000-000000000000",
-  stepIndex: 0,
-  toolName: "test_tool",
-  signature: "abc123def456",
-  status: "pending",
-  tier: ToolTier.Safe,
-  createdAt: NOW,
-};
 
 let client: UndoLogClient;
 
@@ -413,7 +398,7 @@ describe("intercept() retry behavior", () => {
 
   it("throws TimeoutError when the request exceeds the deadline", async () => {
     vi.mocked(fetch).mockImplementation(
-      (_input: RequestInfo | URL, init?: RequestInit) =>
+      (_input: string | URL | Request, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal as AbortSignal | undefined;
           signal?.addEventListener("abort", () => {
