@@ -13,7 +13,7 @@ import { getCurrentSession } from "./session.js";
 import { callSignature } from "./signature.js";
 import type { ToolTier } from "./tier.js";
 import type { CompensationDescriptor } from "./tier.js";
-import { AwaitingApprovalError, NotFoundError } from "./errors.js";
+import { AwaitingApprovalError, NotFoundError, ValidationError } from "./errors.js";
 
 /** Lifecycle status of an effect in the UndoLog. */
 export type EffectStatus = "pending" | "approved" | "rejected" | "committed" | "failed";
@@ -144,6 +144,14 @@ export class UndoLogClient {
   async intercept(params: InterceptParams): Promise<EffectRecord> {
     const session = getCurrentSession();
     const sessionId = params.sessionId ?? session?.sessionId ?? randomUUID();
+
+    if (params.sessionId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.sessionId)) {
+      throw new ValidationError(
+        `Invalid sessionId: "${params.sessionId}"`,
+        "sessionId",
+        "must be a valid UUID",
+      );
+    }
 
     let stepIndex: number;
     if (params.stepIndex !== undefined) {

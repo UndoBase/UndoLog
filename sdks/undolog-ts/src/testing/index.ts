@@ -121,6 +121,10 @@ export class MockUndoLogServer {
     const tier = body.tier as string;
     const compensation = body.compensation as Record<string, unknown> | undefined;
 
+    if (!Object.values(ToolTier).includes(tier as ToolTier)) {
+      throw new TypeError(`Invalid tier: "${tier}"`);
+    }
+
     const effectId = randomUUID();
     const now = new Date().toISOString();
     const computedSignature = callSignature(sessionId, stepIndex, toolName, args);
@@ -221,6 +225,17 @@ export function mockServer(): MockUndoLogServer {
   return new MockUndoLogServer();
 }
 
+// ── Constant-time comparison ────────────────────────────────────────────
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 // ── Parity assertion helpers ─────────────────────────────────────────────
 
 /** Result of a parity assertion.
@@ -307,7 +322,7 @@ export function assertSignatureParity(
   expectedSignature: string,
 ): ParityResult {
   const actual = callSignature(sessionId, stepIndex, toolName, args);
-  const pass = actual === expectedSignature;
+  const pass = constantTimeEqual(actual, expectedSignature);
   return {
     pass,
     message: () =>

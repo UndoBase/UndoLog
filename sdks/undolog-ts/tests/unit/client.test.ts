@@ -9,6 +9,7 @@ import {
   NotFoundError,
   TimeoutError,
   UndoLogError,
+  ValidationError,
 } from "../../src/errors.js";
 import { UndoLogSession, runWithSession } from "../../src/session.js";
 
@@ -586,5 +587,30 @@ describe("reject()", () => {
     const err = await client.reject("eff_001").catch((e) => e);
     expect(err).toBeInstanceOf(AuthenticationError);
     expect((err as AuthenticationError).reason).toBe("forbidden");
+  });
+
+  it("throws ValidationError for an invalid sessionId", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
+    const invalidIds = ["not-a-uuid", "", "123", "550e8400-e29b-41d4-a716-44665544000g"];
+
+    for (const id of invalidIds) {
+      const err = await client.intercept({
+        ...buildDefaultParams(),
+        sessionId: id,
+      }).catch((e) => e);
+      expect(err).toBeInstanceOf(ValidationError);
+      expect((err as ValidationError).field).toBe("sessionId");
+    }
+  });
+
+  it("accepts valid UUID sessionId", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
+    const validId = "550e8400-e29b-41d4-a716-446655440000";
+
+    const result = await client.intercept({
+      ...buildDefaultParams(),
+      sessionId: validId,
+    });
+    expect(result.sessionId).toBe(validId);
   });
 });
