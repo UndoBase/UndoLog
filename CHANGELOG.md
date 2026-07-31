@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- TypeScript SDK: added ``tsconfig.test.json`` and include test files in
+  ``typecheck``/``lint`` so test suites are type-checked in CI; fixed the
+  strict errors this surfaced in ``client.test.ts``, ``mcp-server.test.ts``,
+  ``session.test.ts``, and ``vercel-ai-sdk.test.ts``.
 - TypeScript SDK: ``client.ts`` - validate ``sessionId`` format on
   ``intercept()``; throw ``ValidationError`` for invalid UUIDs.
 - TypeScript SDK: ``testing/index.ts`` - validate tier on mock intercept;

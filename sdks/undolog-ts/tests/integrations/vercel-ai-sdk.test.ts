@@ -52,7 +52,7 @@ describe("undologTool structure", () => {
       client,
       {
         description: "typed tool",
-        parameters: { parse: (input: unknown) => ({}) },
+        parameters: { parse: () => ({}) },
         execute: async () => 42,
       },
       { toolName: "typed_tool", tier: ToolTier.Safe },

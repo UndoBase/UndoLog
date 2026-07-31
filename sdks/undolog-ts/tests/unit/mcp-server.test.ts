@@ -6,6 +6,41 @@ import { ToolTier } from "../../src/tier.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
+/** The tool-call result shape the server always returns. */
+interface TextToolResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+/**
+ * View a raw MCP tool-call result as the server's text-content contract.
+ *
+ * The server emits a single text content block on every path (see
+ * src/mcp/server.ts), so narrowing the SDK's union result to this shape is
+ * safe for the assertions in this suite.
+ *
+ * @param result - The result returned by `Client.callTool`.
+ * @returns The result narrowed to its text-content contract.
+ */
+function asTextResult(result: unknown): TextToolResult {
+  return result as TextToolResult;
+}
+
+/**
+ * Extract the text of the single content block of a server result.
+ *
+ * @param result - The narrowed tool-call result.
+ * @returns The text payload of the first content block.
+ * @throws {Error} If the first block is missing or is not a text block.
+ */
+function textFrom(result: TextToolResult): string {
+  const block = result.content[0];
+  if (block?.type !== "text") {
+    throw new Error("expected a single text content block");
+  }
+  return block.text;
+}
+
 async function createLinkedClientServer(
   server: ReturnType<typeof createUndoLogMcpServer>,
 ): Promise<Client> {
@@ -39,9 +74,10 @@ describe("UndoLogMcpServer", () => {
     const mcpClient = await createLinkedClientServer(server);
     const { tools } = await mcpClient.listTools();
     expect(tools).toHaveLength(1);
-    expect(tools[0].name).toBe("test_tool");
-    expect(tools[0].description).toBe("A test tool");
-    expect(tools[0].inputSchema).toEqual({
+    const [tool] = tools;
+    expect(tool?.name).toBe("test_tool");
+    expect(tool?.description).toBe("A test tool");
+    expect(tool?.inputSchema).toEqual({
       type: "object",
       properties: { foo: { type: "string" } },
       required: ["foo"],
@@ -67,8 +103,7 @@ describe("UndoLogMcpServer", () => {
     });
 
     expect(result.content).toHaveLength(1);
-    expect(result.content[0]).toMatchObject({ type: "text" });
-    expect(JSON.parse(result.content[0].text as string)).toEqual({
+    expect(JSON.parse(textFrom(asTextResult(result)))).toEqual({
       result: "hello",
     });
     expect(fn).toHaveBeenCalledWith({ name: "world" }, undefined);
@@ -83,8 +118,7 @@ describe("UndoLogMcpServer", () => {
       arguments: {},
     });
     expect(result.isError).toBe(true);
-    const text = result.content[0].text as string;
-    expect(text).toMatch(/Unknown tool/);
+    expect(textFrom(asTextResult(result))).toMatch(/Unknown tool/);
   });
 
   it("returns isError when the tool function throws", async () => {
@@ -104,8 +138,7 @@ describe("UndoLogMcpServer", () => {
       arguments: {},
     });
     expect(result.isError).toBe(true);
-    const text = result.content[0].text as string;
-    expect(text).toBe("boom");
+    expect(textFrom(asTextResult(result))).toBe("boom");
   });
 
   it("returns structured JSON for AwaitingApprovalError", async () => {
@@ -132,8 +165,7 @@ describe("UndoLogMcpServer", () => {
       arguments: { target: "prod" },
     });
     expect(result.isError).toBe(true);
-    const text = result.content[0].text as string;
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(textFrom(asTextResult(result)));
     expect(parsed).toMatchObject({
       type: "approval_required",
       toolName: "danger_tool",
