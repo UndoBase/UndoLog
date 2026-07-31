@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- TypeScript SDK: ``client.ts`` - validate ``sessionId`` format on
+  ``intercept()``; throw ``ValidationError`` for invalid UUIDs.
+- TypeScript SDK: ``testing/index.ts`` - validate tier on mock intercept;
+  constant-time comparison in ``assertSignatureParity()``.
+- TypeScript SDK: added ``tests/unit/testing.test.ts`` covering all
+  exported testing helpers.
 - deps: upgrade next to 15.5.22 to fix 8 vulnerabilities (2 High
   SSRF, 2 High DoS, 4 Moderate cache confusion/endpoint disclosure).
 - deps: upgrade postcss to 8.5.18 via npm overrides to fix path
