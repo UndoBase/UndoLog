@@ -14,7 +14,11 @@ import { UndoLogClient, ToolTier, wrapTool, AwaitingApprovalError, UndoLogSessio
 import { mockServer } from "@undolog/sdk/testing";
 
 async function main() {
-  const server = mockServer();
+  // Register the irreversible tool in the mock's tier registry so the proxy
+  // emulation returns a pending approval for it.
+  const server = mockServer({
+    tools: { delete_user: ToolTier.Irreversible },
+  });
 
   const client = new UndoLogClient({
     baseUrl: "http://localhost",

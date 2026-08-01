@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Cross-language canonical JSON now serialises numbers with ECMAScript
+  ``JSON.stringify`` rules (RFC 8785) in the Rust, Python, and TypeScript
+  SDKs: ``-0.0`` becomes ``0``, floats use fixed notation in ``[1e-6, 1e21)``
+  and exponential notation elsewhere (no leading zeros in exponents), and
+  non-finite values are rejected. Byte-identical output verified against V8
+  across a 5023-double corpus.
+- TypeScript SDK mock server now emulates the proxy MCP wire protocol
+  (``POST /mcp/tool_call``, snake_case bodies, server-side tier registry with
+  ``defaultTier`` fallback) instead of the legacy ``POST /v1/effects/*`` shape.
+- TypeScript SDK: ``examples/*`` and ``README.md`` updated to register mock
+  server tools in the tier registry so approval workflows still trigger.
+- ``docs/reference/call-signature.md`` documents per-SDK number serialisation
+  and non-finite handling; TypeScript CI runs the expanded float fixtures.
+
+### Added
+
+- Cross-language signature fixtures now cover ES6 float boundary cases
+  (``-0.0``, ``1e-6``, ``1e21``, denormals) and verify byte-for-byte parity
+  between the TypeScript, Python, and Rust SDKs.
+
 - Rename TypeScript SDK from ``@undobase/undolog-sdk`` to ``@undolog/sdk``
   across import paths, JSDoc examples, README, CI workflows, and
   release tooling. Requires ``@undolog`` scope ownership on npm.

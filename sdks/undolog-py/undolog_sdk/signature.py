@@ -11,9 +11,69 @@ Cross-language invariant:
 from __future__ import annotations
 
 import json
+import math
 import struct
 import uuid
 from typing import Any
+
+_ES6_EXP_THRESHOLD = 21
+
+
+def _es6_float(value: float) -> str:
+    """Serialise a float exactly as ECMAScript ``JSON.stringify`` does.
+
+    Python's ``json.dumps`` and ``repr`` use different formatting rules than
+    ECMAScript (e.g. ``1e-06`` vs ``0.000001``, ``-0.0`` vs ``0``). This
+    function reproduces the ECMAScript Number::toString output so the canonical
+    JSON bytes match the TypeScript SDK byte-for-byte.
+
+    Args:
+        value: A finite float.
+
+    Returns:
+        The ECMAScript-compatible serialisation of the float.
+
+    Raises:
+        ValueError: If ``value`` is not finite (``nan``, ``inf``, ``-inf``).
+    """
+    if not math.isfinite(value):
+        raise ValueError(f"Invalid JSON number: {value!r}")
+    if value == 0:
+        return "0"
+    text = repr(value)
+    sign = "-" if text.startswith("-") else ""
+    if sign:
+        text = text[1:]
+    exp_str = ""
+    exp_val = 0
+    q = text.find("e")
+    if q > 0:
+        exp_str = text[q:]
+        if exp_str[2:3] == "0":
+            exp_str = exp_str[:2] + exp_str[3:]
+        text = text[:q]
+        exp_val = int(exp_str[1:])
+    first, dot, last = text.partition(".")
+    if last == "0":
+        dot = ""
+        last = ""
+    if 0 < exp_val < _ES6_EXP_THRESHOLD:
+        first += last
+        last = ""
+        dot = ""
+        exp_str = ""
+        pad = exp_val + 1 - len(first)
+        if pad > 0:
+            first += "0" * pad
+    elif -7 < exp_val < 0:
+        last = first + last
+        first = "0"
+        dot = "."
+        exp_str = ""
+        pad = -exp_val - 1
+        if pad > 0:
+            last = "0" * pad + last
+    return f"{sign}{first}{dot}{last}{exp_str}"
 
 
 def canonical_json(value: Any) -> str:
@@ -23,13 +83,24 @@ def canonical_json(value: Any) -> str:
     languages. This function recursively sorts all keys so that
     ``{"b":1,"a":2}`` and ``{"a":2,"b":1}`` produce the same canonical string.
 
+    Numbers follow the ECMAScript ``JSON.stringify`` rules (RFC 8785):
+    ``0.0`` and ``-0.0`` both serialise as ``0``, small and large values use
+    exponential notation matching JavaScript, and exponents have no leading
+    zeros. This keeps the canonical bytes identical to the TypeScript and Rust
+    SDKs.
+
     Args:
         value: A JSON-compatible Python object (dict, list, str, int, float,
             bool, None).
 
     Returns:
         Compact JSON string with recursively sorted keys, no whitespace,
-        matching Rust ``serde_json`` output for leaf values.
+        matching the TypeScript and Rust SDK output for leaf values.
+
+    Raises:
+        ValueError: If ``value`` contains a non-finite float (``nan``,
+            ``inf``, ``-inf``). These are rejected to match the TypeScript
+            SDK, which throws a ``TypeError`` for the same inputs.
     """
     if isinstance(value, dict):
         pairs = [(k, canonical_json(v)) for k, v in value.items()]
@@ -39,7 +110,29 @@ def canonical_json(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         inner = ",".join(canonical_json(v) for v in value)
         return f"[{inner}]"
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=True)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return _es6_float(value)
+    if isinstance(value, int):
+        return str(value)
+    if value is None:
+        return "null"
+    return _escape_json_string(value)
+
+
+def _escape_json_string(value: str) -> str:
+    """Encode a string as JSON with ``ensure_ascii`` semantics.
+
+    Matches Python ``json.dumps(value, ensure_ascii=True)`` output.
+
+    Args:
+        value: String to encode.
+
+    Returns:
+        The JSON-encoded string literal (including surrounding double quotes).
+    """
+    return json.dumps(value, ensure_ascii=True)
 
 
 def call_signature(
@@ -50,7 +143,7 @@ def call_signature(
 ) -> str:
     """Compute the canonical call signature for a tool call.
 
-    Every SDK (Rust, Python, TypeScript, C#) MUST produce the same 64-character
+    Every SDK (Rust, Python, TypeScript) MUST produce the same 64-character
     lowercase hex output for the same inputs. The length-prefixed encoding
     prevents boundary attacks where two different (name, args) pairs could
     produce the same byte sequence without delimiters.

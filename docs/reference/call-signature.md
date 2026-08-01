@@ -60,7 +60,7 @@ return hasher.hexdigest()
 
 ## Canonical JSON
 
-Deterministic, sorted-key JSON string suitable for hashing. Produces byte-for-byte identical output across Rust, Python, and Go.
+Deterministic, sorted-key JSON string suitable for hashing. Produces byte-for-byte identical output across the Rust, Python, and TypeScript SDKs. The Go proxy implements a separate, structurally different canonical JSON (it wraps the call in `{"tool_name", "args"}` and preserves numeric tokens verbatim), so it is not byte-identical to this contract.
 
 ### Rules
 
@@ -68,7 +68,11 @@ Deterministic, sorted-key JSON string suitable for hashing. Produces byte-for-by
 |------|-------------|
 | Key sorting | Object keys are sorted lexicographically ascending. Recursively applied for nested objects. |
 | No whitespace | Compact representation with no spaces, tabs, or newlines. |
-| Leaf values | `serde_json` / `json.dumps` default serialisation for strings, numbers, booleans, and null. |
+| Leaf values | Strings, booleans, and null use standard JSON serialisation. Numbers follow the ECMAScript `JSON.stringify` rules (RFC 8785, Section 3.2.2.2) described below. |
+| Non-finite floats | `NaN`, `Infinity`, and `-Infinity` are rejected: Python raises `ValueError`, TypeScript throws `TypeError`, and Rust rejects them at `serde_json::Value` construction (`Number::from_f64` returns `None`). Per RFC 8785, non-finite values are not valid JSON and must cause an error. |
+| Negative zero | `-0.0` serialises as `0`, matching ECMAScript `JSON.stringify` and RFC 8785. |
+| Float notation | Fixed notation for values in `[1e-6, 1e21)`; exponential notation elsewhere. Exponential exponents have no leading zeros (`1e-7`, `1e+21`). Matches ECMAScript `Number.prototype.toString`. |
+| Integers | Serialised as-is with no decimal point or exponent (`42`, `0`, `-7`). |
 | Arrays | Preserved in insertion order. Elements recursively canonicalised. |
 
 ### Examples
@@ -79,6 +83,9 @@ Deterministic, sorted-key JSON string suitable for hashing. Produces byte-for-by
 | `{"z": {"b": 2, "a": 1}}` | `{"z":{"a":1,"b":2}}` |
 | `[3, 1, 2]` | `[3,1,2]` |
 | `{"name": "alice", "age": 30}` | `{"age":30,"name":"alice"}` |
+| `{"v": 1e-7}` | `{"v":1e-7}` |
+| `{"v": -0.0}` | `{"v":0}` |
+| `{"v": 1e21}` | `{"v":1e+21}` |
 
 ### Implementation references
 
@@ -86,7 +93,8 @@ Deterministic, sorted-key JSON string suitable for hashing. Produces byte-for-by
 |----------|----------|
 | Rust | `undolog-types/src/effect.rs`: `pub fn canonical_json(v: &serde_json::Value) -> String` |
 | Python | `undolog_sdk/signature.py`: `def canonical_json(value: Any) -> str` |
-| Go | `services/undolog-proxy/internal/proxy/signature.go`: `func writeCanonicalJSON(buf *bytes.Buffer, v any) error` |
+| TypeScript | `sdks/undolog-ts/src/signature.ts`: `export function canonicalJson(value: unknown): string` |
+| Go (proxy, separate format) | `services/undolog-proxy/internal/proxy/signature.go`: `func writeCanonicalJSON(buf *bytes.Buffer, v any) error` |
 
 ---
 

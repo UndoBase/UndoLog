@@ -54,6 +54,41 @@ class TestCanonicalJson:
     def test_float_values(self) -> None:
         assert canonical_json(3.14) == "3.14"
 
+    def test_negative_zero_float(self) -> None:
+        assert canonical_json(-0.0) == "0"
+
+    def test_positive_zero_float(self) -> None:
+        assert canonical_json(0.0) == "0"
+
+    def test_negative_zero_in_dict(self) -> None:
+        assert canonical_json({"v": -0.0}) == '{"v":0}'
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (1e-6, "0.000001"),
+            (1e-7, "1e-7"),
+            (9.999999e-7, "9.999999e-7"),
+            (1e21, "1e+21"),
+            (1.5e21, "1.5e+21"),
+            (5e-324, "5e-324"),
+            (1e20, "100000000000000000000"),
+            (-1e-7, "-1e-7"),
+        ],
+    )
+    def test_es6_exponential_boundaries(self, value: float, expected: str) -> None:
+        assert canonical_json(value) == expected
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_rejects_non_finite_floats(self, value: float) -> None:
+        with pytest.raises(ValueError):
+            canonical_json(value)
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
+    def test_rejects_non_finite_floats_nested(self, value: float) -> None:
+        with pytest.raises(ValueError):
+            canonical_json({"v": value})
+
     def test_boolean_values(self) -> None:
         assert canonical_json(True) == "true"
         assert canonical_json(False) == "false"
@@ -363,7 +398,7 @@ FIXTURES: list[dict[str, Any]] = [
     {
         "name": "zero_values",
         "args": {"int": 0, "float": 0.0, "str": "", "lst": [], "dct": {}},
-        "expected_json": '{"dct":{},"float":0.0,"int":0,"lst":[],"str":""}',
+        "expected_json": '{"dct":{},"float":0,"int":0,"lst":[],"str":""}',
     },
     # 41-45: Long strings
     {

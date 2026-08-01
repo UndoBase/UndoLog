@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Properties:
 /// - Deterministic: same inputs → same output, always.
-/// - Cross-language: Python and C# SDKs must implement identical logic.
+/// - Cross-language: the Python and TypeScript SDKs implement identical logic.
 /// - Stored as 64 lowercase hex characters (`char(64)` in PostgreSQL).
 ///
 /// The `UNIQUE` constraint on `undolog_effect_log.call_signature` plus
@@ -26,7 +26,7 @@ pub struct CallSignature(pub String);
 impl CallSignature {
     /// Compute the canonical call signature for a tool call.
     ///
-    /// Every SDK (Rust, Python, TypeScript, C#) MUST produce the same output
+    /// Every SDK (Rust, Python, TypeScript) MUST produce the same output
     /// for the same inputs. The length-prefixed encoding prevents boundary
     /// attacks where two different (name, args) pairs could produce the same
     /// byte sequence without delimiters.
@@ -76,6 +76,20 @@ impl std::fmt::Display for CallSignature {
 /// languages. This function recursively sorts all object keys so that
 /// `{"b":1,"a":2}` and `{"a":2,"b":1}` produce the same canonical string.
 ///
+/// Non-finite floats are rejected by construction: `serde_json::Number` only
+/// stores finite values (`Number::from_f64` returns `None` for NaN and
+/// infinity, and `Value::from` coerces such values to `Null`). This matches
+/// the rejection semantics of the Python SDK (`ValueError`) and the
+/// TypeScript SDK (`TypeError`), and satisfies the JSON Canonicalization
+/// Scheme requirement that NaN and Infinity cause an error (RFC 8785,
+/// Section 3.2.2.3).
+///
+/// Negative zero serialises as `0`, matching the JSON Canonicalization
+/// Scheme (RFC 8785) and the ECMAScript `JSON.stringify` rules the Python and
+/// TypeScript SDKs follow. Floats use ECMAScript Number::toString formatting:
+/// fixed notation for `[1e-6, 1e21)`, exponential notation (no leading zeros
+/// in the exponent) elsewhere.
+///
 /// This function is `pub` so SDK implementations in other crates can
 /// cross-reference the exact algorithm.
 pub fn canonical_json(v: &serde_json::Value) -> String {
@@ -93,7 +107,51 @@ pub fn canonical_json(v: &serde_json::Value) -> String {
             let inner = arr.iter().map(canonical_json).collect::<Vec<_>>().join(",");
             format!("[{}]", inner)
         }
-        other => serde_json::to_string(other).unwrap_or_default(),
+        Value::Null => "null".to_owned(),
+        Value::Bool(b) => b.to_string(),
+        // Integral values (i64/u64) are serialised as-is. Float values go
+        // through es6_format so their rendering matches ECMAScript
+        // JSON.stringify (RFC 8785), which the Python and TypeScript SDKs
+        // mirror. Non-finite floats cannot be stored in a Number, so this
+        // cannot produce `null` or `NaN`.
+        Value::Number(n) => match (n.as_i64(), n.as_u64(), n.as_f64()) {
+            (Some(i), _, _) => i.to_string(),
+            (None, Some(u), _) => u.to_string(),
+            (None, None, Some(f)) => es6_format(f),
+            (None, None, None) => n.to_string(),
+        },
+        // Escaping a String cannot fail; the unwrap is unreachable.
+        Value::String(s) => serde_json::to_string(s).unwrap_or_default(),
+    }
+}
+
+/// Serialise a float exactly as ECMAScript `JSON.stringify` does.
+///
+/// `serde_json::Number::to_string` uses Rust Display semantics which differ
+/// from ECMAScript for negative zero (`-0.0` vs `0`) and for magnitude
+/// boundaries (`1e+21` vs `1e21`, `0.000001` vs `1e-6`). This mirrors the
+/// Number::toString algorithm (RFC 8785, Section 3.2.2.2): fixed notation for
+/// `[1e-6, 1e21)`, exponential notation elsewhere with no leading zeros in the
+/// exponent.
+///
+/// Ryu and Rust's `{:e}` lower-exponential formatter emit the shortest
+/// round-tripping representation, so the digits match V8's output byte for
+/// byte; only the zero and exponent-presentation differences remain.
+fn es6_format(f: f64) -> String {
+    if f == 0.0 {
+        return "0".to_owned();
+    }
+    let abs = f.abs();
+    if (1e-6..1e21).contains(&abs) {
+        format!("{f}")
+    } else {
+        let s = format!("{f:e}");
+        match s.find('e') {
+            Some(i) if s.as_bytes().get(i + 1) != Some(&b'-') => {
+                format!("{}e+{}", &s[..i], &s[i + 1..])
+            }
+            _ => s,
+        }
     }
 }
 
@@ -306,6 +364,41 @@ mod tests {
         let a_pos = result.find("\"a\"").unwrap();
         let z_pos = result.find("\"z\"").unwrap();
         assert!(a_pos < z_pos, "nested keys must be sorted");
+    }
+
+    #[test]
+    fn canonical_json_negative_zero_matches_python_and_ts() {
+        assert_eq!(canonical_json(&json!(-0.0)), "0");
+        assert_eq!(canonical_json(&json!(0.0)), "0");
+        assert_eq!(canonical_json(&json!({"v": -0.0})), "{\"v\":0}");
+    }
+
+    #[test]
+    fn canonical_json_es6_float_boundaries() {
+        // Fixed notation for [1e-6, 1e21), exponential elsewhere.
+        assert_eq!(canonical_json(&json!(1e-6)), "0.000001");
+        assert_eq!(canonical_json(&json!(1e-7)), "1e-7");
+        assert_eq!(canonical_json(&json!(9.999999e-7)), "9.999999e-7");
+        assert_eq!(canonical_json(&json!(1e-5)), "0.00001");
+        assert_eq!(canonical_json(&json!(1e20)), "100000000000000000000");
+        assert_eq!(canonical_json(&json!(1e21)), "1e+21");
+        assert_eq!(canonical_json(&json!(1.5e21)), "1.5e+21");
+        assert_eq!(canonical_json(&json!(5e-324)), "5e-324");
+        assert_eq!(canonical_json(&json!(-1e-7)), "-1e-7");
+        assert_eq!(canonical_json(&json!(123.456)), "123.456");
+        assert_eq!(canonical_json(&json!(0.30000000000000004)), "0.30000000000000004");
+    }
+
+    #[test]
+    fn canonical_json_rejects_non_finite_at_construction() {
+        // serde_json cannot represent non-finite floats: Number::from_f64
+        // returns None, and Value::from coerces to Null. This is the Rust
+        // equivalent of Python's ValueError and TypeScript's TypeError: a
+        // non-finite float can never reach canonical_json.
+        assert_eq!(serde_json::Number::from_f64(f64::NAN), None);
+        assert_eq!(serde_json::Number::from_f64(f64::INFINITY), None);
+        assert_eq!(serde_json::Value::from(f64::NAN), serde_json::Value::Null);
+        assert_eq!(json!({"v": f64::NAN}), json!({"v": null}));
     }
 
     #[test]

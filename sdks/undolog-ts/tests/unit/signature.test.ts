@@ -166,8 +166,8 @@ describe("canonicalJson", () => {
 		expect(() => canonicalJson(Number.NEGATIVE_INFINITY)).toThrow(TypeError);
 	});
 
-	it("serialises -0 as '-0'", () => {
-		expect(canonicalJson(-0)).toBe("-0");
+	it("serialises -0 as '0'", () => {
+		expect(canonicalJson(-0)).toBe("0");
 	});
 
 	it("serialises +0 as '0'", () => {
@@ -183,11 +183,11 @@ describe("canonicalJson", () => {
 	});
 
 	it("serialises -0 in nested object", () => {
-		expect(canonicalJson({ x: -0 })).toBe('{"x":-0}');
+		expect(canonicalJson({ x: -0 })).toBe('{"x":0}');
 	});
 
 	it("serialises -0 in list", () => {
-		expect(canonicalJson([-0])).toBe("[-0]");
+		expect(canonicalJson([-0])).toBe("[0]");
 	});
 
 	it("serialises Date via toJSON", () => {
@@ -685,8 +685,29 @@ const FIXTURES: Fixture[] = [
 	},
 	{
 		name: "zero_values",
-		args: { int: 0, str: "", lst: [], dct: {} },
-		expectedJson: '{"dct":{},"int":0,"lst":[],"str":""}',
+		args: { int: 0, float: 0.0, str: "", lst: [], dct: {} },
+		expectedJson: '{"dct":{},"float":0,"int":0,"lst":[],"str":""}',
+	},
+	{
+		name: "negative_zero",
+		args: { v: -0 },
+		expectedJson: '{"v":0}',
+	},
+	{
+		name: "es6_fixed_notation",
+		args: { small: 1e-6, tiny: 1e-5, medium: 0.001, big: 1e20 },
+		expectedJson:
+			'{"big":100000000000000000000,"medium":0.001,"small":0.000001,"tiny":0.00001}',
+	},
+	{
+		name: "es6_exponential_notation",
+		args: { under: 9.999999e-7, over: 1e-7, at21: 1e21, past21: 1.5e21 },
+		expectedJson: '{"at21":1e+21,"over":1e-7,"past21":1.5e+21,"under":9.999999e-7}',
+	},
+	{
+		name: "es6_denormal_min",
+		args: { min: 5e-324 },
+		expectedJson: '{"min":5e-324}',
 	},
 	// 41-45: Long strings
 	{

@@ -407,7 +407,7 @@
     "tool_name": "zero",
     "args": {
       "int": 0,
-      "float": 0,
+      "float": 0.0,
       "str": "",
       "lst": [],
       "dct": {}
@@ -416,9 +416,57 @@
     "expected_signature": "e65aecee8bf88c91d22e1c988df7146cc047a6f5bcc5d9fc21c1c6cb26d81b1f"
   },
   {
-    "name": "negative_numbers",
+    "name": "negative_zero",
     "session_id": "00000000-0000-0000-0000-000000000000",
     "step_index": 100,
+    "tool_name": "neg_zero",
+    "args": {
+      "v": -0.0
+    },
+    "expected_json": "{\"v\":0}",
+    "expected_signature": "5dba867ad65080247a08a6a2909363c9baf0800c177966577e6004a6b36eb52c"
+  },
+  {
+    "name": "small_exponential",
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "step_index": 104,
+    "tool_name": "small_exp",
+    "args": {
+      "boundary": 1e-06,
+      "one_under": 9.999999e-07,
+      "one_over": 1e-07
+    },
+    "expected_json": "{\"boundary\":0.000001,\"one_over\":1e-7,\"one_under\":9.999999e-7}",
+    "expected_signature": "32948b353a28466f3f7317402139a8f46eb1e02ddae3cecc4d5d47901c706211"
+  },
+  {
+    "name": "large_exponential",
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "step_index": 105,
+    "tool_name": "large_exp",
+    "args": {
+      "under": 1e+20,
+      "boundary": 1e+21,
+      "over": 1.5e+21
+    },
+    "expected_json": "{\"boundary\":1e+21,\"over\":1.5e+21,\"under\":100000000000000000000}",
+    "expected_signature": "1f8ed7ede8cdca33ce14b68df641c5e4e82e5ab9d4f0ef950d3521c8b454d7db"
+  },
+  {
+    "name": "denormal_float",
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "step_index": 106,
+    "tool_name": "denormal",
+    "args": {
+      "min": 5e-324
+    },
+    "expected_json": "{\"min\":5e-324}",
+    "expected_signature": "bac713b267b1e9d736934594c01f6d954ac1d0a111b7b5f59eec212972685ad8"
+  },
+  {
+    "name": "negative_numbers",
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "step_index": 101,
     "tool_name": "neg",
     "args": {
       "neg": -42,
@@ -426,29 +474,29 @@
       "neg_float": -3.14
     },
     "expected_json": "{\"neg\":-42,\"neg_float\":-3.14,\"pos\":7}",
-    "expected_signature": "0a3682254c8c6f334556b7a6ec58ff408f1f22344e85b16efb1c8380f5daf6c7"
+    "expected_signature": "de3590083541695036b430e830b55385ffa4ba6b22aa65e3adafacd65f86089e"
   },
   {
     "name": "numeric_string",
     "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 101,
+    "step_index": 102,
     "tool_name": "num_str",
     "args": {
       "id": "12345"
     },
     "expected_json": "{\"id\":\"12345\"}",
-    "expected_signature": "41f0768ccd64cf3003c8dabe1b5973b29e9569207634c67654e2a41d8239684a"
+    "expected_signature": "36317e2c925619bb6a8d26bcf7bb7282a1fa78c67e3bb011023e0c85cdbb10bd"
   },
   {
     "name": "url_string",
     "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 102,
+    "step_index": 103,
     "tool_name": "url_tool",
     "args": {
       "url": "https://example.com/path?q=1&lang=en"
     },
     "expected_json": "{\"url\":\"https://example.com/path?q=1&lang=en\"}",
-    "expected_signature": "53840e6033e9f511a690424acee769be6b49a7616d4839268d87f3d9914b2c9a"
+    "expected_signature": "1ecd1d111515b9a87f9fee6fc8eed29193d461cf1a25d14d923b72c196a5c906"
   },
   {
     "name": "mixed_types",

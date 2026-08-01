@@ -14,7 +14,12 @@ import { mockServer } from "@undolog/sdk/testing";
 import { z } from "zod";
 
 async function main() {
-  const server = mockServer();
+  // Register the wrapped tool in the mock's tier registry. The proxy resolves
+  // tiers server-side from its registry, so `get_weather` must be registered
+  // as Safe here for parity with the client-side tier declaration.
+  const server = mockServer({
+    tools: { get_weather: ToolTier.Safe },
+  });
 
   const client = new UndoLogClient({
     baseUrl: "http://localhost",
@@ -32,7 +37,6 @@ async function main() {
       },
     },
     {
-      toolName: "get_weather",
       tier: ToolTier.Safe,
     },
   );
