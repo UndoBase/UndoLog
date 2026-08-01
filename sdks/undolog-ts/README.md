@@ -247,8 +247,12 @@ test your UndoLog integration without a real server:
 import { UndoLogClient, ToolTier } from "@undolog/sdk";
 import { mockServer, createMockEffect, createMockSession } from "@undolog/sdk/testing";
 
-// Create a mock server and inject its HttpClient
-const server = mockServer();
+// Create a mock server and inject its HttpClient. Register your tools in the
+// server's tier registry: like the real proxy, the mock resolves tiers
+// server-side and ignores any tier the client sends.
+const server = mockServer({
+  tools: { test_tool: ToolTier.Compensable },
+});
 const client = new UndoLogClient({
   baseUrl: "http://localhost",
   httpClient: server.httpClient,

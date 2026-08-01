@@ -15,7 +15,15 @@ import { UndoLogClient, ToolTier, UndoLogSession, runWithSession } from "@undolo
 import { mockServer } from "@undolog/sdk/testing";
 
 async function main() {
-  const server = mockServer();
+  // Register the tools in the mock's tier registry. The proxy resolves tiers
+  // server-side, so `delete_user` must be registered as Irreversible for the
+  // approval workflow to trigger.
+  const server = mockServer({
+    tools: {
+      delete_user: ToolTier.Irreversible,
+      send_email: ToolTier.Compensable,
+    },
+  });
 
   const client = new UndoLogClient({
     baseUrl: "http://localhost",

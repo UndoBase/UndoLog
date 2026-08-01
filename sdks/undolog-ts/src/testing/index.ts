@@ -1,17 +1,20 @@
 /** Test helpers for the UndoLog TypeScript SDK.
  *
- * Provides a fully in-memory mock server that mimics the UndoLog HTTP API,
- * parity assertion helpers for cross-language signature testing, and factory
- * functions for creating session and effect test doubles.
+ * Provides a fully in-memory mock server that mimics the UndoLog proxy MCP
+ * protocol (``POST /mcp/tool_call``, effect commit/fail, and approval
+ * endpoints), parity assertion helpers for cross-language signature testing,
+ * and factory functions for creating session and effect test doubles.
  *
  * Import from ``@undolog/sdk/testing``.
  *
  * @example
  * ```ts
- * import { mockServer, createMockEffect } from "@undolog/sdk/testing";
+ * import { mockServer } from "@undolog/sdk/testing";
  * import { UndoLogClient, ToolTier } from "@undolog/sdk";
  *
- * const server = mockServer();
+ * const server = mockServer({
+ *   tools: { send_email: ToolTier.Compensable },
+ * });
  * const client = new UndoLogClient({
  *   baseUrl: "http://localhost",
  *   httpClient: server.httpClient,
@@ -23,13 +26,31 @@
 
 import { randomUUID } from "node:crypto";
 import type { HttpClient, RequestOptions } from "../http.js";
-import type { EffectRecord, EffectStatus } from "../client.js";
+import type { EffectRecord, EffectStatus, SessionRecord } from "../client.js";
 import { callSignature, canonicalJson } from "../signature.js";
 import { UndoLogSession } from "../session.js";
 import type { SessionOptions } from "../session.js";
 import { ToolTier } from "../tier.js";
+import { NotFoundError, ValidationError } from "../errors.js";
 
 // ── In-memory mock server ────────────────────────────────────────────────
+
+/** Options for constructing a ``MockUndoLogServer``.
+ *
+ * The mock resolves a tool's tier from ``tools``, mirroring the real proxy
+ * which resolves tiers server-side from its tool registry. The client does
+ * not send a tier in the ``/mcp/tool_call`` request body.
+ */
+export interface MockServerOptions {
+  /** Tool tier registry: maps tool name to its tier. Unknown tools fall back
+   * to ``defaultTier``.
+   */
+  tools?: Record<string, ToolTier>;
+  /** Tier applied to tools not present in ``tools``. Defaults to
+   * ``ToolTier.Compensable``.
+   */
+  defaultTier?: ToolTier;
+}
 
 /** Internal representation of an effect tracked by the mock server.
  *
@@ -52,8 +73,8 @@ export interface MockEffectEntry {
   signature: string;
   /** Current lifecycle status. */
   status: EffectStatus;
-  /** Tool tier classification string. */
-  tier: string;
+  /** Tool tier classification. */
+  tier: ToolTier;
   /** Compensation descriptor, if provided at intercept time. */
   compensation: Record<string, unknown> | undefined;
   /** Error message set when the effect was failed. */
@@ -64,27 +85,60 @@ export interface MockEffectEntry {
   createdAt: string;
 }
 
-/** A fully in-memory mock of the UndoLog API server.
+/** Internal representation of a pending approval in the mock server. */
+export interface MockApprovalEntry {
+  /** Approval identifier returned to the client. */
+  approvalId: string;
+  /** Identifier of the effect awaiting approval. */
+  effectId: string;
+  /** Human-readable rejection reason, if the approval was rejected. */
+  reason: string | undefined;
+  /** RFC 3339 timestamp of creation. */
+  createdAt: string;
+}
+
+/** A fully in-memory mock of the UndoLog proxy API server.
+ *
+ * Emulates the proxy MCP protocol that ``UndoLogClient`` speaks:
+ *
+ * - ``POST /mcp/tool_call`` with a snake_case body
+ *   ``{session_id, tool_name, tool_version, step_index, args}`` returns the
+ *   proxy response ``{status: "executed"|"pending_approval", effect_id,
+ *   approval_id?, retry_after?}``.
+ * - ``PUT /effects/{id}/commit`` and ``PUT /effects/{id}/fail`` transition
+ *   a stored effect.
+ * - ``POST /approvals/{id}/approve`` and ``POST /approvals/{id}/reject``
+ *   resolve a pending approval.
+ * - ``GET /v1/effects/{id}`` and ``GET /v1/sessions/{id}`` return stored
+ *   records.
  *
  * Stores effects in a ``Map`` keyed by effect identifier. Exposes an
  * ``HttpClient`` that can be injected directly into ``UndoLogClient``,
- * bypassing real HTTP. Use the public ``effects`` map to inspect or assert
- * on the state of server-side data during tests.
+ * bypassing real HTTP. Use the public ``effects`` and ``approvals`` maps to
+ * inspect or assert on the state of server-side data during tests.
  *
  * @example
  * ```ts
- * const server = mockServer();
+ * const server = mockServer({
+ *   tools: { send_email: ToolTier.Compensable },
+ * });
  * const client = new UndoLogClient({
  *   baseUrl: "http://localhost",
  *   httpClient: server.httpClient,
  * });
- * await client.intercept({ toolName: "t", args: {}, tier: ToolTier.Safe });
+ * await client.intercept({ toolName: "send_email", args: {}, tier: ToolTier.Compensable });
  * expect(server.effects.size).toBe(1);
  * ```
  */
 export class MockUndoLogServer {
   /** All effects stored in the mock server, keyed by effect ID. */
   readonly effects: Map<string, MockEffectEntry> = new Map();
+
+  /** All approvals created by the mock server, keyed by approval ID. */
+  readonly approvals: Map<string, MockApprovalEntry> = new Map();
+
+  /** Tool tier registry and default tier for unknown tools. */
+  readonly options: Required<Pick<MockServerOptions, "defaultTier">> & MockServerOptions;
 
   /** An ``HttpClient`` that routes requests to this mock server instance.
    *
@@ -95,40 +149,110 @@ export class MockUndoLogServer {
     return { request: (opts) => this.#handleRequest(opts) };
   }
 
-  async #handleRequest<T>(opts: RequestOptions): Promise<T> {
-    const body = (opts.body ?? {}) as Record<string, unknown>;
-    switch (opts.path) {
-      case "/v1/effects/intercept":
-        return this.#intercept(body) as T;
-      case "/v1/effects/commit":
-        return this.#commit(body) as T;
-      case "/v1/effects/fail":
-        return this.#fail(body) as T;
-      case "/v1/effects/approve":
-        return this.#approve(body) as T;
-      case "/v1/effects/reject":
-        return this.#reject(body) as T;
-      default:
-        throw new TypeError(`Mock server: unknown path "${opts.path}"`);
-    }
+  /**
+   * @param options - Tool tier registry and default tier.
+   */
+  constructor(options: MockServerOptions = {}) {
+    this.options = { defaultTier: ToolTier.Compensable, ...options };
   }
 
-  #intercept(body: Record<string, unknown>): EffectRecord {
-    const sessionId = body.sessionId as string;
-    const stepIndex = body.stepIndex as number;
-    const toolName = body.toolName as string;
-    const args = (body.args ?? {}) as Record<string, unknown>;
-    const tier = body.tier as string;
-    const compensation = body.compensation as Record<string, unknown> | undefined;
+  async #handleRequest<T>(opts: RequestOptions): Promise<T> {
+    const body = (opts.body ?? {}) as Record<string, unknown>;
+    const method = opts.method ?? "GET";
+    const path = opts.path;
 
-    if (!Object.values(ToolTier).includes(tier as ToolTier)) {
-      throw new TypeError(`Invalid tier: "${tier}"`);
+    if (path === "/mcp/tool_call") {
+      return this.#toolCall(body, method) as T;
     }
 
+    const commitMatch = /^\/effects\/([^/]+)\/commit$/.exec(path);
+    const commitId = commitMatch?.[1];
+    if (commitId !== undefined) {
+      return this.#commit(commitId, method) as T;
+    }
+
+    const failMatch = /^\/effects\/([^/]+)\/fail$/.exec(path);
+    const failId = failMatch?.[1];
+    if (failId !== undefined) {
+      return this.#fail(failId, body, method) as T;
+    }
+
+    const approveMatch = /^\/approvals\/([^/]+)\/approve$/.exec(path);
+    const approveId = approveMatch?.[1];
+    if (approveId !== undefined) {
+      return this.#approve(approveId, method) as T;
+    }
+
+    const rejectMatch = /^\/approvals\/([^/]+)\/reject$/.exec(path);
+    const rejectId = rejectMatch?.[1];
+    if (rejectId !== undefined) {
+      return this.#reject(rejectId, body, method) as T;
+    }
+
+    const effectMatch = /^\/v1\/effects\/([^/]+)$/.exec(path);
+    const effectId = effectMatch?.[1];
+    if (effectId !== undefined) {
+      return this.#getEffect(effectId, method) as T;
+    }
+
+    const sessionMatch = /^\/v1\/sessions\/([^/]+)$/.exec(path);
+    const sessionId = sessionMatch?.[1];
+    if (sessionId !== undefined) {
+      return this.#getSession(sessionId, method) as T;
+    }
+
+    throw new TypeError(`Mock server: unknown path "${path}"`);
+  }
+
+  #toolCall(body: Record<string, unknown>, method: string): Record<string, unknown> {
+    this.#assertMethod(method, "POST", "/mcp/tool_call");
+    const sessionId = body.session_id as string;
+    const toolName = body.tool_name as string;
+    const stepIndex = body.step_index as number;
+    const args = (body.args ?? {}) as Record<string, unknown>;
+
+    if (typeof sessionId !== "string" || sessionId === "") {
+      throw new ValidationError("Mock server: session_id is required", "session_id");
+    }
+    if (typeof toolName !== "string" || toolName === "") {
+      throw new ValidationError("Mock server: tool_name is required", "tool_name");
+    }
+
+    const tier = this.#resolveTier(toolName);
     const effectId = randomUUID();
     const now = new Date().toISOString();
     const computedSignature = callSignature(sessionId, stepIndex, toolName, args);
 
+    if (tier === ToolTier.Irreversible) {
+      const entry: MockEffectEntry = {
+        effectId,
+        sessionId,
+        stepIndex,
+        toolName,
+        args,
+        signature: computedSignature,
+        status: "pending",
+        tier,
+        compensation: undefined,
+        error: undefined,
+        reason: undefined,
+        createdAt: now,
+      };
+      this.effects.set(effectId, entry);
+
+      const approvalId = randomUUID();
+      this.approvals.set(approvalId, {
+        approvalId,
+        effectId,
+        reason: undefined,
+        createdAt: now,
+      });
+
+      return { status: "pending_approval", approval_id: approvalId, retry_after: 5 };
+    }
+
+    // Safe and Compensable tools execute inline and commit server-side, so the
+    // stored effect reflects the committed state the proxy would persist.
     const entry: MockEffectEntry = {
       effectId,
       sessionId,
@@ -136,57 +260,91 @@ export class MockUndoLogServer {
       toolName,
       args,
       signature: computedSignature,
-      status: "pending",
+      status: "committed",
       tier,
-      compensation,
+      compensation: undefined,
       error: undefined,
       reason: undefined,
       createdAt: now,
     };
     this.effects.set(effectId, entry);
-    return this.#toRecord(entry);
+    return { status: "executed", effect_id: effectId, result: null };
   }
 
-  #commit(body: Record<string, unknown>): EffectRecord {
-    const effectId = body.effectId as string;
-    const entry = this.effects.get(effectId);
-    if (entry === undefined) {
-      throw new TypeError(`Mock server: effect "${effectId}" not found`);
-    }
+  #commit(effectId: string, method: string): EffectRecord {
+    this.#assertMethod(method, "PUT", `/effects/${effectId}/commit`);
+    const entry = this.#requireEffect(effectId, "/effects/commit");
     entry.status = "committed";
     return this.#toRecord(entry);
   }
 
-  #fail(body: Record<string, unknown>): EffectRecord {
-    const effectId = body.effectId as string;
-    const entry = this.effects.get(effectId);
-    if (entry === undefined) {
-      throw new TypeError(`Mock server: effect "${effectId}" not found`);
-    }
+  #fail(effectId: string, body: Record<string, unknown>, method: string): EffectRecord {
+    this.#assertMethod(method, "PUT", `/effects/${effectId}/fail`);
+    const entry = this.#requireEffect(effectId, "/effects/fail");
     entry.status = "failed";
     entry.error = (body.error as string) ?? undefined;
     return this.#toRecord(entry);
   }
 
-  #approve(body: Record<string, unknown>): EffectRecord {
-    const approvalId = body.approvalId as string;
-    const entry = this.effects.get(approvalId);
-    if (entry === undefined) {
-      throw new TypeError(`Mock server: effect "${approvalId}" not found`);
+  #approve(approvalId: string, method: string): EffectRecord {
+    this.#assertMethod(method, "POST", `/approvals/${approvalId}/approve`);
+    const approval = this.approvals.get(approvalId);
+    if (approval === undefined) {
+      throw new NotFoundError("approval", approvalId);
     }
+    const entry = this.#requireEffect(approval.effectId, "/approvals/approve");
     entry.status = "approved";
     return this.#toRecord(entry);
   }
 
-  #reject(body: Record<string, unknown>): EffectRecord {
-    const approvalId = body.approvalId as string;
-    const entry = this.effects.get(approvalId);
-    if (entry === undefined) {
-      throw new TypeError(`Mock server: effect "${approvalId}" not found`);
+  #reject(approvalId: string, body: Record<string, unknown>, method: string): EffectRecord {
+    this.#assertMethod(method, "POST", `/approvals/${approvalId}/reject`);
+    const approval = this.approvals.get(approvalId);
+    if (approval === undefined) {
+      throw new NotFoundError("approval", approvalId);
     }
+    const entry = this.#requireEffect(approval.effectId, "/approvals/reject");
     entry.status = "rejected";
     entry.reason = (body.reason as string) ?? undefined;
     return this.#toRecord(entry);
+  }
+
+  #getEffect(effectId: string, method: string): EffectRecord {
+    this.#assertMethod(method, "GET", `/v1/effects/${effectId}`);
+    return this.#toRecord(this.#requireEffect(effectId, "/v1/effects"));
+  }
+
+  #getSession(sessionId: string, method: string): SessionRecord {
+    this.#assertMethod(method, "GET", `/v1/sessions/${sessionId}`);
+    const now = new Date().toISOString();
+    return {
+      sessionId,
+      stepCount: 0,
+      createdAt: now,
+      metadata: {},
+    };
+  }
+
+  #resolveTier(toolName: string): ToolTier {
+    return this.options.tools?.[toolName] ?? this.options.defaultTier;
+  }
+
+  #requireEffect(effectId: string, endpoint: string): MockEffectEntry {
+    const entry = this.effects.get(effectId);
+    if (entry === undefined) {
+      throw new NotFoundError(
+        "effect",
+        effectId,
+        `Mock server: effect "${effectId}" not found via ${endpoint}`,
+      );
+    }
+    return entry;
+  }
+
+  #assertMethod(actual: string, expected: string, path: string): void {
+    if (actual !== expected) {
+      throw new TypeError(`Mock server: ${path} requires ${expected}, got ${actual}`);
+    }
   }
 
   #toRecord(entry: MockEffectEntry): EffectRecord {
@@ -197,32 +355,36 @@ export class MockUndoLogServer {
       toolName: entry.toolName,
       signature: entry.signature,
       status: entry.status,
-      tier: entry.tier as ToolTier,
+      tier: entry.tier,
       createdAt: entry.createdAt,
     };
   }
 
-  /** Remove all effects from the mock server. */
+  /** Remove all effects and approvals from the mock server. */
   clear(): void {
     this.effects.clear();
+    this.approvals.clear();
   }
 }
 
 /** Create a new ``MockUndoLogServer`` instance.
  *
- * @returns A mock server ready to handle UndoLog API requests.
+ * @param options - Tool tier registry and default tier.
+ * @returns A mock server ready to handle UndoLog proxy API requests.
  *
  * @example
  * ```ts
- * const server = mockServer();
+ * const server = mockServer({
+ *   tools: { send_email: ToolTier.Compensable },
+ * });
  * const client = new UndoLogClient({
  *   baseUrl: "http://localhost",
  *   httpClient: server.httpClient,
  * });
  * ```
  */
-export function mockServer(): MockUndoLogServer {
-  return new MockUndoLogServer();
+export function mockServer(options?: MockServerOptions): MockUndoLogServer {
+  return new MockUndoLogServer(options);
 }
 
 // ── Constant-time comparison ────────────────────────────────────────────

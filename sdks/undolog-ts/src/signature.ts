@@ -72,8 +72,9 @@ function escapeJsonString(s: string): string {
  * Python's ``json.dumps(..., ensure_ascii=True)`` and Rust ``serde_json``.
  *
  * IEEE 754 special values are rejected: ``NaN``, ``Infinity``, and
- * ``-Infinity`` throw a ``TypeError``. Negative zero (``-0``) is serialised as
- * ``"-0"`` to match Python SDK behaviour.
+ * ``-Infinity`` throw a ``TypeError``. Numbers follow ECMAScript
+ * ``JSON.stringify`` rules (RFC 8785): ``-0`` serialises as ``0``, and
+ * exponents have no leading zeros.
  *
  * ``undefined`` values inside objects are serialised as ``null`` (matching
  * Python ``json.dumps`` behaviour where ``None`` maps to ``null``). Top-level
@@ -107,9 +108,6 @@ export function canonicalJson(value: unknown): string {
     }
     if (!Number.isFinite(value)) {
       throw new TypeError("Cannot serialise infinite value");
-    }
-    if (Object.is(value, -0)) {
-      return "-0";
     }
     return JSON.stringify(value);
   }

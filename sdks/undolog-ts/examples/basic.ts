@@ -12,7 +12,15 @@ import { mockServer } from "@undolog/sdk/testing";
 
 async function main() {
   // Create a mock server so this example works without a real UndoLog backend.
-  const server = mockServer();
+  // Register the wrapped tools in the server's tier registry: the proxy (and
+  // therefore the mock) resolves tiers server-side and ignores any tier the
+  // client sends.
+  const server = mockServer({
+    tools: {
+      send_email: ToolTier.Compensable,
+      get_weather: ToolTier.Safe,
+    },
+  });
 
   const client = new UndoLogClient({
     baseUrl: "http://localhost",
