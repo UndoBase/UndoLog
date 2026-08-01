@@ -1,6 +1,6 @@
 {
   "name": "@undolog/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript SDK for the UndoLog effect-tracking and exactly-once execution system",
   "license": "Apache-2.0",
   "type": "module",
