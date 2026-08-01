@@ -8,7 +8,8 @@
 # Steps performed:
 #   1. Update version in package.json
 #   2. Create a version-bump commit
-#   3. Create and push an annotated tag
+#   3. Create an annotated tag
+#   (the script prints the push command; pushing is left to the caller)
 #
 # The CI workflow (.github/workflows/release-sdk.yml) handles
 # the actual build, test, and npm publish steps.

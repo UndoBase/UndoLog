@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- TypeScript SDK: publish via npm Trusted Publishing (OIDC) with no
+  long-lived npm token; redundant publish build step removed.
+- CI workflows: Node 20 bumped to 24 (Node 20 is deprecated on GitHub
+  runners).
+- TypeScript SDK: ``repository.url`` prefixed with ``git+`` (``npm pkg fix``)
+  so ``npm publish`` emits no auto-correction warning.
+- ``sdks/undolog-ts/scripts/release.sh``: header now notes the script creates
+  the tag and prints the push command rather than pushing itself.
+
 ## [0.2.0] - 2026-08-01
 
 ### Changed

@@ -1,20 +1,5 @@
-# Release workflow for @undolog/sdk.
-#
-# Triggered when a tag matching the package name is pushed (e.g.
-# @undolog/sdk@v0.1.0).  Builds, tests, and publishes to npm
-# with Sigstore provenance.  Requires GitHub OIDC to be enabled in the
-# repository settings so that npm publish --provenance can obtain a
-# signing certificate without a long-lived token.
-#
-# OIDC configuration (repository settings):
-#   Settings > Actions > General > Workflow permissions
-#     -> Allow GitHub Actions to create and approve pull requests
-#     -> Allow GitHub Actions to create OpenID Connect tokens (on by default)
-#   Settings > Secrets and variables > Actions
-#     -> Add NPM_TOKEN (npm automation token with publish scope for @undobase)
-#
+# Publish @undolog/sdk to npm when a release tag is pushed.
 # Tag format:  @undolog/sdk@v<major>.<minor>.<patch>
-# Use scripts/release.sh to create and push the tag automatically.
 
 name: Release TypeScript SDK
 
@@ -24,7 +9,7 @@ on:
       - "@undolog/sdk@v*.*.*"
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
 
 jobs:
   publish:
@@ -50,10 +35,5 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
-      - name: Build
-        run: npm run build
-
       - name: Publish to npm with provenance
         run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
