@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-01
+
 ### Changed
 
 - Cross-language canonical JSON now serialises numbers with ECMAScript
