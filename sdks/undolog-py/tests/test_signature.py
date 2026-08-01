@@ -63,6 +63,15 @@ class TestCanonicalJson:
     def test_negative_zero_in_dict(self) -> None:
         assert canonical_json({"v": -0.0}) == '{"v":0}'
 
+    def test_large_integer_exact(self) -> None:
+        assert canonical_json(9007199254740993) == "9007199254740993"
+
+    def test_large_negative_integer_exact(self) -> None:
+        assert canonical_json(-9007199254740993) == "-9007199254740993"
+
+    def test_large_integer_in_dict(self) -> None:
+        assert canonical_json({"v": 9007199254740993}) == '{"v":9007199254740993}'
+
     @pytest.mark.parametrize(
         ("value", "expected"),
         [
@@ -558,6 +567,28 @@ class TestCrossLangParity:
             f"Python call_signature mismatch. "
             f"Expected {_CROSS_LANG_EXPECTED} got {sig}. "
             f"Verify Rust engine produces the same output."
+        )
+
+    def test_bigint_signature_matches_ts(self) -> None:
+        sig = call_signature(
+            "550e8400-e29b-41d4-a716-446655440000",
+            1,
+            "big_int_tool",
+            {"v": 9007199254740993},
+        )
+        assert sig == (
+            "8ce754f92a92c64784c142d49455bbf55a087c86492bab35d2ce56f5fad30cf7"
+        )
+
+    def test_bigint_mixed_signature_matches_ts(self) -> None:
+        sig = call_signature(
+            "550e8400-e29b-41d4-a716-446655440000",
+            2,
+            "big_int_tool",
+            {"v": 9007199254740993, "w": -9007199254740993},
+        )
+        assert sig == (
+            "f5b3bbd69d72c60b7864fa62646d483cff2e4fb6ed90f402c21620cd8ebe38e6"
         )
 
 

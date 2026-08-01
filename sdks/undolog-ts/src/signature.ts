@@ -80,8 +80,15 @@ function escapeJsonString(s: string): string {
  * Python ``json.dumps`` behaviour where ``None`` maps to ``null``). Top-level
  * ``undefined`` is forbidden and throws a ``TypeError``.
  *
+ * ``bigint`` values are serialised as exact decimal integers. JavaScript
+ * ``number`` values round integers beyond ``Number.MAX_SAFE_INTEGER``
+ * (2^53 - 1) to the nearest representable double, so callers that need
+ * exact cross-language signatures for such integers must pass ``bigint``.
+ * This matches Python's arbitrary-precision ``int`` and Rust's exact
+ * ``i64``/``u64`` serialisation.
+ *
  * @param value - A JSON-compatible value (object, array, string, number,
- *   boolean, null).
+ *   bigint, boolean, null).
  * @returns Compact JSON string with recursively sorted keys, no whitespace.
  * @throws {TypeError} If ``value`` is ``undefined``, ``NaN``, ``Infinity``,
  *   ``-Infinity``, or an unsupported type.
@@ -110,6 +117,9 @@ export function canonicalJson(value: unknown): string {
       throw new TypeError("Cannot serialise infinite value");
     }
     return JSON.stringify(value);
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
   }
   if (typeof value === "string") {
     return escapeJsonString(value);
@@ -200,7 +210,7 @@ function assertNonNegativeInt(n: number, name: string): void {
 
 /** Compute the canonical BLAKE3 call signature for a tool call.
  *
- * Every SDK (Rust, Python, TypeScript, C#) MUST produce the same 64-character
+ * Every SDK (Rust, Python, TypeScript) MUST produce the same 64-character
  * lowercase hex output for the same inputs. The length-prefixed encoding
  * prevents boundary attacks where two different (name, args) pairs could
  * produce the same byte sequence without delimiters.

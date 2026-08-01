@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ``defaultTier`` fallback) instead of the legacy ``POST /v1/effects/*`` shape.
 - TypeScript SDK: ``examples/*`` and ``README.md`` updated to register mock
   server tools in the tier registry so approval workflows still trigger.
+- TypeScript SDK: ``canonicalJson`` now serialises ``bigint`` exactly, closing
+  the integer precision gap above 2^53 so signatures match Python and Rust;
+  callers pass ``bigint`` for such values.
+- Go proxy: canonical JSON now formats numbers with the same ECMAScript rules
+  as the SDKs (negative zero becomes ``0``, fixed notation in ``[1e-6, 1e21)``,
+  no leading zeros in exponents, integer tokens preserved verbatim).
 - ``docs/reference/call-signature.md`` documents per-SDK number serialisation
   and non-finite handling; TypeScript CI runs the expanded float fixtures.
 
@@ -28,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Cross-language signature fixtures now cover ES6 float boundary cases
   (``-0.0``, ``1e-6``, ``1e21``, denormals) and verify byte-for-byte parity
   between the TypeScript, Python, and Rust SDKs.
-
 - Rename TypeScript SDK from ``@undobase/undolog-sdk`` to ``@undolog/sdk``
   across import paths, JSDoc examples, README, CI workflows, and
   release tooling. Requires ``@undolog`` scope ownership on npm.

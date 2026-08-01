@@ -60,7 +60,7 @@ return hasher.hexdigest()
 
 ## Canonical JSON
 
-Deterministic, sorted-key JSON string suitable for hashing. Produces byte-for-byte identical output across the Rust, Python, and TypeScript SDKs. The Go proxy implements a separate, structurally different canonical JSON (it wraps the call in `{"tool_name", "args"}` and preserves numeric tokens verbatim), so it is not byte-identical to this contract.
+Deterministic, sorted-key JSON string suitable for hashing. Produces byte-for-byte identical output across the Rust, Python, and TypeScript SDKs. The Go proxy implements a separate, structurally different canonical JSON: it wraps the call in `{"tool_name", "args"}` rather than hashing a length-prefixed byte stream. Numbers inside it now follow the same ECMAScript rules described below, but the overall signature is not byte-identical to this contract.
 
 ### Rules
 
@@ -73,6 +73,7 @@ Deterministic, sorted-key JSON string suitable for hashing. Produces byte-for-by
 | Negative zero | `-0.0` serialises as `0`, matching ECMAScript `JSON.stringify` and RFC 8785. |
 | Float notation | Fixed notation for values in `[1e-6, 1e21)`; exponential notation elsewhere. Exponential exponents have no leading zeros (`1e-7`, `1e+21`). Matches ECMAScript `Number.prototype.toString`. |
 | Integers | Serialised as-is with no decimal point or exponent (`42`, `0`, `-7`). |
+| Large integers | Integers beyond 2^53 are exact in Python (`int`) and Rust (`i64`/`u64`). TypeScript `number` values round at 2^53, so callers must pass `bigint` for exact cross-language parity. |
 | Arrays | Preserved in insertion order. Elements recursively canonicalised. |
 
 ### Examples
@@ -186,4 +187,4 @@ The advisory lock is a performance optimisation (avoids write conflict rollbacks
 | Step sensitivity | Different `step_index` → different signature |
 | Args sensitivity | Different args → different signature |
 | Key order invariance | `{"b":1,"a":2}` and `{"a":2,"b":1}` produce the same signature |
-| Cross-language | Python, Rust, and Go produce identical output for identical inputs |
+| Cross-language | Python, Rust, and TypeScript produce byte-identical output for identical inputs. The Go proxy applies the same number rules inside its own `{"tool_name", "args"}` wrapper format. |

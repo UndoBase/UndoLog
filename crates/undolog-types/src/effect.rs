@@ -390,6 +390,25 @@ mod tests {
     }
 
     #[test]
+    fn canonical_json_large_integer_exact() {
+        let big: i64 = 9_007_199_254_740_993;
+        assert_eq!(canonical_json(&json!(big)), "9007199254740993");
+        assert_eq!(canonical_json(&json!({"v": big})), "{\"v\":9007199254740993}");
+        assert_eq!(canonical_json(&json!(-big)), "-9007199254740993");
+    }
+
+    #[test]
+    fn signature_bigint_matches_python_and_ts() {
+        let sid = SessionId::from(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap());
+        let args = json!({"v": 9_007_199_254_740_993i64});
+        let sig = CallSignature::compute(&sid, 1, "big_int_tool", &args);
+        assert_eq!(
+            sig.as_str(),
+            "8ce754f92a92c64784c142d49455bbf55a087c86492bab35d2ce56f5fad30cf7"
+        );
+    }
+
+    #[test]
     fn canonical_json_rejects_non_finite_at_construction() {
         // serde_json cannot represent non-finite floats: Number::from_f64
         // returns None, and Value::from coerces to Null. This is the Rust
