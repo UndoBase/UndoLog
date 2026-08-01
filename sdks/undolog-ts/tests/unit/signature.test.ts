@@ -174,6 +174,28 @@ describe("canonicalJson", () => {
 		expect(canonicalJson(0)).toBe("0");
 	});
 
+	it("serialises bigint above Number.MAX_SAFE_INTEGER exactly", () => {
+		expect(canonicalJson(9007199254740993n)).toBe("9007199254740993");
+	});
+
+	it("serialises negative bigint exactly", () => {
+		expect(canonicalJson(-9007199254740993n)).toBe("-9007199254740993");
+	});
+
+	it("serialises bigint inside object", () => {
+		expect(canonicalJson({ v: 9007199254740993n })).toBe(
+			'{"v":9007199254740993}',
+		);
+	});
+
+	it("serialises bigint inside list", () => {
+		expect(canonicalJson([9007199254740993n])).toBe("[9007199254740993]");
+	});
+
+	it("serialises bigint zero", () => {
+		expect(canonicalJson(0n)).toBe("0");
+	});
+
 	it("throws for NaN in nested object", () => {
 		expect(() => canonicalJson({ x: Number.NaN })).toThrow(TypeError);
 	});
@@ -845,5 +867,39 @@ describe("cross-language parity", () => {
 			CROSS_LANG_ARGS,
 		);
 		expect(sig).toBe(CROSS_LANG_EXPECTED);
+	});
+});
+
+// ── Cross-language bigint parity ──────────────────────────────────────────
+// Integers above Number.MAX_SAFE_INTEGER are rounded by JSON.parse, so the
+// parity vector must be constructed with bigint literals. Python and Rust
+// represent these integers exactly; bigint is the TypeScript equivalent.
+
+const BIGINT_SESSION = "550e8400-e29b-41d4-a716-446655440000";
+
+describe("cross-language bigint parity", () => {
+	it("canonicalJson emits exact decimal matching Python and Rust", () => {
+		expect(canonicalJson({ v: 9007199254740993n })).toBe(
+			'{"v":9007199254740993}',
+		);
+	});
+
+	it("callSignature matches Python SDK for bigint args", () => {
+		const sig = callSignature(BIGINT_SESSION, 1, "big_int_tool", {
+			v: 9007199254740993n,
+		});
+		expect(sig).toBe(
+			"8ce754f92a92c64784c142d49455bbf55a087c86492bab35d2ce56f5fad30cf7",
+		);
+	});
+
+	it("callSignature matches Python SDK for mixed positive and negative bigints", () => {
+		const sig = callSignature(BIGINT_SESSION, 2, "big_int_tool", {
+			v: 9007199254740993n,
+			w: -9007199254740993n,
+		});
+		expect(sig).toBe(
+			"f5b3bbd69d72c60b7864fa62646d483cff2e4fb6ed90f402c21620cd8ebe38e6",
+		);
 	});
 });

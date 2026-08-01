@@ -3,7 +3,7 @@
 
 Computes canonical JSON and BLAKE3 call-signatures for a curated set of
 test vectors and writes them to ``tests/fixtures/cross-language-signatures.json``.
-Every SDK implementation (Rust, Python, TypeScript, C#) can load this file to
+Every SDK implementation (Rust, Python, TypeScript) can load this file to
 verify that ``call_signature`` produces byte-for-byte identical output.
 """
 
