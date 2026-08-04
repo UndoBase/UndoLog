@@ -34,7 +34,7 @@ See existing ADRs in `docs/adr/` for the template.
 
 ## Changelog
 
-User-facing changes must have an entry in `CHANGELOG.md` under `[Unreleased]`. Group entries by type (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`). Use imperative mood and link to the relevant PR.
+User-facing changes must have an entry in `CHANGELOG.md` under `[Unreleased]`. Group entries by type (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`); each type appears at most once per release section, in that order. Use imperative mood and keep entries concise, grouping related changes into a single bullet.
 
 ## Doc comments
 
