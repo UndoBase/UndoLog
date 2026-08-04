@@ -85,6 +85,35 @@ jobs:
             exit 1
           fi
 
+      - name: CHANGELOG structure validation
+        if: github.event_name == 'pull_request'
+        run: |
+          # Category headers must appear at most once per release section and in
+          # Keep a Changelog order: Added, Changed, Deprecated, Removed, Fixed,
+          # Security.
+          awk '
+            BEGIN {
+              split("Added Changed Deprecated Removed Fixed Security", order, " ")
+              for (i in order) rank[order[i]] = i
+              bad = 0
+              sec = ""
+              last = 0
+            }
+            /^## / { sec = $0; last = 0 }
+            /^### / {
+              name = substr($0, 5)
+              if (!(name in rank)) {
+                print "ERROR: unknown category header in " sec ": " name > "/dev/stderr"
+                bad = 1
+              } else if (rank[name] <= last) {
+                print "ERROR: duplicate or out-of-order category header in " sec ": " name > "/dev/stderr"
+                bad = 1
+              }
+              last = rank[name]
+            }
+            END { if (bad) exit 1 }
+          ' CHANGELOG.md
+
       - name: Commit message format
         if: github.event_name == 'pull_request'
         run: |
