@@ -52,6 +52,9 @@ jobs:
       - name: Run Python integration tests
         run: python -m pytest examples/langchain-support-agent/tests/test_live_stack.py -v
 
+      - name: Run SSE dashboard integration tests
+        run: python -m pytest examples/langchain-support-agent/tests/test_sse_dashboard.py -v
+
       - name: Run TypeScript integration tests
         run: npm run test:integration
         working-directory: sdks/undolog-ts

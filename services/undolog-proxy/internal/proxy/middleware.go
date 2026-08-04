@@ -143,6 +143,23 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Flush forwards the flush to the underlying writer when it supports it, so
+// Server-Sent Events can stream through the middleware chain.
+func (w *responseWriter) Flush() {
+	if w.statusCode == 0 {
+		w.statusCode = http.StatusOK
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the underlying writer so http.ResponseController can reach
+// connection-level controls, such as clearing the write deadline for SSE.
+func (w *responseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func orgIDFrom(ctx context.Context) string {
 	if v, ok := ctx.Value(ctxKeyOrgID).(string); ok {
 		return v

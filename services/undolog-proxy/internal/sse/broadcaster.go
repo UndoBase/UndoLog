@@ -129,9 +129,6 @@ func (b *Broadcaster) Subscribe(orgID string) (<-chan Event, func()) {
 func (b *Broadcaster) Handler(w http.ResponseWriter, r *http.Request) {
 	orgID := strings.TrimSpace(r.Header.Get("X-Org-Id"))
 	if orgID == "" {
-		orgID = strings.TrimSpace(r.URL.Query().Get("org_id"))
-	}
-	if orgID == "" {
 		http.Error(w, "org_id required", http.StatusUnauthorized)
 		return
 	}
@@ -147,6 +144,15 @@ func (b *Broadcaster) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SSE streams must outlive the server WriteTimeout, which would otherwise
+	// terminate the connection while the dashboard idles between heartbeats.
+	// Clearing the deadline is best-effort: writers without a deadline concept
+	// (e.g. httptest.ResponseRecorder) report ErrNotSupported, which is a no-op.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
+	// Flush the headers so the client observes the stream as open before the
+	// first event or heartbeat arrives.
+	flusher.Flush()
 	events, unsubscribe := b.Subscribe(orgID)
 	defer unsubscribe()
 
@@ -164,7 +170,11 @@ func (b *Broadcaster) Handler(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-heartbeat.C:
-			_, _ = fmt.Fprint(w, ": ping\n\n")
+			// A failed heartbeat means the connection is gone (e.g. a silent
+			// network drop), so end the handler instead of idling forever.
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
