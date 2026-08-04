@@ -5,11 +5,15 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -235,6 +239,20 @@ func TestHealthEndpointBypassesAuth(t *testing.T) {
 	}
 }
 
+// signalRecorder records the response while closing a channel on the first
+// payload write, so tests can wait for an SSE frame without racing the handler.
+type signalRecorder struct {
+	*httptest.ResponseRecorder
+	sig  chan struct{}
+	once sync.Once
+}
+
+func (r *signalRecorder) Write(b []byte) (int, error) {
+	n, err := r.ResponseRecorder.Write(b)
+	r.once.Do(func() { close(r.sig) })
+	return n, err
+}
+
 // TestServerRoutesApprovalsAndEvents verifies approval and SSE routes are wired.
 func TestServerRoutesApprovalsAndEvents(t *testing.T) {
 	cfg := Config{
@@ -265,22 +283,124 @@ func TestServerRoutesApprovalsAndEvents(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	eventReq := httptest.NewRequest(http.MethodGet, "/events?org_id=org-1", nil).WithContext(ctx)
+	eventReq := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
 	eventReq.Header.Set("X-Api-Key", "key-1")
-	eventRec := httptest.NewRecorder()
+	eventRec := &signalRecorder{ResponseRecorder: httptest.NewRecorder(), sig: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {
 		server.httpSrv.Handler.ServeHTTP(eventRec, eventReq)
 		close(done)
 	}()
-	time.Sleep(30 * time.Millisecond)
+	// Emit until a frame is written; the first emit landing after the handler
+	// subscribes is enough, since the handler stays subscribed until canceled.
+	emitted := false
+	for i := 0; i < 10 && !emitted; i++ {
+		server.broadcaster.Emit(sse.Event{Type: sse.EventEffectCommitted, OrgID: "org-1", SessionID: "sess-1", EffectID: "eff-1"})
+		select {
+		case <-eventRec.sig:
+			emitted = true
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("events handler did not stop")
 	}
+	body := eventRec.Body.String()
 	if eventRec.Code != http.StatusOK {
 		t.Fatalf("unexpected events status: %d", eventRec.Code)
 	}
+	if strings.Contains(body, "streaming unsupported") {
+		t.Fatalf("SSE streaming must be supported, got %q", body)
+	}
+	if !strings.Contains(body, "event: effect_committed") {
+		t.Fatalf("expected an SSE event frame in body, got %q", body)
+	}
+	if !strings.Contains(body, `"effect_id":"eff-1"`) {
+		t.Fatalf("expected effect id in SSE data, got %q", body)
+	}
+}
+
+// TestServerSSEStreamsPastWriteTimeout verifies /events survives the server
+// WriteTimeout by clearing the stream write deadline.
+func TestServerSSEStreamsPastWriteTimeout(t *testing.T) {
+	cfg := Config{
+		ListenAddr:            ":0",
+		ReadTimeout:           time.Second,
+		WriteTimeout:          300 * time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		RequestTimeout:        time.Second,
+		DashboardEventBufSize: 8,
+		EngineGRPCAddr:        "engine:50051",
+		UpstreamToolURL:       "http://upstream",
+		TrustedAPIKeys:        map[string]string{"key-1": "org-1"},
+	}
+
+	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = server.httpSrv.Serve(listener) }()
+	defer func() { _ = server.httpSrv.Close() }()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	req.Header.Set("X-Api-Key", "key-1")
+	if err := req.Write(conn); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("unexpected content type: %q", ct)
+	}
+
+	// Emit well past the WriteTimeout from a side goroutine while the main
+	// goroutine reads the stream; the frame must still be delivered.
+	go func() {
+		time.Sleep(450 * time.Millisecond)
+		server.broadcaster.Emit(sse.Event{Type: sse.EventEffectCommitted, OrgID: "org-1", SessionID: "sess-1", EffectID: "eff-1"})
+	}()
+
+	// Bound the reads so a broken stream fails fast instead of hanging.
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	br := bufio.NewReader(resp.Body)
+	var sawEvent, sawData bool
+	for !sawEvent || !sawData {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("stream ended before SSE frame arrived: %v", err)
+		}
+		if strings.Contains(line, "event: effect_committed") {
+			sawEvent = true
+		}
+		if strings.Contains(line, `"effect_id":"eff-1"`) {
+			sawData = true
+		}
+	}
+
+	// Stop reading the live stream. Close the connection first so the deferred
+	// body close does not block draining the endless chunked response.
+	conn.Close()
 }

@@ -6,7 +6,11 @@ handling, and malformed input resilience.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import os
+import uuid
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -271,3 +275,117 @@ def test_display_event_format() -> None:
         )
         # Should not raise.
         display_event(ev)
+
+
+# ── Live-stack SSE tests ────────────────────────────────────────────────────
+
+
+def proxy_url() -> str:
+    """Return the proxy base URL from the environment (default ``http://localhost:8080``)."""
+    return os.environ.get("UNDOLOG_PROXY_URL", "http://localhost:8080")
+
+
+async def _proxy_healthy() -> bool:
+    """Check whether the UndoLog proxy is reachable."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{proxy_url()}/health", timeout=5.0)
+            return resp.status_code == 200
+    except httpx.RequestError:
+        return False
+
+
+class TestLiveSSEStream:
+    """Live-stack tests for the proxy SSE endpoint.
+
+    Requires the UndoLog stack (``docker compose up -d``) and runs only in the
+    e2e workflow; the unit CI run deselects the ``integration`` marker.
+    """
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_live_events_stream_receives_intercept_frame(self) -> None:
+        """A live /events subscription receives a real effect frame."""
+        if not await _proxy_healthy():
+            pytest.skip("UndoLog stack not running (docker compose up -d)")
+        api_key_val = os.environ.get("UNDOLOG_API_KEY")
+        assert api_key_val, "UNDOLOG_API_KEY not set"
+
+        session_id = str(uuid.uuid4())
+        got_types: list[str] = []
+        connection_ready = asyncio.Event()
+        frame_received = asyncio.Event()
+
+        async def _consume() -> None:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as stream_client:
+                async with stream_client.stream(
+                    "GET",
+                    f"{proxy_url()}/events",
+                    headers={"X-Api-Key": api_key_val},
+                ) as resp:
+                    content_type = resp.headers.get("content-type", "")
+                    if resp.status_code != 200 or not content_type.startswith("text/event-stream"):
+                        raise AssertionError(
+                            f"expected 200 text/event-stream, got {resp.status_code} {content_type!r}"
+                        )
+                    connection_ready.set()
+
+                    event_type = ""
+                    data_lines: list[str] = []
+                    async for line in resp.aiter_lines():
+                        stripped = line.strip()
+                        if stripped == ": ping":
+                            continue
+                        if stripped.startswith("event:"):
+                            event_type = stripped[len("event:") :].strip()
+                            continue
+                        if stripped.startswith("data:"):
+                            data_lines.append(stripped[len("data:") :].strip())
+                            continue
+                        if stripped == "" and event_type and data_lines:
+                            data = json.loads("".join(data_lines))
+                            if data.get("session_id") == session_id:
+                                got_types.append(event_type)
+                                if event_type == "effect_intercepted":
+                                    frame_received.set()
+                            event_type = ""
+                            data_lines = []
+
+        consume_task = asyncio.create_task(_consume())
+        try:
+            try:
+                await asyncio.wait_for(connection_ready.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                pytest.fail("SSE stream did not open")
+
+            # Let the proxy register the subscription before triggering a call.
+            await asyncio.sleep(1.0)
+            async with httpx.AsyncClient() as post_client:
+                resp = await post_client.post(
+                    f"{proxy_url()}/mcp/tool_call",
+                    json={
+                        "session_id": session_id,
+                        "tool_name": "charge_payment",
+                        "step_index": 1,
+                        "args": {"amount": 100, "currency": "USD"},
+                    },
+                    headers={
+                        "X-Api-Key": api_key_val,
+                        "Content-Type": "application/json",
+                    },
+                )
+            assert resp.status_code == 200, f"expected 200, got {resp.status_code}: {resp.text}"
+
+            try:
+                await asyncio.wait_for(frame_received.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                pytest.fail(f"no effect_intercepted frame received; got {got_types!r}")
+        finally:
+            if not consume_task.done():
+                consume_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await consume_task
+            else:
+                exc = consume_task.exception()
+                if exc is not None:
+                    raise exc

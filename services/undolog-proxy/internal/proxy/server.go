@@ -114,6 +114,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
+		// Close subscriber channels first so long-lived /events streams end and
+		// graceful shutdown is not blocked waiting on them.
+		s.broadcaster.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
 		defer cancel()
 		if err := s.httpSrv.Shutdown(shutdownCtx); err != nil {
