@@ -236,6 +236,33 @@ async def fetch_approval(conn: Any, approval_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def fetch_approval_events(conn: Any, approval_id: str) -> list[dict[str, Any]]:
+    """Return immutable audit events for *approval_id* ordered by time.
+
+    Parameters
+    ----------
+    conn : asyncpg.Connection
+        Open database connection.
+    approval_id : str
+        Approval request UUID string.
+
+    Returns
+    -------
+    list[dict]
+        Each row contains ``action``, ``actor``, ``note``, and ``occurred_at``.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT action::text, actor, note, occurred_at
+        FROM undolog_approval_events
+        WHERE approval_request_id = $1::uuid
+        ORDER BY occurred_at
+        """,
+        approval_id,
+    )
+    return [dict(row) for row in rows]
+
+
 async def fetch_undo_stack(conn: Any, session_id: str) -> list[dict[str, Any]]:
     """Return undo stack entries for *session_id* ordered by stack_position DESC.
 
@@ -415,6 +442,12 @@ class TestApprovalLifecycle:
             approval = await fetch_approval(db_conn, approval_id)
             assert approval is not None, "Approval not found"
             assert approval["status"] == "rejected", f"Expected rejected, got {approval['status']}"
+
+            # The reject actor must be recorded in the immutable audit trail.
+            events = await fetch_approval_events(db_conn, approval_id)
+            assert any(
+                e["action"] == "reject" and e["actor"] == "integration_test" for e in events
+            ), f"Expected a reject audit event from integration_test, got {events}"
 
     async def test_double_approve_returns_conflict(self, db_conn: Any) -> None:
         """A second approve on the same approval returns 409 Conflict.

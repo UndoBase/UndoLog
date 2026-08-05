@@ -30,6 +30,7 @@ type mockEngineClient struct {
 	interceptReq  protocol.InterceptRequest
 	commitReq     protocol.CommitRequest
 	failReq       protocol.FailRequest
+	pending       []protocol.ApprovalRecord
 }
 
 // Intercept returns the canned intercept response for the mock engine client.
@@ -57,6 +58,11 @@ func (m *mockEngineClient) Approve(ctx context.Context, req protocol.ApproveRequ
 
 // Reject is a no-op stub used to satisfy the engine client interface.
 func (m *mockEngineClient) Reject(ctx context.Context, req protocol.RejectRequest) error { return nil }
+
+// ListPendingApprovals returns the configured pending records.
+func (m *mockEngineClient) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
+	return protocol.ListPendingApprovalsResponse{Records: m.pending}, nil
+}
 
 // Close is a no-op stub used to satisfy the engine client interface.
 func (m *mockEngineClient) Close() error { return nil }
@@ -403,4 +409,47 @@ func TestServerSSEStreamsPastWriteTimeout(t *testing.T) {
 	// Stop reading the live stream. Close the connection first so the deferred
 	// body close does not block draining the endless chunked response.
 	conn.Close()
+}
+
+// TestServerReconcilePopulatesApprovals verifies the startup reconciliation
+// restores pending approvals from the engine so a proxy restart does not orphan
+// them.
+func TestServerReconcilePopulatesApprovals(t *testing.T) {
+	engine := &mockEngineClient{
+		pending: []protocol.ApprovalRecord{
+			{ApprovalID: "ap-1", OrgID: "org-1", SessionID: "s-1", EffectID: "e-1", ToolName: "delete_user", Args: []byte(`{"id":"u1"}`), CreatedAtUnix: 1700000000000},
+		},
+	}
+	cfg := Config{
+		ListenAddr:            ":0",
+		RequestTimeout:        time.Second,
+		EngineGRPCAddr:        "engine:50051",
+		UpstreamToolURL:       "http://upstream",
+		DashboardEventBufSize: 8,
+		TrustedAPIKeys:        map[string]string{"key-1": "org-1"},
+	}
+	server, err := NewServer(cfg, engine, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	server.reconcileOnce(context.Background())
+
+	req := httptest.NewRequest(http.MethodGet, "/approvals?state=pending", nil)
+	req.Header.Set("X-Api-Key", "key-1")
+	rec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var listed []approval.Record
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != "ap-1" {
+		t.Fatalf("expected reconciled approval ap-1, got %+v", listed)
+	}
 }

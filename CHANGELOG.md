@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Go proxy: durable, ordered approval workflow backed by the engine database.
+  Pending approvals are reconciled on startup and periodically, decisions use
+  atomic compare-and-swap, the acting user is recorded in the audit trail, 
+  a failed post-approval execution calls ``fail``, and lists are newest-first
+  with a ``?limit=`` bound (default 100, max 500).
 - Go proxy: ``GET /events`` now streams real SSE frames to the dashboard. The
   middleware chain preserves ``http.Flusher`` (the endpoint previously returned
   ``streaming unsupported``), the stream write deadline is cleared so long-lived

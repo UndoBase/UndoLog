@@ -110,6 +110,31 @@ type ApproveRequest struct {
 type RejectRequest struct {
 	OrgID      string `json:"org_id"`
 	ApprovalID string `json:"approval_id"`
+	// Actor identifies the human who rejected the request for the audit trail.
+	Actor string `json:"actor"`
+}
+
+// ApprovalRecord is a snapshot of an unresolved approval request from the engine.
+type ApprovalRecord struct {
+	ApprovalID string `json:"approval_id"`
+	OrgID      string `json:"org_id"`
+	SessionID  string `json:"session_id"`
+	EffectID   string `json:"effect_id"`
+	ToolName   string `json:"tool_name"`
+	// Args are the raw JSON arguments proposed for the call.
+	Args json.RawMessage `json:"args"`
+	// CreatedAtUnix is the request creation time in Unix milliseconds (UTC).
+	CreatedAtUnix int64 `json:"created_at_unix_ms"`
+}
+
+// ListPendingApprovalsRequest asks the engine for the unresolved approvals of one org.
+type ListPendingApprovalsRequest struct {
+	OrgID string `json:"org_id"`
+}
+
+// ListPendingApprovalsResponse carries the engine's unresolved approval records.
+type ListPendingApprovalsResponse struct {
+	Records []ApprovalRecord `json:"approval_records"`
 }
 
 // EngineClient is the RPC contract shared by the proxy and engine.
@@ -119,6 +144,7 @@ type EngineClient interface {
 	Fail(ctx context.Context, req FailRequest) error
 	Approve(ctx context.Context, req ApproveRequest) (ApproveResponse, error)
 	Reject(ctx context.Context, req RejectRequest) error
+	ListPendingApprovals(ctx context.Context, req ListPendingApprovalsRequest) (ListPendingApprovalsResponse, error)
 	Close() error
 }
 

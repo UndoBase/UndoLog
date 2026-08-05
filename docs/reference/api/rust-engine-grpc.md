@@ -20,8 +20,9 @@ service UndoLogEngine {
   rpc Intercept(InterceptRequest) returns (InterceptResponse);
   rpc Commit(CommitRequest) returns (CommitResponse);
   rpc Fail(FailRequest) returns (FailResponse);
-  rpc Approve(ApproveRequest) returns (ApproveResponse);
-  rpc Reject(RejectRequest) returns (RejectResponse);
+ rpc Approve(ApproveRequest) returns (ApproveResponse);
+ rpc Reject(RejectRequest) returns (RejectResponse);
+ rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
 }
 ```
 
@@ -170,3 +171,33 @@ Reject resolves an AwaitingApproval effect negatively. The engine transitions th
 ### `RejectResponse`
 
 Empty message.
+
+## RPC: `ListPendingApprovals`
+
+Lists approval requests still awaiting a decision, ordered oldest first. Used
+by the proxy to reconcile pending approvals after a restart or network
+disconnect, so in-flight requests are not orphaned.
+
+### `ListPendingApprovalsRequest`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `org_id` | `string` | Organisation whose pending approval requests are listed. |
+
+### `ListPendingApprovalsResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `records` | `repeated ApprovalRecord` | Pending approval requests, oldest first. |
+
+### `ApprovalRecord`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `approval_id` | `string` | Approval request identifier. |
+| `org_id` | `string` | Organisation that owns the approval request. |
+| `session_id` | `string` | Session that requested the approval. |
+| `effect_id` | `string` | Effect awaiting the decision. |
+| `tool_name` | `string` | Name of the tool proposed for execution. |
+| `args_json` | `string` | JSON-serialised arguments proposed for the tool. |
+| `created_at_unix_ms` | `int64` | Creation time in Unix milliseconds. |

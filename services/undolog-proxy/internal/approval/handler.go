@@ -7,8 +7,11 @@ package approval
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,7 +55,8 @@ func NewHandler(store *Store, engine protocol.EngineClient, executeFn ExecuteApp
 	}
 }
 
-// ListApprovals returns approval requests filtered by organization and status.
+// ListApprovals returns approval requests filtered by organization and status,
+// ordered newest first and bounded by the limit query parameter.
 func (h *Handler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	orgID := strings.TrimSpace(r.Header.Get("X-Org-Id"))
 	if orgID == "" {
@@ -73,7 +77,7 @@ func (h *Handler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, h.store.List(orgID, status))
+	writeJSON(w, h.store.List(orgID, status, parseLimit(r.URL.Query().Get("limit"))))
 }
 
 // ApproveApproval marks one pending approval as approved and resumes the engine.
@@ -116,13 +120,26 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 		return
 	}
 
-	rec, exists := h.store.Get(id)
-	if !exists || rec.OrgID != orgID {
+	if rec, exists := h.store.Get(id); !exists || rec.OrgID != orgID {
 		http.Error(w, "approval not found", http.StatusNotFound)
 		return
 	}
-	// Only pending requests can transition to a terminal decision.
-	if rec.Status != StatusPending {
+
+	// Validate the decision body before mutating state so a malformed request
+	// never briefly flips the record to a terminal status.
+	body, ok := h.decodeDecisionBody(w, r)
+	if !ok {
+		return
+	}
+	if body.Actor == "" {
+		body.Actor = "unknown"
+	}
+
+	// Resolve the decision atomically so a concurrent double-approve returns
+	// 409 from the proxy itself instead of a 502 from the engine's optimistic
+	// lock.
+	rec, ok := h.store.CompareAndSwap(id, StatusPending, target)
+	if !ok {
 		http.Error(w, "approval already resolved", http.StatusConflict)
 		return
 	}
@@ -135,20 +152,6 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 	}
 	switch target {
 	case StatusApproved:
-		// Parse optional actor and approved_args from the request body.
-		var body struct {
-			Actor        string          `json:"actor"`
-			ApprovedArgs json.RawMessage `json:"approved_args"`
-		}
-		if r.Body != nil {
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				h.logger.Warn("malformed approve request body", "error", err)
-			}
-		}
-		if body.Actor == "" {
-			body.Actor = "unknown"
-		}
-
 		approveResp, err := h.engine.Approve(ctx, protocol.ApproveRequest{
 			OrgID:        orgID,
 			ApprovalID:   id,
@@ -156,6 +159,7 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 			ApprovedArgs: body.ApprovedArgs,
 		})
 		if err != nil {
+			h.store.RestorePending(id)
 			h.failDecision(w, id, err)
 			return
 		}
@@ -171,14 +175,15 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 		result, execErr := h.executeFn(ctx, call)
 		if execErr != nil {
 			h.logger.Error("execution failed after approval", "effect_id", approveResp.EffectID, "error", execErr)
-			// Approval already recorded; commit the failure so the engine records it.
-			if commitErr := h.engine.Commit(ctx, protocol.CommitRequest{
+			// Report the failure through Fail so the effect is not falsely
+			// recorded as committed in the engine audit trail.
+			if failErr := h.engine.Fail(ctx, protocol.FailRequest{
 				OrgID:     orgID,
 				SessionID: approveResp.SessionID,
 				EffectID:  approveResp.EffectID,
-				Result:    protocol.ToolResult{Success: false, Error: execErr.Error()},
-			}); commitErr != nil {
-				h.logger.Error("commit failed after approved execution failure", "effect_id", approveResp.EffectID, "exec_error", execErr, "commit_error", commitErr)
+				Error:     execErr.Error(),
+			}); failErr != nil {
+				h.logger.Error("fail failed after approved execution failure", "effect_id", approveResp.EffectID, "exec_error", execErr, "fail_error", failErr)
 			}
 		} else if commitErr := h.engine.Commit(ctx, protocol.CommitRequest{
 			OrgID:     orgID,
@@ -189,10 +194,7 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 			h.logger.Error("commit failed after approved execution", "effect_id", approveResp.EffectID, "commit_error", commitErr)
 		}
 
-		rec, ok = h.store.UpdateStatus(id, target)
-		if !ok {
-			h.logger.Error("status update failed after approve", "approval_id", id)
-		} else if h.broadcaster != nil {
+		if h.broadcaster != nil {
 			payload, mErr := json.Marshal(rec)
 			if mErr != nil {
 				h.logger.Error("marshal approved record for SSE", "approval_id", id, "error", mErr)
@@ -223,15 +225,13 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 		writeJSON(w, resp)
 
 	case StatusRejected:
-		if rejErr := h.engine.Reject(ctx, protocol.RejectRequest{OrgID: orgID, ApprovalID: id}); rejErr != nil {
+		if rejErr := h.engine.Reject(ctx, protocol.RejectRequest{OrgID: orgID, ApprovalID: id, Actor: body.Actor}); rejErr != nil {
+			h.store.RestorePending(id)
 			h.failDecision(w, id, rejErr)
 			return
 		}
 
-		rec, ok = h.store.UpdateStatus(id, target)
-		if !ok {
-			h.logger.Error("status update failed after reject", "approval_id", id)
-		} else if h.broadcaster != nil {
+		if h.broadcaster != nil {
 			payload, mErr := json.Marshal(rec)
 			if mErr != nil {
 				h.logger.Error("marshal rejected record for SSE", "approval_id", id, "error", mErr)
@@ -253,8 +253,58 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 		})
 
 	default:
+		h.store.RestorePending(id)
 		http.Error(w, "unsupported action", http.StatusBadRequest)
 	}
+}
+
+// decisionBody is the optional JSON payload accepted by the approve and reject
+// endpoints.
+type decisionBody struct {
+	Actor        string          `json:"actor"`
+	ApprovedArgs json.RawMessage `json:"approved_args"`
+}
+
+// decodeDecisionBody reads the optional decision body. An empty body is allowed;
+// a malformed one yields a 400 so typos surface instead of silently becoming an
+// empty actor.
+func (h *Handler) decodeDecisionBody(w http.ResponseWriter, r *http.Request) (decisionBody, bool) {
+	var body decisionBody
+	if r.Body == nil || r.Body == http.NoBody {
+		return body, true
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if errors.Is(err, io.EOF) {
+			return body, true
+		}
+		h.logger.Warn("malformed decision body", "error", err)
+		http.Error(w, "malformed request body", http.StatusBadRequest)
+		return decisionBody{}, false
+	}
+	return body, true
+}
+
+// DefaultListLimit bounds GET /approvals when no limit is supplied.
+const DefaultListLimit = 100
+
+// maxListLimit caps the GET /approvals limit query parameter.
+const maxListLimit = 500
+
+// parseLimit parses the limit query parameter, falling back to the default and
+// capping the result so callers cannot request unbounded listings.
+func parseLimit(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultListLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return DefaultListLimit
+	}
+	if n > maxListLimit {
+		return maxListLimit
+	}
+	return n
 }
 
 func (h *Handler) failDecision(w http.ResponseWriter, id string, err error) {

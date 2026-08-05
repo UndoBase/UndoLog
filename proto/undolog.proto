@@ -43,6 +43,12 @@ service UndoLogEngine {
   // Reject resolves an AwaitingApproval effect negatively.  The engine
   // transitions the session to Halted and prevents further execution.
   rpc Reject(RejectRequest) returns (RejectResponse);
+
+  // ListPendingApprovals returns the unresolved approval requests for an
+  // organization.  The proxy reconciles its in-memory approval view from this
+  // on startup and periodically so a proxy restart does not orphan approvals.
+  rpc ListPendingApprovals(ListPendingApprovalsRequest)
+      returns (ListPendingApprovalsResponse);
 }
 
 // ── Messages ───────────────────────────────────────────────────────────────
@@ -197,3 +203,33 @@ message RejectRequest {
 }
 
 message RejectResponse {}
+
+// ── ListPendingApprovals ───────────────────────────────────────────────────
+
+message ListPendingApprovalsRequest {
+  // Organisation whose unresolved approvals should be returned.
+  string org_id = 1;
+}
+
+// A snapshot of an approval request as persisted by the engine.
+message ApprovalRecord {
+  // Approval request identifier (UUID v4).
+  string approval_id = 1;
+  // Organisation that owns the approval request.
+  string org_id = 2;
+  // Session that was awaiting approval.
+  string session_id = 3;
+  // Effect that is waiting for approval.
+  string effect_id = 4;
+  // Logical name of the intercepted tool.
+  string tool_name = 5;
+  // Raw JSON args proposed for the call.
+  bytes args = 6;
+  // Creation time as Unix milliseconds (UTC).
+  int64 created_at_unix_ms = 7;
+}
+
+message ListPendingApprovalsResponse {
+  // Unresolved approval requests for the requested organization.
+  repeated ApprovalRecord approval_records = 1;
+}

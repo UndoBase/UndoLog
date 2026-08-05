@@ -47,6 +47,11 @@ func (m *mockTransport) Reject(ctx context.Context, req protocol.RejectRequest) 
 	return m.rejectErr
 }
 
+// ListPendingApprovals returns an empty pending list for the mock transport.
+func (m *mockTransport) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
+	return protocol.ListPendingApprovalsResponse{}, nil
+}
+
 // Close is a no-op for the mock transport.
 func (m *mockTransport) Close() error { return nil }
 

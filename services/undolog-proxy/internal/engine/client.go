@@ -148,6 +148,13 @@ func (c *Client) Reject(ctx context.Context, req protocol.RejectRequest) error {
 	})
 }
 
+// ListPendingApprovals returns the engine's unresolved approvals for one org.
+func (c *Client) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
+	return call(c, func(t Transport) (protocol.ListPendingApprovalsResponse, error) {
+		return t.ListPendingApprovals(ctx, req)
+	})
+}
+
 // call checks transport configuration, then delegates to fn.
 // Generic over any return type T. Used by Intercept, Approve, and future RPCs.
 func call[T any](c *Client, fn func(Transport) (T, error)) (T, error) {

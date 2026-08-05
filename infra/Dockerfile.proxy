@@ -27,6 +27,8 @@
 #   UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS    (optional, default: 30)
 #   UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS     (optional, default: 30)
 #   UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE (optional, default: 128)
+#   UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS (optional, default: 60)
+#   UNDOLOG_PROXY_APPROVAL_RETENTION_SECS  (optional, default: 86400)
 #   UNDOLOG_LOG_LEVEL                      (optional, default: info)
 # ═══════════════════════════════════════════════════════════════════════════════
 

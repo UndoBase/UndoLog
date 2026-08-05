@@ -21,6 +21,7 @@ use tonic::{Request, Response, Status};
 use tracing::instrument;
 
 use undolog_types::{
+    approval::ApprovalRequest,
     effect::{ToolCall, ToolResult},
     ids::{ApprovalRequestId, EffectId, OrgId},
 };
@@ -182,6 +183,25 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
 
         Ok(Response::new(pb::RejectResponse {}))
     }
+
+    #[instrument(skip(self, request), fields(rpc = "ListPendingApprovals"))]
+    async fn list_pending_approvals(
+        &self,
+        request: Request<pb::ListPendingApprovalsRequest>,
+    ) -> Result<Response<pb::ListPendingApprovalsResponse>, Status> {
+        let req = request.into_inner();
+        let org_id = parse_org_id(&req.org_id)?;
+
+        let engine = self.engine.read().await;
+        let approvals = engine
+            .list_pending_approvals(&org_id)
+            .await
+            .map_err(|e| Status::internal(format!("list pending approvals failed: {e}")))?;
+
+        Ok(Response::new(pb::ListPendingApprovalsResponse {
+            approval_records: approvals.into_iter().map(approval_record_to_proto).collect(),
+        }))
+    }
 }
 
 // ── Proto ↔ Domain conversions ────────────────────────────────────────────
@@ -270,4 +290,56 @@ fn parse_effect_id(s: &str) -> Result<EffectId, Status> {
 #[allow(clippy::result_large_err)]
 fn parse_approval_id(s: &str) -> Result<ApprovalRequestId, Status> {
     s.parse().map_err(|e| Status::invalid_argument(format!("invalid approval_id: {e}")))
+}
+
+/// Convert a domain approval request into the wire `ApprovalRecord`.
+fn approval_record_to_proto(a: ApprovalRequest) -> pb::ApprovalRecord {
+    pb::ApprovalRecord {
+        approval_id: a.approval_request_id.to_string(),
+        org_id: a.org_id.to_string(),
+        session_id: a.session_id.to_string(),
+        effect_id: a.effect_id.to_string(),
+        tool_name: a.tool_name,
+        args: serde_json::to_vec(&a.proposed_args).unwrap_or_default(),
+        created_at_unix_ms: a.created_at.timestamp_millis(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use undolog_types::{
+        approval::ApprovalState,
+        ids::{ApprovalRequestId, EffectId, OrgId, SessionId},
+    };
+
+    #[test]
+    fn approval_record_to_proto_maps_fields() {
+        let created_at = chrono::Utc::now();
+        let req = ApprovalRequest {
+            approval_request_id: ApprovalRequestId::new(),
+            org_id: OrgId::new(),
+            session_id: SessionId::new(),
+            effect_id: EffectId::new(),
+            tool_name: "delete_user".to_string(),
+            irreversibility_reason: "cannot be undone".to_string(),
+            risk_tags: vec![],
+            estimated_impact: None,
+            proposed_args: serde_json::json!({ "id": "u1" }),
+            agent_context: serde_json::json!({}),
+            state: ApprovalState::Pending,
+            timeout_at: created_at,
+            auto_approve_on_timeout: false,
+            resolved_at: None,
+            resolved_by: None,
+            approved_args: None,
+            created_at,
+        };
+
+        let proto = approval_record_to_proto(req);
+
+        assert_eq!(proto.tool_name, "delete_user");
+        assert_eq!(proto.args, br#"{"id":"u1"}"#);
+        assert_eq!(proto.created_at_unix_ms, created_at.timestamp_millis());
+    }
 }

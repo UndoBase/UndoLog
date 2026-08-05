@@ -994,6 +994,196 @@ func (*RejectResponse) Descriptor() ([]byte, []int) {
 	return file_undolog_proto_rawDescGZIP(), []int{14}
 }
 
+type ListPendingApprovalsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Organisation whose unresolved approvals should be returned.
+	OrgId         string `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPendingApprovalsRequest) Reset() {
+	*x = ListPendingApprovalsRequest{}
+	mi := &file_undolog_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPendingApprovalsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPendingApprovalsRequest) ProtoMessage() {}
+
+func (x *ListPendingApprovalsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_undolog_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPendingApprovalsRequest.ProtoReflect.Descriptor instead.
+func (*ListPendingApprovalsRequest) Descriptor() ([]byte, []int) {
+	return file_undolog_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ListPendingApprovalsRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+// A snapshot of an approval request as persisted by the engine.
+type ApprovalRecord struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Approval request identifier (UUID v4).
+	ApprovalId string `protobuf:"bytes,1,opt,name=approval_id,json=approvalId,proto3" json:"approval_id,omitempty"`
+	// Organisation that owns the approval request.
+	OrgId string `protobuf:"bytes,2,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	// Session that was awaiting approval.
+	SessionId string `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Effect that is waiting for approval.
+	EffectId string `protobuf:"bytes,4,opt,name=effect_id,json=effectId,proto3" json:"effect_id,omitempty"`
+	// Logical name of the intercepted tool.
+	ToolName string `protobuf:"bytes,5,opt,name=tool_name,json=toolName,proto3" json:"tool_name,omitempty"`
+	// Raw JSON args proposed for the call.
+	Args []byte `protobuf:"bytes,6,opt,name=args,proto3" json:"args,omitempty"`
+	// Creation time as Unix milliseconds (UTC).
+	CreatedAtUnixMs int64 `protobuf:"varint,7,opt,name=created_at_unix_ms,json=createdAtUnixMs,proto3" json:"created_at_unix_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ApprovalRecord) Reset() {
+	*x = ApprovalRecord{}
+	mi := &file_undolog_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApprovalRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApprovalRecord) ProtoMessage() {}
+
+func (x *ApprovalRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_undolog_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApprovalRecord.ProtoReflect.Descriptor instead.
+func (*ApprovalRecord) Descriptor() ([]byte, []int) {
+	return file_undolog_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ApprovalRecord) GetApprovalId() string {
+	if x != nil {
+		return x.ApprovalId
+	}
+	return ""
+}
+
+func (x *ApprovalRecord) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *ApprovalRecord) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ApprovalRecord) GetEffectId() string {
+	if x != nil {
+		return x.EffectId
+	}
+	return ""
+}
+
+func (x *ApprovalRecord) GetToolName() string {
+	if x != nil {
+		return x.ToolName
+	}
+	return ""
+}
+
+func (x *ApprovalRecord) GetArgs() []byte {
+	if x != nil {
+		return x.Args
+	}
+	return nil
+}
+
+func (x *ApprovalRecord) GetCreatedAtUnixMs() int64 {
+	if x != nil {
+		return x.CreatedAtUnixMs
+	}
+	return 0
+}
+
+type ListPendingApprovalsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Unresolved approval requests for the requested organization.
+	ApprovalRecords []*ApprovalRecord `protobuf:"bytes,1,rep,name=approval_records,json=approvalRecords,proto3" json:"approval_records,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ListPendingApprovalsResponse) Reset() {
+	*x = ListPendingApprovalsResponse{}
+	mi := &file_undolog_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPendingApprovalsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPendingApprovalsResponse) ProtoMessage() {}
+
+func (x *ListPendingApprovalsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_undolog_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPendingApprovalsResponse.ProtoReflect.Descriptor instead.
+func (*ListPendingApprovalsResponse) Descriptor() ([]byte, []int) {
+	return file_undolog_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ListPendingApprovalsResponse) GetApprovalRecords() []*ApprovalRecord {
+	if x != nil {
+		return x.ApprovalRecords
+	}
+	return nil
+}
+
 var File_undolog_proto protoreflect.FileDescriptor
 
 const file_undolog_proto_rawDesc = "" +
@@ -1068,13 +1258,28 @@ const file_undolog_proto_rawDesc = "" +
 	"approvalId\x12\x15\n" +
 	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x12\x14\n" +
 	"\x05actor\x18\x03 \x01(\tR\x05actor\"\x10\n" +
-	"\x0eRejectResponse2\xda\x02\n" +
+	"\x0eRejectResponse\"4\n" +
+	"\x1bListPendingApprovalsRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"\xe2\x01\n" +
+	"\x0eApprovalRecord\x12\x1f\n" +
+	"\vapproval_id\x18\x01 \x01(\tR\n" +
+	"approvalId\x12\x15\n" +
+	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\teffect_id\x18\x04 \x01(\tR\beffectId\x12\x1b\n" +
+	"\ttool_name\x18\x05 \x01(\tR\btoolName\x12\x12\n" +
+	"\x04args\x18\x06 \x01(\fR\x04args\x12+\n" +
+	"\x12created_at_unix_ms\x18\a \x01(\x03R\x0fcreatedAtUnixMs\"e\n" +
+	"\x1cListPendingApprovalsResponse\x12E\n" +
+	"\x10approval_records\x18\x01 \x03(\v2\x1a.undolog.v1.ApprovalRecordR\x0fapprovalRecords2\xc5\x03\n" +
 	"\rUndoLogEngine\x12H\n" +
 	"\tIntercept\x12\x1c.undolog.v1.InterceptRequest\x1a\x1d.undolog.v1.InterceptResponse\x12?\n" +
 	"\x06Commit\x12\x19.undolog.v1.CommitRequest\x1a\x1a.undolog.v1.CommitResponse\x129\n" +
 	"\x04Fail\x12\x17.undolog.v1.FailRequest\x1a\x18.undolog.v1.FailResponse\x12B\n" +
 	"\aApprove\x12\x1a.undolog.v1.ApproveRequest\x1a\x1b.undolog.v1.ApproveResponse\x12?\n" +
-	"\x06Reject\x12\x19.undolog.v1.RejectRequest\x1a\x1a.undolog.v1.RejectResponseB%Z#undolog-proxy/internal/engine/pb;pbb\x06proto3"
+	"\x06Reject\x12\x19.undolog.v1.RejectRequest\x1a\x1a.undolog.v1.RejectResponse\x12i\n" +
+	"\x14ListPendingApprovals\x12'.undolog.v1.ListPendingApprovalsRequest\x1a(.undolog.v1.ListPendingApprovalsResponseB%Z#undolog-proxy/internal/engine/pb;pbb\x06proto3"
 
 var (
 	file_undolog_proto_rawDescOnce sync.Once
@@ -1088,23 +1293,26 @@ func file_undolog_proto_rawDescGZIP() []byte {
 	return file_undolog_proto_rawDescData
 }
 
-var file_undolog_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_undolog_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_undolog_proto_goTypes = []any{
-	(*ToolCall)(nil),                // 0: undolog.v1.ToolCall
-	(*ToolResult)(nil),              // 1: undolog.v1.ToolResult
-	(*InterceptRequest)(nil),        // 2: undolog.v1.InterceptRequest
-	(*InterceptResponse)(nil),       // 3: undolog.v1.InterceptResponse
-	(*ExecuteOutcome)(nil),          // 4: undolog.v1.ExecuteOutcome
-	(*ReplayOutcome)(nil),           // 5: undolog.v1.ReplayOutcome
-	(*AwaitingApprovalOutcome)(nil), // 6: undolog.v1.AwaitingApprovalOutcome
-	(*CommitRequest)(nil),           // 7: undolog.v1.CommitRequest
-	(*CommitResponse)(nil),          // 8: undolog.v1.CommitResponse
-	(*FailRequest)(nil),             // 9: undolog.v1.FailRequest
-	(*FailResponse)(nil),            // 10: undolog.v1.FailResponse
-	(*ApproveRequest)(nil),          // 11: undolog.v1.ApproveRequest
-	(*ApproveResponse)(nil),         // 12: undolog.v1.ApproveResponse
-	(*RejectRequest)(nil),           // 13: undolog.v1.RejectRequest
-	(*RejectResponse)(nil),          // 14: undolog.v1.RejectResponse
+	(*ToolCall)(nil),                     // 0: undolog.v1.ToolCall
+	(*ToolResult)(nil),                   // 1: undolog.v1.ToolResult
+	(*InterceptRequest)(nil),             // 2: undolog.v1.InterceptRequest
+	(*InterceptResponse)(nil),            // 3: undolog.v1.InterceptResponse
+	(*ExecuteOutcome)(nil),               // 4: undolog.v1.ExecuteOutcome
+	(*ReplayOutcome)(nil),                // 5: undolog.v1.ReplayOutcome
+	(*AwaitingApprovalOutcome)(nil),      // 6: undolog.v1.AwaitingApprovalOutcome
+	(*CommitRequest)(nil),                // 7: undolog.v1.CommitRequest
+	(*CommitResponse)(nil),               // 8: undolog.v1.CommitResponse
+	(*FailRequest)(nil),                  // 9: undolog.v1.FailRequest
+	(*FailResponse)(nil),                 // 10: undolog.v1.FailResponse
+	(*ApproveRequest)(nil),               // 11: undolog.v1.ApproveRequest
+	(*ApproveResponse)(nil),              // 12: undolog.v1.ApproveResponse
+	(*RejectRequest)(nil),                // 13: undolog.v1.RejectRequest
+	(*RejectResponse)(nil),               // 14: undolog.v1.RejectResponse
+	(*ListPendingApprovalsRequest)(nil),  // 15: undolog.v1.ListPendingApprovalsRequest
+	(*ApprovalRecord)(nil),               // 16: undolog.v1.ApprovalRecord
+	(*ListPendingApprovalsResponse)(nil), // 17: undolog.v1.ListPendingApprovalsResponse
 }
 var file_undolog_proto_depIdxs = []int32{
 	0,  // 0: undolog.v1.InterceptRequest.tool_call:type_name -> undolog.v1.ToolCall
@@ -1113,21 +1321,24 @@ var file_undolog_proto_depIdxs = []int32{
 	6,  // 3: undolog.v1.InterceptResponse.awaiting_approval:type_name -> undolog.v1.AwaitingApprovalOutcome
 	1,  // 4: undolog.v1.ReplayOutcome.cached_result:type_name -> undolog.v1.ToolResult
 	1,  // 5: undolog.v1.CommitRequest.result:type_name -> undolog.v1.ToolResult
-	2,  // 6: undolog.v1.UndoLogEngine.Intercept:input_type -> undolog.v1.InterceptRequest
-	7,  // 7: undolog.v1.UndoLogEngine.Commit:input_type -> undolog.v1.CommitRequest
-	9,  // 8: undolog.v1.UndoLogEngine.Fail:input_type -> undolog.v1.FailRequest
-	11, // 9: undolog.v1.UndoLogEngine.Approve:input_type -> undolog.v1.ApproveRequest
-	13, // 10: undolog.v1.UndoLogEngine.Reject:input_type -> undolog.v1.RejectRequest
-	3,  // 11: undolog.v1.UndoLogEngine.Intercept:output_type -> undolog.v1.InterceptResponse
-	8,  // 12: undolog.v1.UndoLogEngine.Commit:output_type -> undolog.v1.CommitResponse
-	10, // 13: undolog.v1.UndoLogEngine.Fail:output_type -> undolog.v1.FailResponse
-	12, // 14: undolog.v1.UndoLogEngine.Approve:output_type -> undolog.v1.ApproveResponse
-	14, // 15: undolog.v1.UndoLogEngine.Reject:output_type -> undolog.v1.RejectResponse
-	11, // [11:16] is the sub-list for method output_type
-	6,  // [6:11] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	16, // 6: undolog.v1.ListPendingApprovalsResponse.approval_records:type_name -> undolog.v1.ApprovalRecord
+	2,  // 7: undolog.v1.UndoLogEngine.Intercept:input_type -> undolog.v1.InterceptRequest
+	7,  // 8: undolog.v1.UndoLogEngine.Commit:input_type -> undolog.v1.CommitRequest
+	9,  // 9: undolog.v1.UndoLogEngine.Fail:input_type -> undolog.v1.FailRequest
+	11, // 10: undolog.v1.UndoLogEngine.Approve:input_type -> undolog.v1.ApproveRequest
+	13, // 11: undolog.v1.UndoLogEngine.Reject:input_type -> undolog.v1.RejectRequest
+	15, // 12: undolog.v1.UndoLogEngine.ListPendingApprovals:input_type -> undolog.v1.ListPendingApprovalsRequest
+	3,  // 13: undolog.v1.UndoLogEngine.Intercept:output_type -> undolog.v1.InterceptResponse
+	8,  // 14: undolog.v1.UndoLogEngine.Commit:output_type -> undolog.v1.CommitResponse
+	10, // 15: undolog.v1.UndoLogEngine.Fail:output_type -> undolog.v1.FailResponse
+	12, // 16: undolog.v1.UndoLogEngine.Approve:output_type -> undolog.v1.ApproveResponse
+	14, // 17: undolog.v1.UndoLogEngine.Reject:output_type -> undolog.v1.RejectResponse
+	17, // 18: undolog.v1.UndoLogEngine.ListPendingApprovals:output_type -> undolog.v1.ListPendingApprovalsResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_undolog_proto_init() }
@@ -1146,7 +1357,7 @@ func file_undolog_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_undolog_proto_rawDesc), len(file_undolog_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
