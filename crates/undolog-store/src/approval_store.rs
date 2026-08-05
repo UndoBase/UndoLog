@@ -186,6 +186,32 @@ impl ApprovalStore {
         Ok(rows)
     }
 
+    /// Load all unresolved approval requests for an organization.
+    ///
+    /// Returns the pending requests ordered by creation time ascending so the
+    /// proxy can rebuild its approval view deterministically after a restart.
+    pub async fn list_pending(&self, org_id: &OrgId) -> UndoLogResult<Vec<ApprovalRequest>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                approval_request_id, org_id, session_id, effect_id,
+                tool_name, irreversibility_reason, risk_tags,
+                estimated_impact, proposed_args, agent_context,
+                state::text, timeout_at, auto_approve_on_timeout,
+                resolved_at, resolved_by, approved_args, created_at
+            FROM undolog_approval_requests
+            WHERE org_id = $1
+              AND state  = 'pending'::undolog_approval_state
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(*org_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(map_approval_row).collect()
+    }
+
     /// Load a single approval request by ID.
     ///
     /// Returns `Ok(None)` when the approval request does not exist.

@@ -212,7 +212,7 @@ Expected final response:
 | `409 Conflict` on decision | Approval already resolved | Check `state=approved` or `state=rejected` to see the current status |
 | Retry returns `pending_approval` again | Not yet approved | Wait for the approval webhook; check `GET /approvals?state=pending` |
 | SSE dashboard not updating | Browser tab throttled | Open DevTools Network tab, verify SSE events arrive every 5s |
-| Approval decision not persisted after proxy restart | In-memory store | Production deployments use the database-backed store via the engine |
+| Approval decision not persisted after proxy restart | In-memory store | The proxy reconciles pending approvals from the engine database on startup, so a restart does not orphan in-flight requests; resolved decisions are never downgraded |
 
 ## Next steps
 

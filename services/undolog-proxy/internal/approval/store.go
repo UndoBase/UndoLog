@@ -7,6 +7,7 @@ package approval
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"sort"
 	"sync"
 	"time"
 )
@@ -84,11 +85,13 @@ func (s *Store) Create(rec Record) Record {
 	return rec
 }
 
-// List returns approval records filtered by organization and status.
-func (s *Store) List(orgID string, status Status) []Record {
+// List returns approval records filtered by organization and status, ordered
+// by creation time descending (newest first) with the record ID as a
+// deterministic tiebreaker. When limit is positive, at most that many records
+// are returned.
+func (s *Store) List(orgID string, status Status, limit int) []Record {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]Record, 0, len(s.records))
+	recs := make([]Record, 0, len(s.records))
 	for key := range s.records {
 		rec := s.records[key]
 		if orgID != "" && rec.OrgID != orgID {
@@ -97,9 +100,20 @@ func (s *Store) List(orgID string, status Status) []Record {
 		if status != "" && rec.Status != status {
 			continue
 		}
-		out = append(out, rec)
+		recs = append(recs, rec)
 	}
-	return out
+	s.mu.RUnlock()
+
+	sort.Slice(recs, func(i, j int) bool {
+		if recs[i].CreatedAt.Equal(recs[j].CreatedAt) {
+			return recs[i].ID < recs[j].ID
+		}
+		return recs[i].CreatedAt.After(recs[j].CreatedAt)
+	})
+	if limit > 0 && len(recs) > limit {
+		recs = recs[:limit]
+	}
+	return recs
 }
 
 // Get looks up an approval record by ID.
@@ -110,18 +124,88 @@ func (s *Store) Get(id string) (Record, bool) {
 	return rec, ok
 }
 
-// UpdateStatus changes the record status and stamps the resolution time.
-func (s *Store) UpdateStatus(id string, status Status) (Record, bool) {
+// CompareAndSwap atomically transitions a record from `from` to `to` only when
+// its current status equals `from`, stamping the resolution time. It returns
+// the stored copy and whether the transition happened. This closes the
+// check-then-act window so concurrent decisions resolve exactly one winner and
+// the loser is reported as a conflict without an engine round trip.
+func (s *Store) CompareAndSwap(id string, from, to Status) (Record, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[id]
-	if !ok {
+	if !ok || rec.Status != from {
 		return Record{}, false
 	}
-	// Terminal decisions always stamp a resolved timestamp exactly once.
-	rec.Status = status
+	rec.Status = to
 	now := time.Now().UTC()
 	rec.ResolvedAt = &now
 	s.records[id] = rec
 	return rec, true
+}
+
+// RestorePending reverts a terminal decision back to pending and clears the
+// resolution timestamp. The decision handler calls this when the engine round
+// trip fails so the approval remains resolvable on a later attempt.
+func (s *Store) RestorePending(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[id]
+	if !ok || rec.Status == StatusPending {
+		return
+	}
+	rec.Status = StatusPending
+	rec.ResolvedAt = nil
+	s.records[id] = rec
+}
+
+// UpsertPending inserts a pending record or refreshes an existing one in place.
+// The reconciler uses it to restore the proxy's approval view from the engine;
+// it never downgrades an already-resolved local record back to pending.
+func (s *Store) UpsertPending(rec Record) {
+	if rec.ID == "" {
+		rec.ID = NewID()
+	}
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = time.Now().UTC()
+	}
+	if rec.Status == "" {
+		rec.Status = StatusPending
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.records[rec.ID]; ok && existing.Status != StatusPending {
+		return
+	}
+	s.records[rec.ID] = rec
+}
+
+// Sweep removes records that reached their retention age: terminal records are
+// aged from ResolvedAt and stale pending records from CreatedAt. Records in
+// activeIDs were just confirmed as pending by the engine and are kept so a
+// still-decidable approval never flickers out of the dashboard. Records whose
+// organization failed to reconcile this cycle are also kept, because their
+// current status is unknown and sweeping them could drop an approval a human
+// may still decide on. It returns the number of records removed and keeps the
+// in-memory store bounded.
+func (s *Store) Sweep(retainedBefore time.Time, activeIDs, failedOrgs map[string]struct{}) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for id, rec := range s.records {
+		if _, active := activeIDs[id]; active {
+			continue
+		}
+		if _, failed := failedOrgs[rec.OrgID]; failed {
+			continue
+		}
+		cutoff := rec.CreatedAt
+		if rec.Status != StatusPending && rec.ResolvedAt != nil {
+			cutoff = *rec.ResolvedAt
+		}
+		if cutoff.Before(retainedBefore) {
+			delete(s.records, id)
+			removed++
+		}
+	}
+	return removed
 }

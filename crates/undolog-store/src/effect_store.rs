@@ -318,10 +318,12 @@ impl EffectStore {
         Err(UndoLogError::NotExecuting { effect_id: effect_id.to_string() })
     }
 
-    // ── Transition: executing → pending (failure recorded) ───────────────
+    // ── Transition: executing|approved → pending (failure recorded) ────────
 
     /// Record that a tool call failed; revert state to allow compensation.
     /// The Saga Orchestrator will detect the session failure and walk the undo stack.
+    /// Also accepts `approved` so a tool that fails after human approval is not
+    /// falsely recorded as committed (see the approval workflow).
     pub async fn fail_effect(
         &self,
         org_id: &OrgId,
@@ -338,7 +340,7 @@ impl EffectStore {
                     result_snapshot = $1
                 WHERE effect_id = $2
                   AND org_id    = $3
-                  AND state     = 'executing'::undolog_effect_state
+                  AND state     IN ('executing'::undolog_effect_state, 'approved'::undolog_effect_state)
                 RETURNING 1
             )
             SELECT

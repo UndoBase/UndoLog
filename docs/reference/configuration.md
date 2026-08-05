@@ -128,6 +128,22 @@ HTTP bind address for the MCP proxy server.
 
 ---
 
+### `UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int` | `60` | Seconds between reconciliations of pending approvals from the engine database. Reconciliation also runs once on startup. |
+
+---
+
+### `UNDOLOG_PROXY_APPROVAL_RETENTION_SECS`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int` | `86400` | Age in seconds after which a resolved approval is swept from the proxy store. Stale pending approvals (no longer confirmed by the engine) age from creation; approvals the engine still reports as pending are always kept so a human can still decide. |
+
+---
+
 ### `UNDOLOG_PROXY_ENGINE_GRPC_ADDR`
 
 | Type | Default | Required |
@@ -195,6 +211,8 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS` | Proxy | `int` | `30` | No |
 | `UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS` | Proxy | `int` | `30` | No |
 | `UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE` | Proxy | `int` | `128` | No |
+| `UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS` | Proxy | `int` | `60` | No |
+| `UNDOLOG_PROXY_APPROVAL_RETENTION_SECS` | Proxy | `int` | `86400` | No |
 | `UNDOLOG_PROXY_ENGINE_GRPC_ADDR` | Proxy | `string` | `localhost:50051` | Yes |
 | `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_API_KEYS` | Proxy | `string` | `""` | No |

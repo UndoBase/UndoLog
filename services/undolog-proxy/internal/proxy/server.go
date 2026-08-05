@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"undolog-proxy/internal/approval"
 	"undolog-proxy/internal/protocol"
@@ -18,14 +19,17 @@ import (
 
 // Server composes the proxy, approval, and SSE subsystems into one HTTP service.
 type Server struct {
-	cfg         Config
-	engine      protocol.EngineClient
-	tool        ToolExecutor
-	approvals   *approval.Store
-	broadcaster *sse.Broadcaster
-	handler     http.Handler
-	httpSrv     http.Server
-	logger      *slog.Logger
+	cfg               Config
+	engine            protocol.EngineClient
+	tool              ToolExecutor
+	approvals         *approval.Store
+	broadcaster       *sse.Broadcaster
+	handler           http.Handler
+	httpSrv           http.Server
+	reconcilerOrgs    []string
+	reconcileInterval time.Duration
+	approvalRetention time.Duration
+	logger            *slog.Logger
 }
 
 // NewServer builds the full HTTP server stack for the proxy service.
@@ -88,12 +92,15 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, logg
 	mux.Handle("/approvals/", protectedChain)
 
 	return &Server{
-		cfg:         cfg,
-		engine:      engine,
-		tool:        tool,
-		approvals:   approvalStore,
-		broadcaster: broadcaster,
-		handler:     mux,
+		cfg:               cfg,
+		engine:            engine,
+		tool:              tool,
+		approvals:         approvalStore,
+		broadcaster:       broadcaster,
+		handler:           mux,
+		reconcilerOrgs:    orgsFromKeys(cfg.TrustedAPIKeys),
+		reconcileInterval: cfg.ApprovalReconcileInterval,
+		approvalRetention: cfg.ApprovalRetention,
 		httpSrv: http.Server{
 			Addr:         cfg.ListenAddr,
 			Handler:      mux,
@@ -104,13 +111,38 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, logg
 	}, nil
 }
 
+// orgsFromKeys returns the unique organization identifiers served by a set of
+// trusted API keys, in stable order.
+func orgsFromKeys(keys map[string]string) []string {
+	seen := make(map[string]struct{}, len(keys))
+	out := make([]string, 0, len(keys))
+	for _, org := range keys {
+		if org == "" {
+			continue
+		}
+		if _, ok := seen[org]; ok {
+			continue
+		}
+		seen[org] = struct{}{}
+		out = append(out, org)
+	}
+	return out
+}
+
 // Start runs the HTTP server until the context is canceled or the listener exits.
 func (s *Server) Start(ctx context.Context) error {
+	// Populate the approval view from the engine before accepting requests so a
+	// proxy restart does not orphan pending approvals.
+	s.reconcileOnce(ctx)
+
 	errCh := make(chan error, 1)
 	go func() {
 		s.logger.Info("proxy server starting", "addr", s.cfg.ListenAddr)
 		errCh <- s.httpSrv.ListenAndServe()
 	}()
+
+	// Refresh the approval view and sweep expired records on an interval.
+	go approval.RunApprovalReconciler(ctx, s.engine, s.approvals, s.reconcilerOrgs, s.reconcileInterval, s.approvalRetention, s.logger)
 
 	select {
 	case <-ctx.Done():
@@ -129,4 +161,17 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		return err
 	}
+}
+
+// reconcileOnce synchronously rebuilds the approval view from the engine for
+// every served organization, bounded by the configured request timeout. The
+// reconcile result is not needed here because the startup pass does not sweep.
+func (s *Server) reconcileOnce(parent context.Context) {
+	ctx := parent
+	if s.cfg.RequestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, s.cfg.RequestTimeout)
+		defer cancel()
+	}
+	approval.ReconcileApprovals(ctx, s.engine, s.approvals, s.reconcilerOrgs, s.logger)
 }

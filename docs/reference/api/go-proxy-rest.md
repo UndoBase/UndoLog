@@ -168,6 +168,7 @@ List approval requests filtered by organisation and state.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `state` | `string` | No | `pending` | Filter by approval state. One of: `pending`, `approved`, `rejected`. |
+| `limit` | `int` | No | `100` | Maximum number of records to return (1-500). Records are ordered newest first, with the ID as tiebreaker. |
 
 ### Response
 
@@ -203,7 +204,7 @@ Each record contains:
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid `state` parameter. |
+| `400 Bad Request` | Invalid `state` parameter. An invalid or out-of-range `limit` falls back to the default (100). |
 | `401 Unauthorized` | Missing `X-Org-Id` header. |
 
 ---
@@ -247,7 +248,7 @@ Approve a pending approval request and resume the suspended session.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Missing approval ID in path. |
+| `400 Bad Request` | Missing approval ID in path or malformed decision body. |
 | `401 Unauthorized` | Missing `X-Org-Id` header. |
 | `404 Not Found` | Approval ID not found or does not belong to the organisation. |
 | `409 Conflict` | Approval already resolved. |
@@ -294,7 +295,7 @@ Reject a pending approval request and halt the suspended session.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Missing approval ID in path. |
+| `400 Bad Request` | Missing approval ID in path or malformed decision body. |
 | `401 Unauthorized` | Missing `X-Org-Id` header. |
 | `404 Not Found` | Approval ID not found or does not belong to the organisation. |
 | `409 Conflict` | Approval already resolved. |

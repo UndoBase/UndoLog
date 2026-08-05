@@ -425,6 +425,18 @@ impl EffectEngine {
         Ok(())
     }
 
+    /// List the unresolved approval requests for an organization.
+    ///
+    /// The proxy calls this on startup and periodically to reconcile its
+    /// in-memory approval view, so a proxy restart does not orphan approvals.
+    #[instrument(skip(self), fields(org_id = %org_id))]
+    pub async fn list_pending_approvals(
+        &self,
+        org_id: &OrgId,
+    ) -> Result<Vec<ApprovalRequest>, UndoLogError> {
+        self.approval_store.list_pending(org_id).await
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────
 
     /// Resolve the tool's tier from the registry.

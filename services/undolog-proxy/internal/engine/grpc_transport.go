@@ -78,6 +78,16 @@ func (t *GRPCTransport) Reject(ctx context.Context, req protocol.RejectRequest) 
 	return err
 }
 
+// ListPendingApprovals returns the engine's unresolved approvals for one org.
+func (t *GRPCTransport) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
+	pbReq := &pb.ListPendingApprovalsRequest{OrgId: req.OrgID}
+	pbResp, err := t.client.ListPendingApprovals(ctx, pbReq)
+	if err != nil {
+		return protocol.ListPendingApprovalsResponse{}, err
+	}
+	return listPendingApprovalsFromProto(pbResp), nil
+}
+
 // Close is a no-op. The caller owns the gRPC connection lifecycle.
 func (t *GRPCTransport) Close() error { return nil }
 
@@ -177,5 +187,22 @@ func rejectRequestToProto(req protocol.RejectRequest) *pb.RejectRequest {
 	return &pb.RejectRequest{
 		OrgId:      req.OrgID,
 		ApprovalId: req.ApprovalID,
+		Actor:      req.Actor,
 	}
+}
+
+func listPendingApprovalsFromProto(msg *pb.ListPendingApprovalsResponse) protocol.ListPendingApprovalsResponse {
+	out := protocol.ListPendingApprovalsResponse{Records: make([]protocol.ApprovalRecord, 0, len(msg.ApprovalRecords))}
+	for _, rec := range msg.ApprovalRecords {
+		out.Records = append(out.Records, protocol.ApprovalRecord{
+			ApprovalID:    rec.ApprovalId,
+			OrgID:         rec.OrgId,
+			SessionID:     rec.SessionId,
+			EffectID:      rec.EffectId,
+			ToolName:      rec.ToolName,
+			Args:          rec.Args,
+			CreatedAtUnix: rec.CreatedAtUnixMs,
+		})
+	}
+	return out
 }
