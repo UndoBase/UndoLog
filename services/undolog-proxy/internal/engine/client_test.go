@@ -7,12 +7,15 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 )
 
@@ -203,5 +206,78 @@ func TestClientInterceptNotRetried(t *testing.T) {
 	}
 	if mt.interceptCalls != 1 {
 		t.Fatalf("intercept must not be retried, got %d calls", mt.interceptCalls)
+	}
+}
+
+// TestClientMetricsObserved verifies successful RPCs contribute a duration
+// histogram but no error counter to the shared registry.
+func TestClientMetricsObserved(t *testing.T) {
+	reg := metrics.NewRegistry()
+	mt := &mockTransport{}
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 2, Backoff: time.Millisecond}, mt, nil)
+	client.SetMetrics(reg)
+
+	if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); err != nil {
+		t.Fatalf("intercept: %v", err)
+	}
+
+	rendered := reg.Render()
+	if !strings.Contains(rendered, `undolog_proxy_engine_rpc_duration_seconds_bucket{method="Intercept",le="+Inf"} 1`) {
+		t.Errorf("expected an Intercept duration observation, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, rpcErrorsMetric) {
+		t.Errorf("no errors expected on success, got:\n%s", rendered)
+	}
+}
+
+// TestClientMetricsErrorsAndRetries verifies a retried Commit records the retry
+// counter and a deterministic failure records an error counter.
+func TestClientMetricsErrorsAndRetries(t *testing.T) {
+	reg := metrics.NewRegistry()
+	mt := &mockTransport{
+		commitErrs: []error{status.Error(codes.Unavailable, "engine restarting")},
+	}
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 2, Backoff: time.Millisecond}, mt, nil)
+	client.SetMetrics(reg)
+
+	if err := client.Commit(context.Background(), protocol.CommitRequest{EffectID: "e-1"}); err != nil {
+		t.Fatalf("commit should recover after one retry: %v", err)
+	}
+	rendered := reg.Render()
+	if !strings.Contains(rendered, `undolog_proxy_engine_rpc_retries_total{method="Commit"} 1`) {
+		t.Errorf("expected one Commit retry, got:\n%s", rendered)
+	}
+
+	mt.failErrs = []error{status.Error(codes.Internal, "state transition rejected")}
+	if err := client.Fail(context.Background(), protocol.FailRequest{EffectID: "e-2"}); err == nil {
+		t.Fatal("expected fail to error")
+	}
+	rendered = reg.Render()
+	if !strings.Contains(rendered, `undolog_proxy_engine_rpc_errors_total{method="Fail"} 1`) {
+		t.Errorf("expected one Fail error, got:\n%s", rendered)
+	}
+}
+
+// TestWithRequestIDEmptyIsPassthrough verifies an empty request ID does not add
+// outgoing metadata.
+func TestWithRequestIDEmptyIsPassthrough(t *testing.T) {
+	ctx := withTracingMetadata(WithRequestID(context.Background(), ""))
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if ok && len(md.Get("x-request-id")) > 0 {
+		t.Fatalf("expected no outgoing metadata, got %v", md)
+	}
+}
+
+// TestWithTracingMetadataAttachesRequestID verifies a non-empty request ID
+// becomes an outgoing x-request-id metadata pair for the engine call.
+func TestWithTracingMetadataAttachesRequestID(t *testing.T) {
+	ctx := withTracingMetadata(WithRequestID(context.Background(), "req-abc"))
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		t.Fatal("expected outgoing metadata")
+	}
+	ids := md.Get("x-request-id")
+	if len(ids) != 1 || ids[0] != "req-abc" {
+		t.Fatalf("expected x-request-id metadata req-abc, got %v", ids)
 	}
 }

@@ -134,6 +134,11 @@ replays the cached result instead of re-running the tool.
 }
 ```
 
+Every response carries an `X-Request-Id` header (and the error body includes the
+same value as `request_id`). The proxy forwards this value as `x-request-id`
+gRPC metadata on every engine call, so engine and proxy logs for one tool call
+can be correlated across the two services.
+
 ---
 
 ## `GET /health`
@@ -142,9 +147,7 @@ Liveness probe for the UndoLog proxy.
 
 ### Request
 
-| Header | Required | Description |
-|--------|----------|-------------|
-|, |, | No auth required. |
+No headers are required and the endpoint is unauthenticated.
 
 ### Response
 
@@ -153,9 +156,7 @@ Liveness probe for the UndoLog proxy.
 ```json
 {
   "status": "ok",
-  "service": "undolog-proxy",
-  "engine_addr": "localhost:50051",
-  "upstream_url": "http://upstream-tool-server"
+  "service": "undolog-proxy"
 }
 ```
 
@@ -163,8 +164,44 @@ Liveness probe for the UndoLog proxy.
 |-------|------|-------------|
 | `status` | `string` | `"ok"` |
 | `service` | `string` | Service identifier. |
-| `engine_addr` | `string` | Engine gRPC endpoint (from config). |
-| `upstream_url` | `string` | Upstream tool execution URL (from config). |
+
+The endpoint is a liveness probe only: it does not check the engine connection
+or upstream reachability, and it does not echo configuration values (such as
+the engine address or upstream URL), which are kept out of unauthenticated
+responses.
+
+---
+
+## `GET /metrics`
+
+Prometheus text exposition of proxy service metrics. No auth required.
+
+### Metric families
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `undolog_proxy_http_requests_total` | counter | `route`, `status` | Completed HTTP requests by route and status code. |
+| `undolog_proxy_http_request_duration_seconds` | histogram | `route` | HTTP request duration per route. Note that `/events` reports the full stream lifetime. |
+| `undolog_proxy_engine_rpc_duration_seconds` | histogram | `method` | Engine gRPC call duration. |
+| `undolog_proxy_engine_rpc_errors_total` | counter | `method` | Engine calls that returned an error. |
+| `undolog_proxy_engine_rpc_retries_total` | counter | `method` | Engine calls retried after a transient failure. |
+| `undolog_proxy_executor_duration_seconds` | histogram | `result` | Upstream tool executor duration. |
+| `undolog_proxy_sse_subscribers` | gauge | `org` | Active SSE subscribers per organisation. |
+| `undolog_proxy_sse_events_dropped_total` | counter | `org` | SSE events dropped because a subscriber channel was full. |
+| `undolog_proxy_approval_decisions_total` | counter | `action`, `result` | Approval decisions by action and outcome. |
+| `undolog_proxy_approval_decision_duration_seconds` | histogram | `action` | Approval decision latency. |
+
+The metric endpoint is unauthenticated and intentionally carries no
+configuration or API-key material. If it must not be reachable by the public,
+scope it behind a reverse-proxy rule.
+
+The `route` label carries the request path with the approval id collapsed to a
+fixed segment, so `/approvals/{id}/approve` and `/approvals/{id}/reject`
+produce one series per action instead of one per approval id. The `/events`
+duration histogram covers the full SSE stream lifetime. Approval latency only
+samples requests that reached the decision state machine. `/health` and
+`/metrics` are served outside the middleware chain, so they do not appear in
+the HTTP metrics and are not covered by API-key auth.
 
 ---
 

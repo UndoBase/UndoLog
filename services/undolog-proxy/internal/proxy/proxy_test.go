@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"undolog-proxy/internal/approval"
+	eng "undolog-proxy/internal/engine"
+	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
 )
@@ -30,12 +32,14 @@ type mockEngineClient struct {
 	interceptReq  protocol.InterceptRequest
 	commitReq     protocol.CommitRequest
 	failReq       protocol.FailRequest
+	lastCtx       context.Context
 	pending       []protocol.ApprovalRecord
 }
 
 // Intercept returns the canned intercept response for the mock engine client.
 func (m *mockEngineClient) Intercept(ctx context.Context, req protocol.InterceptRequest) (protocol.InterceptResponse, error) {
 	m.interceptReq = req
+	m.lastCtx = ctx
 	return m.interceptResp, m.interceptErr
 }
 
@@ -236,7 +240,7 @@ func TestHealthEndpointBypassesAuth(t *testing.T) {
 
 	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return protocol.ToolResult{}, nil
-	}), nil)
+	}), metrics.NewRegistry(), nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -283,7 +287,7 @@ func TestServerRoutesApprovalsAndEvents(t *testing.T) {
 
 	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return protocol.ToolResult{}, nil
-	}), nil)
+	}), metrics.NewRegistry(), nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -354,7 +358,7 @@ func TestServerSSEStreamsPastWriteTimeout(t *testing.T) {
 
 	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return protocol.ToolResult{}, nil
-	}), nil)
+	}), metrics.NewRegistry(), nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -438,7 +442,7 @@ func TestServerReconcilePopulatesApprovals(t *testing.T) {
 	}
 	server, err := NewServer(cfg, engine, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return protocol.ToolResult{}, nil
-	}), nil)
+	}), metrics.NewRegistry(), nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -624,5 +628,179 @@ func TestHandlerExecuteFailureCallsFailAndReports502(t *testing.T) {
 	}
 	if engine.failReq.EffectID != "eff-1" {
 		t.Fatalf("expected Fail with effect eff-1, got %+v", engine.failReq)
+	}
+}
+
+// TestMetricRouteCapsApprovalCardinality verifies variable approval paths
+// collapse to a normalized label per action instead of one series per id.
+func TestMetricRouteCapsApprovalCardinality(t *testing.T) {
+	for path, want := range map[string]string{
+		"/mcp/tool_call":                     "/mcp/tool_call",
+		"/events":                            "/events",
+		"/approvals":                         "/approvals",
+		"/approvals/111-222-333/approve":     "/approvals/{id}/approve",
+		"/approvals/111-222-333/reject":      "/approvals/{id}/reject",
+		"/approvals/111-222-333/approve/":    "/approvals/{id}/approve",
+		"/approvals/not-a-decision/whatever": "/approvals/not-a-decision/whatever",
+	} {
+		if got := metricRoute(path); got != want {
+			t.Errorf("metricRoute(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// TestMetricsEndpointPublishesPrometheus verifies /metrics renders scrapable
+// output reflecting observed requests without leaking any configuration.
+func TestMetricsEndpointPublishesPrometheus(t *testing.T) {
+	cfg := Config{
+		ListenAddr:            ":0",
+		ReadTimeout:           time.Second,
+		WriteTimeout:          time.Second,
+		ShutdownTimeout:       time.Second,
+		RequestTimeout:        time.Second,
+		DashboardEventBufSize: 8,
+		EngineGRPCAddr:        "engine:50051",
+		UpstreamToolURL:       "http://upstream",
+		TrustedAPIKeys:        map[string]string{"key-1": "org-1"},
+	}
+	registry := metrics.NewRegistry()
+	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), registry, nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/approvals?state=pending", nil)
+	req.Header.Set("X-Api-Key", "key-1")
+	rec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approvals status: %d", rec.Code)
+	}
+
+	metricsReq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(metricsRec, metricsReq)
+
+	if ct := metricsRec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("unexpected content type: %q", ct)
+	}
+	body := metricsRec.Body.String()
+	for _, want := range []string{
+		"# HELP undolog_proxy_http_requests_total",
+		"# TYPE undolog_proxy_http_requests_total counter",
+		`undolog_proxy_http_requests_total{route="/approvals",status="200"} 1`,
+		"# TYPE undolog_proxy_http_request_duration_seconds histogram",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected metrics body to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "engine_addr") || strings.Contains(body, "upstream_url") {
+		t.Errorf("metrics must not leak configuration, got:\n%s", body)
+	}
+}
+
+// TestHealthDoesNotLeakConfig verifies the liveness endpoint no longer echoes
+// the engine address or upstream URL to unauthenticated callers.
+func TestHealthDoesNotLeakConfig(t *testing.T) {
+	cfg := Config{
+		ListenAddr:      ":0",
+		ReadTimeout:     time.Second,
+		WriteTimeout:    time.Second,
+		ShutdownTimeout: time.Second,
+		RequestTimeout:  time.Second,
+		EngineGRPCAddr:  "engine:50051",
+		UpstreamToolURL: "http://upstream",
+		TrustedAPIKeys:  map[string]string{},
+	}
+	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), metrics.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "engine_addr") || strings.Contains(body, "upstream_url") || strings.Contains(body, "engine:50051") || strings.Contains(body, "http://upstream") {
+		t.Fatalf("health leaked configuration, body: %s", body)
+	}
+}
+
+// TestRequestIDPropagatedToEngine verifies the proxy request ID flows from the
+// middleware into the engine call context so engine logs share the ID.
+func TestRequestIDPropagatedToEngine(t *testing.T) {
+	cfg := Config{
+		ListenAddr:            ":0",
+		ReadTimeout:           time.Second,
+		WriteTimeout:          time.Second,
+		ShutdownTimeout:       time.Second,
+		RequestTimeout:        time.Second,
+		DashboardEventBufSize: 8,
+		EngineGRPCAddr:        "engine:50051",
+		UpstreamToolURL:       "http://upstream",
+		TrustedAPIKeys:        map[string]string{"key-1": "org-1"},
+	}
+	engine := &mockEngineClient{
+		interceptResp: protocol.InterceptResponse{
+			Outcome:  protocol.InterceptExecute,
+			EffectID: "eff-1",
+		},
+	}
+	server, err := NewServer(cfg, engine, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{Success: true}, nil
+	}), metrics.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	body := `{"session_id":"sess-1","tool_name":"search","args":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))
+	req.Header.Set("X-Api-Key", "key-1")
+	rec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tool_call status: %d (%s)", rec.Code, rec.Body.String())
+	}
+	requestID := rec.Header().Get("X-Request-Id")
+	if requestID == "" {
+		t.Fatal("expected an X-Request-Id response header")
+	}
+	if got := eng.RequestIDFrom(engine.lastCtx); got != requestID {
+		t.Fatalf("expected engine context to carry request id %q, got %q", requestID, got)
+	}
+}
+
+// TestHTTPToolExecutorPublishesMetrics verifies upstream execution adds a
+// duration histogram split by outcome to the shared registry.
+func TestHTTPToolExecutorPublishesMetrics(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer upstream.Close()
+
+	registry := metrics.NewRegistry()
+	executor, err := NewHTTPToolExecutor(upstream.URL, time.Second)
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+	executor.SetMetrics(registry)
+
+	if _, err := executor.Execute(context.Background(), protocol.ToolCall{ToolName: "search", Args: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	rendered := registry.Render()
+	if want := `undolog_proxy_executor_duration_seconds_bucket{result="success",le="+Inf"} 1`; !strings.Contains(rendered, want) {
+		t.Errorf("expected %q, got:\n%s", want, rendered)
 	}
 }

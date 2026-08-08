@@ -15,8 +15,16 @@ import (
 	"strings"
 	"time"
 
+	"undolog-proxy/internal/engine"
+	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
+)
+
+// Metric names published by the approval handler.
+const (
+	approvalDecisionsMetric = "undolog_proxy_approval_decisions_total"
+	approvalDurationMetric  = "undolog_proxy_approval_decision_duration_seconds"
 )
 
 type eventBroadcaster interface {
@@ -35,10 +43,11 @@ type Handler struct {
 	broadcaster    eventBroadcaster
 	logger         *slog.Logger
 	requestTimeout time.Duration
+	metrics        *metrics.Registry
 }
 
 // NewHandler wires the approval store, engine client, executor callback, and broadcaster together.
-func NewHandler(store *Store, engine protocol.EngineClient, executeFn ExecuteApprovedFn, broadcaster eventBroadcaster, requestTimeout time.Duration, logger *slog.Logger) *Handler {
+func NewHandler(store *Store, engineClient protocol.EngineClient, executeFn ExecuteApprovedFn, broadcaster eventBroadcaster, requestTimeout time.Duration, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -47,12 +56,18 @@ func NewHandler(store *Store, engine protocol.EngineClient, executeFn ExecuteApp
 	}
 	return &Handler{
 		store:          store,
-		engine:         engine,
+		engine:         engineClient,
 		executeFn:      executeFn,
 		broadcaster:    broadcaster,
 		requestTimeout: requestTimeout,
 		logger:         logger,
 	}
+}
+
+// SetMetrics wires the registry so decision latency and outcome counts are
+// exposed on /metrics. A nil registry disables instrumentation.
+func (h *Handler) SetMetrics(reg *metrics.Registry) {
+	h.metrics = reg
 }
 
 // ListApprovals returns approval requests filtered by organization and status,
@@ -108,6 +123,11 @@ func (h *Handler) CreatePending(orgID, sessionID, effectID, toolName string, arg
 }
 
 func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target Status) {
+	action := "approve"
+	if target == StatusRejected {
+		action = "reject"
+	}
+
 	orgID := strings.TrimSpace(r.Header.Get("X-Org-Id"))
 	if orgID == "" {
 		http.Error(w, "org_id required", http.StatusUnauthorized)
@@ -138,13 +158,21 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 	// Resolve the decision atomically so a concurrent double-approve returns
 	// 409 from the proxy itself instead of a 502 from the engine's optimistic
 	// lock.
+	start := time.Now()
+	defer func() {
+		if h.metrics != nil {
+			h.metrics.Histogram(approvalDurationMetric, "Approval decision duration in seconds", nil, "action").
+				Observe(time.Since(start).Seconds(), action)
+		}
+	}()
 	rec, ok := h.store.CompareAndSwap(id, StatusPending, target)
 	if !ok {
+		h.recordDecision(action, "conflict")
 		http.Error(w, "approval already resolved", http.StatusConflict)
 		return
 	}
 
-	ctx := r.Context()
+	ctx := engine.WithRequestID(r.Context(), strings.TrimSpace(r.Header.Get("X-Request-Id")))
 	if h.requestTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, h.requestTimeout)
@@ -160,6 +188,7 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 		})
 		if err != nil {
 			h.store.RestorePending(id)
+			h.recordDecision(action, "engine_error")
 			h.failDecision(w, id, err)
 			return
 		}
@@ -223,10 +252,12 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 			resp["result"] = result
 		}
 		writeJSON(w, resp)
+		h.recordDecision(action, "applied")
 
 	case StatusRejected:
 		if rejErr := h.engine.Reject(ctx, protocol.RejectRequest{OrgID: orgID, ApprovalID: id, Actor: body.Actor}); rejErr != nil {
 			h.store.RestorePending(id)
+			h.recordDecision(action, "engine_error")
 			h.failDecision(w, id, rejErr)
 			return
 		}
@@ -251,6 +282,7 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 			"status":      string(target),
 			"approval_id": id,
 		})
+		h.recordDecision(action, "applied")
 
 	default:
 		h.store.RestorePending(id)
@@ -310,6 +342,15 @@ func parseLimit(raw string) int {
 func (h *Handler) failDecision(w http.ResponseWriter, id string, err error) {
 	h.logger.Error("approval decision failed", "approval_id", id, "error", err)
 	http.Error(w, "engine rejected the decision", http.StatusBadGateway)
+}
+
+// recordDecision increments the decision outcome counter.
+func (h *Handler) recordDecision(action, result string) {
+	if h.metrics == nil {
+		return
+	}
+	h.metrics.Counter(approvalDecisionsMetric, "Approval decisions by action and outcome", "action", "result").
+		Add(1, action, result)
 }
 
 func approvalIDFromPath(path string) (string, bool) {

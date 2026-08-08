@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"undolog-proxy/internal/engine"
+	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/proxy"
 )
 
@@ -34,10 +35,13 @@ func run() error {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 
+	registry := metrics.NewRegistry()
+
 	engineClient := engine.NewClient(cfg.EngineGRPCAddr, engine.RetryConfig{
 		MaxAttempts: cfg.EngineRetryMaxAttempts,
 		Backoff:     cfg.EngineRetryBackoff,
 	}, logger)
+	engineClient.SetMetrics(registry)
 	defer func() { _ = engineClient.Close() }()
 
 	connectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -54,7 +58,7 @@ func run() error {
 		return err
 	}
 
-	srv, err := proxy.NewServer(cfg, engineClient, toolExecutor, logger)
+	srv, err := proxy.NewServer(cfg, engineClient, toolExecutor, registry, logger)
 	if err != nil {
 		return err
 	}

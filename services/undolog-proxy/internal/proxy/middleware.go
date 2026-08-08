@@ -11,8 +11,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"undolog-proxy/internal/metrics"
 )
 
 type ctxKey string
@@ -20,12 +23,16 @@ type ctxKey string
 const (
 	ctxKeyOrgID     ctxKey = "org_id"
 	ctxKeyRequestID ctxKey = "request_id"
+
+	httpRequestsMetric = "undolog_proxy_http_requests_total"
+	httpDurationMetric = "undolog_proxy_http_request_duration_seconds"
 )
 
 // MiddlewareStack composes the proxy middlewares into one reusable bundle.
 type MiddlewareStack struct {
 	logger         *slog.Logger
 	trustedAPIKeys map[string]string
+	metrics        *metrics.Registry
 }
 
 // NewMiddlewareStack builds the middleware chain used by the proxy server.
@@ -34,6 +41,12 @@ func NewMiddlewareStack(logger *slog.Logger, trustedAPIKeys map[string]string) *
 		logger = slog.Default()
 	}
 	return &MiddlewareStack{logger: logger, trustedAPIKeys: trustedAPIKeys}
+}
+
+// SetMetrics wires the registry so every processed request contributes an HTTP
+// request counter and a duration histogram. A nil registry disables it.
+func (m *MiddlewareStack) SetMetrics(reg *metrics.Registry) {
+	m.metrics = reg
 }
 
 // Auth resolves X-Api-Key to an organization ID and stores it on the request.
@@ -83,7 +96,39 @@ func (m *MiddlewareStack) StructuredLogging(next http.Handler) http.Handler {
 			"bytes", rw.bytes,
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
+		m.observeHTTP(r.URL.Path, rw.statusCode, time.Since(start))
 	})
+}
+
+// metricRoute maps a request path to a bounded label value. Fixed paths are
+// kept as-is; the approval decision endpoints carry a variable approval id that
+// must not become one time series per id, so those paths collapse to a single
+// normalized form per action.
+func metricRoute(path string) string {
+	const prefix = "/approvals/"
+	if strings.HasPrefix(path, prefix) {
+		rest := path[len(prefix):]
+		if idx := strings.IndexByte(rest, '/'); idx >= 0 {
+			suffix := strings.TrimRight(rest[idx:], "/")
+			if suffix == "/approve" || suffix == "/reject" {
+				return prefix + "{id}" + suffix
+			}
+		}
+	}
+	return path
+}
+
+// observeHTTP publishes one request to the shared registry: a counter keyed by
+// route and status, and a duration histogram per route.
+func (m *MiddlewareStack) observeHTTP(path string, status int, duration time.Duration) {
+	if m.metrics == nil {
+		return
+	}
+	route := metricRoute(path)
+	m.metrics.Counter(httpRequestsMetric, "HTTP requests by route and status code", "route", "status").
+		Add(1, route, strconv.Itoa(status))
+	m.metrics.Histogram(httpDurationMetric, "HTTP request duration in seconds", nil, "route").
+		Observe(duration.Seconds(), route)
 }
 
 // PanicRecovery converts panics into a structured 500 response and log entry.

@@ -9,8 +9,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"undolog-proxy/internal/metrics"
 )
 
 // TestBroadcasterEmitsToOrgSubscribers verifies org-scoped event delivery.
@@ -145,5 +148,38 @@ func TestBroadcasterHandlerExitsOnWriteError(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("handler did not exit after write error")
+	}
+}
+
+// TestBroadcasterMetricsSubscribersAndDrops verifies the subscriber gauge and
+// dropped-event counter are published per org to the shared registry.
+func TestBroadcasterMetricsSubscribersAndDrops(t *testing.T) {
+	reg := metrics.NewRegistry()
+	b := NewBroadcaster(1)
+	b.SetMetrics(reg)
+
+	_, unsubscribe1 := b.Subscribe("org-1")
+	_, _ = b.Subscribe("org-2")
+
+	rendered := reg.Render()
+	if !strings.Contains(rendered, `undolog_proxy_sse_subscribers{org="org-1"} 1`) {
+		t.Errorf("expected one org-1 subscriber, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `undolog_proxy_sse_subscribers{org="org-2"} 1`) {
+		t.Errorf("expected one org-2 subscriber, got:\n%s", rendered)
+	}
+
+	// A buffer of 1 drops the second event and should record the drop.
+	b.Emit(Event{Type: EventEffectCommitted, OrgID: "org-1", SessionID: "s-1"})
+	b.Emit(Event{Type: EventEffectCommitted, OrgID: "org-1", SessionID: "s-2"})
+	rendered = reg.Render()
+	if !strings.Contains(rendered, `undolog_proxy_sse_events_dropped_total{org="org-1"} 1`) {
+		t.Errorf("expected one dropped event, got:\n%s", rendered)
+	}
+
+	unsubscribe1()
+	rendered = reg.Render()
+	if !strings.Contains(rendered, `undolog_proxy_sse_subscribers{org="org-1"} 0`) {
+		t.Errorf("expected org-1 gauge back to zero, got:\n%s", rendered)
 	}
 }
