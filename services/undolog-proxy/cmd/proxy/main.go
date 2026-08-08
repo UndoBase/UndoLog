@@ -1,7 +1,9 @@
 // Package main starts the undolog-proxy HTTP service.
 //
-// It loads proxy configuration, connects to the Rust engine, builds the
-// interception server, and exits cleanly on termination signals.
+// It loads proxy configuration, builds the interception server, and exits
+// cleanly on termination signals. The engine connection is established lazily
+// by the first RPC and reconnects automatically, so the engine does not need to
+// be running when the proxy starts.
 package main
 
 import (
@@ -10,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"undolog-proxy/internal/engine"
 	"undolog-proxy/internal/metrics"
@@ -43,15 +44,6 @@ func run() error {
 	}, logger)
 	engineClient.SetMetrics(registry)
 	defer func() { _ = engineClient.Close() }()
-
-	connectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := engineClient.Connect(connectCtx); err != nil {
-		return err
-	}
-
-	transport := engine.NewGRPCTransport(engineClient.Conn())
-	engineClient.SetTransport(transport)
 
 	toolExecutor, err := proxy.NewHTTPToolExecutor(cfg.UpstreamToolURL, cfg.RequestTimeout)
 	if err != nil {

@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -114,12 +116,131 @@ func TestClientDelegatesToTransport(t *testing.T) {
 	}
 }
 
-// TestClientWithoutTransportFailsCleanly verifies the missing transport error path.
+// TestClientWithoutTransportFailsCleanly verifies the missing transport error
+// path: a client built without a transport factory returns the sentinel error
+// instead of panicking or dialing into the void.
 func TestClientWithoutTransportFailsCleanly(t *testing.T) {
-	client := NewClient("ignored", RetryConfig{}, nil)
+	client := NewClientWithTransport("ignored", RetryConfig{}, nil, nil)
 	_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
 	if !errors.Is(err, protocol.ErrEngineTransportNotConfigured) {
 		t.Fatalf("expected transport not configured error, got %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("close should be a no-op without a connection, got %v", err)
+	}
+}
+
+// TestClientDialsLazily verifies the engine connection is created on the first
+// RPC, not at construction, and that a failed dial is retried on the next RPC
+// rather than cached. The injected dialer only ever fails, so every Intercept
+// pays one dial attempt and the call surfaces the dial error.
+func TestClientDialsLazily(t *testing.T) {
+	calls := 0
+	client := NewClient("127.0.0.1:1", RetryConfig{}, nil)
+	client.dial = func(_ context.Context, address string) (*grpc.ClientConn, error) {
+		calls++
+		return nil, errors.New("dial failed")
+	}
+	client.mu.Lock()
+	if client.conn != nil {
+		client.mu.Unlock()
+		t.Fatal("no connection should exist before the first RPC")
+	}
+	client.mu.Unlock()
+
+	if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); err == nil {
+		t.Fatal("expected the first intercept to fail while the engine is down")
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly one dial for the first RPC, got %d", calls)
+	}
+	if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); err == nil {
+		t.Fatal("expected the second intercept to fail while the engine is down")
+	}
+	if calls != 2 {
+		t.Fatalf("expected a fresh dial attempt for the second RPC, got %d", calls)
+	}
+}
+
+// TestClientCarriesChannelThroughConnectionFailure verifies a connection-level
+// RPC failure surfaces the error to the caller and the client keeps the same
+// channel (it does not spin up a fresh connection per failure, which would leak
+// channels during an engine outage). The actual reconnection is exercised end
+// to end by the restart integration test in client_reconnect_test.go.
+func TestClientCarriesChannelThroughConnectionFailure(t *testing.T) {
+	channel, err := grpc.NewClient(
+		"127.0.0.1:1",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer func() { _ = channel.Close() }()
+
+	mt := &mockTransport{interceptErr: status.Error(codes.Unavailable, "engine restarting")}
+	client := NewClientWithTransport("127.0.0.1:1", RetryConfig{}, mt, nil)
+	client.mu.Lock()
+	client.conn = channel
+	client.mu.Unlock()
+
+	if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("expected the Unavailable outage to surface, got %v", err)
+	}
+
+	client.mu.Lock()
+	kept := client.conn
+	client.mu.Unlock()
+	if kept != channel {
+		t.Fatal("the client must keep its channel across a failed RPC")
+	}
+}
+
+// TestIsConnectionLossClassifiesCodes verifies which error codes signal a
+// transport loss (prompting a backoff reset) versus application-level results
+// that must not.
+func TestIsConnectionLossClassifiesCodes(t *testing.T) {
+	cases := []struct {
+		code codes.Code
+		want bool
+	}{
+		{code: codes.Unavailable, want: true},
+		{code: codes.Unknown, want: true},
+		{code: codes.Aborted, want: false},
+		{code: codes.DeadlineExceeded, want: false},
+		{code: codes.Internal, want: false},
+		{code: codes.InvalidArgument, want: false},
+		{code: codes.OK, want: false},
+	}
+	for _, tc := range cases {
+		got := isConnectionLoss(status.Error(tc.code, "classify me"))
+		if got != tc.want {
+			t.Errorf("isConnectionLoss(%s) = %v, want %v", tc.code, got, tc.want)
+		}
+	}
+}
+
+// TestClientClosedDoesNotResurrect verifies a closed client fails RPCs with
+// ErrClientClosed and never dials again, so a late reconciliation tick after
+// shutdown cannot reopen the connection.
+func TestClientClosedDoesNotResurrect(t *testing.T) {
+	calls := 0
+	client := NewClient("127.0.0.1:1", RetryConfig{}, nil)
+	client.dial = func(_ context.Context, _ string) (*grpc.ClientConn, error) {
+		calls++
+		return nil, errors.New("dial failed")
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); !errors.Is(err, protocol.ErrEngineClientClosed) {
+		t.Fatalf("expected ErrEngineClientClosed after Close, got %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("a closed client must not dial, got %d dials", calls)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close must be idempotent, got %v", err)
 	}
 }
 

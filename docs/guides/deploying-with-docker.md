@@ -156,7 +156,7 @@ Expected response:
 | Symptom | Cause | Fix |
 |---|---|---|
 | `engine` exits immediately | `DATABASE_URL` missing or wrong | Verify `.env` contains the correct connection string |
-| `proxy` exits with `connection refused` | Engine not ready | Add `depends_on: engine: condition: service_started` |
+| `proxy` logs `connection refused` | Engine not yet ready | Normal during startup: the proxy connects lazily on the first RPC and reconnects automatically after the engine (re)starts, so it recovers without a proxy restart |
 | `postgres` fails to start | Port 5432 in use | Change `ports: "5433:5432"` in compose file |
 | Dashboard shows blank page | SSE or proxy URL wrong | Check `NEXT_PUBLIC_PROXY_URL` in compose environment |
 | `docker compose build` fails | Missing submodules or Dockerfiles | Run from repository root; verify `infra/` directory |

@@ -56,7 +56,14 @@ services:
       UNDOLOG_LOG_LEVEL: debug
     ports:
       - "8080:8080"
+    restart: unless-stopped
     depends_on:
+      # The engine image is distroless, so it cannot host a compose
+      # healthcheck, and its HTTP /health on 9090 answers on any path before
+      # the gRPC socket is ready. Ordering by service_started is therefore the
+      # correct contract: the proxy keeps serving while its engine connection is
+      # created lazily on the first RPC and reconnects automatically after the
+      # engine (re)starts.
       engine:
         condition: service_started
 
