@@ -91,6 +91,8 @@ func TestLoadConfigDefaultsAndAPIKeys(t *testing.T) {
 	t.Setenv("UNDOLOG_PROXY_ENGINE_GRPC_ADDR", "engine:50051")
 	t.Setenv("UNDOLOG_PROXY_API_KEYS", "k1=o1,k2=o2")
 	t.Setenv("UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS", "9")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS", "5")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS", "250")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -104,6 +106,12 @@ func TestLoadConfigDefaultsAndAPIKeys(t *testing.T) {
 	}
 	if cfg.RequestTimeout != 9*time.Second {
 		t.Fatalf("unexpected request timeout: %s", cfg.RequestTimeout)
+	}
+	if cfg.EngineRetryMaxAttempts != 5 {
+		t.Fatalf("unexpected engine retry attempts: %d", cfg.EngineRetryMaxAttempts)
+	}
+	if cfg.EngineRetryBackoff != 250*time.Millisecond {
+		t.Fatalf("unexpected engine retry backoff: %s", cfg.EngineRetryBackoff)
 	}
 }
 
@@ -451,5 +459,170 @@ func TestServerReconcilePopulatesApprovals(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].ID != "ap-1" {
 		t.Fatalf("expected reconciled approval ap-1, got %+v", listed)
+	}
+}
+
+// TestHTTPToolExecutorUsesRequestTimeout verifies the executor client honors
+// the configured timeout instead of the hardcoded 30 seconds, so a lower
+// RequestTimeout setting actually shortens upstream waits.
+func TestHTTPToolExecutorUsesRequestTimeout(t *testing.T) {
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+	}))
+	defer func() {
+		close(release)
+		slow.Close()
+	}()
+
+	executor, err := NewHTTPToolExecutor(slow.URL, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+
+	start := time.Now()
+	_, err = executor.Execute(context.Background(), protocol.ToolCall{ToolName: "search", Args: json.RawMessage(`{}`)})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected the upstream timeout to surface as an error")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("executor ignored the 50ms timeout, took %s", elapsed)
+	}
+}
+
+// TestHTTPToolExecutorDecodesStructuredToolResult verifies a non-2xx upstream
+// response carrying a ToolResult body is delivered as a result instead of a
+// transport error, so a logical tool failure does not surface as a 502.
+func TestHTTPToolExecutorDecodesStructuredToolResult(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success":false,"error":"customer not found"}`))
+	}))
+	defer upstream.Close()
+
+	executor, err := NewHTTPToolExecutor(upstream.URL, time.Second)
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), protocol.ToolCall{ToolName: "get_customer", Args: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("structured tool failure should not be a transport error: %v", err)
+	}
+	if result.Success {
+		t.Fatal("expected success:false from the 404 ToolResult body")
+	}
+	if result.Error != "customer not found" {
+		t.Fatalf("expected the upstream error text, got %q", result.Error)
+	}
+}
+
+// TestHTTPToolExecutorKeepsTransportError verifies a non-2xx upstream response
+// without a ToolResult body still surfaces as a transport error.
+func TestHTTPToolExecutorKeepsTransportError(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("upstream exploded"))
+	}))
+	defer upstream.Close()
+
+	executor, err := NewHTTPToolExecutor(upstream.URL, time.Second)
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), protocol.ToolCall{ToolName: "search", Args: json.RawMessage(`{}`)})
+	if err == nil {
+		t.Fatal("expected a transport error for a non-ToolResult 500 body")
+	}
+}
+
+// TestHandlerCommitsLogicalToolFailure verifies a structured success:false
+// result from the upstream is committed to the engine and returned to the
+// caller instead of producing a 502 tool_error.
+func TestHandlerCommitsLogicalToolFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success":false,"error":"customer not found"}`))
+	}))
+	defer upstream.Close()
+
+	executor, err := NewHTTPToolExecutor(upstream.URL, time.Second)
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+	engine := &mockEngineClient{
+		interceptResp: protocol.InterceptResponse{
+			Outcome:  protocol.InterceptExecute,
+			EffectID: "eff-1",
+		},
+	}
+	h := NewHandler(engine, executor, approval.NewStore(), sse.NewBroadcaster(8), time.Second, nil)
+
+	body := `{"session_id":"sess-1","tool_name":"get_customer","args":{"id":"u1"}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))
+	req = req.WithContext(context.WithValue(req.Context(), ctxKeyOrgID, "org-1"))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("structured failure should return 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if engine.failReq.EffectID != "" {
+		t.Fatalf("logical failure must not call Fail, got %+v", engine.failReq)
+	}
+	if engine.commitReq.EffectID != "eff-1" {
+		t.Fatalf("expected commit with effect eff-1, got %+v", engine.commitReq)
+	}
+	if engine.commitReq.Result.Success {
+		t.Fatalf("commit must carry success:false, got %+v", engine.commitReq.Result)
+	}
+	var resp struct {
+		Status string              `json:"status"`
+		Result protocol.ToolResult `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "executed" || resp.Result.Success {
+		t.Fatalf("unexpected response: status=%q result=%+v", resp.Status, resp.Result)
+	}
+}
+
+// TestHandlerExecuteFailureCallsFailAndReports502 verifies a genuine transport
+// error from the upstream still calls Fail and returns a 502 tool_error.
+func TestHandlerExecuteFailureCallsFailAndReports502(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("upstream exploded"))
+	}))
+	defer upstream.Close()
+
+	executor, err := NewHTTPToolExecutor(upstream.URL, time.Second)
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+	engine := &mockEngineClient{
+		interceptResp: protocol.InterceptResponse{
+			Outcome:  protocol.InterceptExecute,
+			EffectID: "eff-1",
+		},
+	}
+	h := NewHandler(engine, executor, approval.NewStore(), sse.NewBroadcaster(8), time.Second, nil)
+
+	body := `{"session_id":"sess-1","tool_name":"search","args":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))
+	req = req.WithContext(context.WithValue(req.Context(), ctxKeyOrgID, "org-1"))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("transport failure must return 502, got %d", rec.Code)
+	}
+	if engine.failReq.EffectID != "eff-1" {
+		t.Fatalf("expected Fail with effect eff-1, got %+v", engine.failReq)
 	}
 }

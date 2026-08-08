@@ -41,18 +41,31 @@ type HTTPToolExecutor struct {
 	client  *http.Client
 }
 
-// NewHTTPToolExecutor constructs an HTTP-based tool executor for the given endpoint.
-func NewHTTPToolExecutor(baseURL string) (*HTTPToolExecutor, error) {
+// NewHTTPToolExecutor constructs an HTTP-based tool executor for the given
+// endpoint. The client timeout mirrors the configured request timeout so a
+// lower RequestTimeout setting shortens upstream waits instead of always
+// waiting the hardcoded 30 seconds.
+func NewHTTPToolExecutor(baseURL string, timeout time.Duration) (*HTTPToolExecutor, error) {
 	if baseURL == "" {
 		return nil, ErrToolExecutorNotConfigured
 	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	return &HTTPToolExecutor{
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: 30 * time.Second},
+		client:  &http.Client{Timeout: timeout},
 	}, nil
 }
 
 // Execute posts the tool call to the upstream endpoint and decodes the result.
+//
+// A 4xx or 5xx upstream response is decoded as a ToolResult when the body
+// looks like one, so a logical tool failure (for example the mock tool server's
+// 404 with a {"success": false, "error": "customer not found"} body) flows
+// through as a result instead of surfacing as a transport error and triggering
+// Fail. Bodies that are not a ToolResult, including an empty body, still
+// surface as a transport error.
 func (e *HTTPToolExecutor) Execute(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 	if e == nil {
 		return protocol.ToolResult{}, ErrToolExecutorNotConfigured
@@ -79,6 +92,12 @@ func (e *HTTPToolExecutor) Execute(ctx context.Context, call protocol.ToolCall) 
 		return protocol.ToolResult{}, err
 	}
 	if resp.StatusCode >= 400 {
+		if isToolResultBody(payload) {
+			var result protocol.ToolResult
+			if err := json.Unmarshal(payload, &result); err == nil {
+				return result, nil
+			}
+		}
 		if len(payload) == 0 {
 			return protocol.ToolResult{}, errors.New(resp.Status)
 		}
@@ -92,6 +111,27 @@ func (e *HTTPToolExecutor) Execute(ctx context.Context, call protocol.ToolCall) 
 		}
 	}
 	return result, nil
+}
+
+// isToolResultBody reports whether a non-2xx upstream payload looks like a
+// serialized protocol.ToolResult rather than an arbitrary error document. The
+// ToolResult JSON contract always carries at least one of the success, output,
+// or error keys, so their presence distinguishes a structured tool result from
+// a proxy error page or a plain-text status line.
+func isToolResultBody(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &keys); err != nil {
+		return false
+	}
+	for _, key := range []string{"success", "output", "error"} {
+		if _, ok := keys[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // Handler intercepts tool calls, routes them through the engine, and emits SSE events.

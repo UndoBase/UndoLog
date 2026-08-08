@@ -35,8 +35,8 @@ func run() error {
 	}
 
 	engineClient := engine.NewClient(cfg.EngineGRPCAddr, engine.RetryConfig{
-		MaxAttempts: 3,
-		Backoff:     100 * time.Millisecond,
+		MaxAttempts: cfg.EngineRetryMaxAttempts,
+		Backoff:     cfg.EngineRetryBackoff,
 	}, logger)
 	defer func() { _ = engineClient.Close() }()
 
@@ -49,7 +49,7 @@ func run() error {
 	transport := engine.NewGRPCTransport(engineClient.Conn())
 	engineClient.SetTransport(transport)
 
-	toolExecutor, err := proxy.NewHTTPToolExecutor(cfg.UpstreamToolURL)
+	toolExecutor, err := proxy.NewHTTPToolExecutor(cfg.UpstreamToolURL, cfg.RequestTimeout)
 	if err != nil {
 		return err
 	}

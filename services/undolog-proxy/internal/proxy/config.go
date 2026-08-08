@@ -28,6 +28,12 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	// RequestTimeout limits tool execution and engine RPC calls.
 	RequestTimeout time.Duration
+	// EngineRetryMaxAttempts is the maximum number of attempts for the engine
+	// connection and for transient Commit/Fail RPC failures.
+	EngineRetryMaxAttempts int
+	// EngineRetryBackoff is the base delay (scaled per attempt) between engine
+	// connection and Commit/Fail retries.
+	EngineRetryBackoff time.Duration
 	// DashboardEventBufSize is the per-organization SSE channel buffer size.
 	DashboardEventBufSize int
 	// ApprovalReconcileInterval is how often the proxy re-syncs its approval
@@ -54,6 +60,8 @@ func LoadConfig() (Config, error) {
 		WriteTimeout:              durationEnv("UNDOLOG_PROXY_WRITE_TIMEOUT_SECS", 15*time.Second),
 		ShutdownTimeout:           durationEnv("UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS", 30*time.Second),
 		RequestTimeout:            durationEnv("UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS", 30*time.Second),
+		EngineRetryMaxAttempts:    intEnv("UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS", 3),
+		EngineRetryBackoff:        millisEnv("UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS", 100*time.Millisecond),
 		DashboardEventBufSize:     intEnv("UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE", 128),
 		ApprovalReconcileInterval: durationEnv("UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS", 60*time.Second),
 		ApprovalRetention:         durationEnv("UNDOLOG_PROXY_APPROVAL_RETENTION_SECS", 24*time.Hour),
@@ -89,6 +97,18 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return time.Duration(secs) * time.Second
+}
+
+func millisEnv(key string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms < 0 {
+		return fallback
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 func intEnv(key string, fallback int) int {
