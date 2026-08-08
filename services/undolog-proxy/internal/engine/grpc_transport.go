@@ -1,7 +1,7 @@
 // Package engine provides the gRPC transport that connects the proxy to the Rust engine.
 //
-// This file implements the “Transport“ interface using the generated proto stubs
-// from “proto/undolog.proto“ (via “protoc-gen-go-grpc“).
+// This file implements the `Transport` interface using the generated proto stubs
+// from `proto/undolog.proto` (via `protoc-gen-go-grpc`).
 package engine
 
 import (
@@ -9,13 +9,52 @@ import (
 	"encoding/json"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	"undolog-proxy/internal/engine/pb"
 	"undolog-proxy/internal/protocol"
 )
 
-// GRPCTransport adapts the generated “pb.UndoLogEngineClient“ to the
-// “protocol.EngineClient“ interface expected by the proxy handler.
+// tracingContextKey carries a proxy request ID through the call context so the
+// gRPC transport can attach it to outgoing engine requests.
+type tracingContextKey struct{}
+
+// WithRequestID attaches a request ID to the context for propagation into the
+// engine gRPC metadata. The engine and proxy logs then share the same
+// X-Request-Id value for a given tool call.
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	if requestID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, tracingContextKey{}, requestID)
+}
+
+func requestIDFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(tracingContextKey{}).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// RequestIDFrom returns the request ID attached to the context by WithRequestID,
+// or "" when no ID is present. It lets callers assert propagation in tests.
+func RequestIDFrom(ctx context.Context) string {
+	return requestIDFromContext(ctx)
+}
+
+// withTracingMetadata appends the outgoing x-request-id metadata pair when the
+// context carries a proxy request ID. Calls without an ID (for example the
+// startup approval reconciliation) are left untouched.
+func withTracingMetadata(ctx context.Context) context.Context {
+	id := requestIDFromContext(ctx)
+	if id == "" {
+		return ctx
+	}
+	return metadata.AppendToOutgoingContext(ctx, "x-request-id", id)
+}
+
+// GRPCTransport adapts the generated `pb.UndoLogEngineClient` to the
+// `protocol.EngineClient` interface expected by the proxy handler.
 //
 // Usage:
 //
@@ -35,6 +74,7 @@ func NewGRPCTransport(cc grpc.ClientConnInterface) *GRPCTransport {
 
 // Intercept sends the tool call to the Rust engine and returns the routing decision.
 func (t *GRPCTransport) Intercept(ctx context.Context, req protocol.InterceptRequest) (protocol.InterceptResponse, error) {
+	ctx = withTracingMetadata(ctx)
 	pbReq := &pb.InterceptRequest{
 		ToolCall: toolCallToProto(req.ToolCall),
 	}
@@ -49,6 +89,7 @@ func (t *GRPCTransport) Intercept(ctx context.Context, req protocol.InterceptReq
 
 // Commit reports a successful execution to the engine.
 func (t *GRPCTransport) Commit(ctx context.Context, req protocol.CommitRequest) error {
+	ctx = withTracingMetadata(ctx)
 	pbReq := commitRequestToProto(req)
 	_, err := t.client.Commit(ctx, pbReq)
 	return err
@@ -56,6 +97,7 @@ func (t *GRPCTransport) Commit(ctx context.Context, req protocol.CommitRequest) 
 
 // Fail reports a failed execution to the engine.
 func (t *GRPCTransport) Fail(ctx context.Context, req protocol.FailRequest) error {
+	ctx = withTracingMetadata(ctx)
 	pbReq := failRequestToProto(req)
 	_, err := t.client.Fail(ctx, pbReq)
 	return err
@@ -63,6 +105,7 @@ func (t *GRPCTransport) Fail(ctx context.Context, req protocol.FailRequest) erro
 
 // Approve resumes a pending approval request and returns execution data.
 func (t *GRPCTransport) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
+	ctx = withTracingMetadata(ctx)
 	pbReq := approveRequestToProto(req)
 	pbResp, err := t.client.Approve(ctx, pbReq)
 	if err != nil {
@@ -73,6 +116,7 @@ func (t *GRPCTransport) Approve(ctx context.Context, req protocol.ApproveRequest
 
 // Reject rejects a pending approval request.
 func (t *GRPCTransport) Reject(ctx context.Context, req protocol.RejectRequest) error {
+	ctx = withTracingMetadata(ctx)
 	pbReq := rejectRequestToProto(req)
 	_, err := t.client.Reject(ctx, pbReq)
 	return err
@@ -80,6 +124,7 @@ func (t *GRPCTransport) Reject(ctx context.Context, req protocol.RejectRequest) 
 
 // ListPendingApprovals returns the engine's unresolved approvals for one org.
 func (t *GRPCTransport) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
+	ctx = withTracingMetadata(ctx)
 	pbReq := &pb.ListPendingApprovalsRequest{OrgId: req.OrgID}
 	pbResp, err := t.client.ListPendingApprovals(ctx, pbReq)
 	if err != nil {

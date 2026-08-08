@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"undolog-proxy/internal/approval"
+	"undolog-proxy/internal/engine"
+	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
 )
@@ -39,6 +41,7 @@ func (f ToolExecutorFunc) Execute(ctx context.Context, call protocol.ToolCall) (
 type HTTPToolExecutor struct {
 	baseURL string
 	client  *http.Client
+	metrics *metrics.Registry
 }
 
 // NewHTTPToolExecutor constructs an HTTP-based tool executor for the given
@@ -58,6 +61,12 @@ func NewHTTPToolExecutor(baseURL string, timeout time.Duration) (*HTTPToolExecut
 	}, nil
 }
 
+// SetMetrics wires the registry so upstream execution latency and failures are
+// exposed on /metrics. A nil registry disables instrumentation.
+func (e *HTTPToolExecutor) SetMetrics(reg *metrics.Registry) {
+	e.metrics = reg
+}
+
 // Execute posts the tool call to the upstream endpoint and decodes the result.
 //
 // A 4xx or 5xx upstream response is decoded as a ToolResult when the body
@@ -66,7 +75,9 @@ func NewHTTPToolExecutor(baseURL string, timeout time.Duration) (*HTTPToolExecut
 // through as a result instead of surfacing as a transport error and triggering
 // Fail. Bodies that are not a ToolResult, including an empty body, still
 // surface as a transport error.
-func (e *HTTPToolExecutor) Execute(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+func (e *HTTPToolExecutor) Execute(ctx context.Context, call protocol.ToolCall) (result protocol.ToolResult, err error) {
+	start := time.Now()
+	defer func() { e.observe(start, err) }()
 	if e == nil {
 		return protocol.ToolResult{}, ErrToolExecutorNotConfigured
 	}
@@ -104,13 +115,31 @@ func (e *HTTPToolExecutor) Execute(ctx context.Context, call protocol.ToolCall) 
 		return protocol.ToolResult{}, errors.New(string(payload))
 	}
 
-	var result protocol.ToolResult
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &result); err != nil {
 			return protocol.ToolResult{}, err
 		}
 	}
 	return result, nil
+}
+
+// Metric names exposed by the tool executor.
+const (
+	executorDurationMetric = "undolog_proxy_executor_duration_seconds"
+)
+
+// observe publishes upstream execution duration to the shared registry. The
+// result label distinguishes outcome from transport error.
+func (e *HTTPToolExecutor) observe(start time.Time, err error) {
+	if e == nil || e.metrics == nil {
+		return
+	}
+	result := "success"
+	if err != nil {
+		result = "error"
+	}
+	e.metrics.Histogram(executorDurationMetric, "Upstream tool executor duration in seconds", nil, "result").
+		Observe(time.Since(start).Seconds(), result)
 }
 
 // isToolResultBody reports whether a non-2xx upstream payload looks like a
@@ -206,7 +235,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Signature:   signature,
 	}
 
-	ctx := r.Context()
+	ctx := engine.WithRequestID(r.Context(), requestIDFrom(r.Context()))
 	if h.requestTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, h.requestTimeout)

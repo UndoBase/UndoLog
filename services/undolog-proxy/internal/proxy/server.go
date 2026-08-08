@@ -7,12 +7,14 @@ package proxy
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"undolog-proxy/internal/approval"
+	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
 )
@@ -33,7 +35,9 @@ type Server struct {
 }
 
 // NewServer builds the full HTTP server stack for the proxy service.
-func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, logger *slog.Logger) (*Server, error) {
+// The registry publishes service metrics on /metrics; pass nil to use an
+// empty one.
+func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, registry *metrics.Registry, logger *slog.Logger) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -42,6 +46,9 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, logg
 	}
 	if tool == nil {
 		return nil, errors.New("tool executor is required")
+	}
+	if registry == nil {
+		registry = metrics.NewRegistry()
 	}
 
 	broadcaster := sse.NewBroadcaster(cfg.DashboardEventBufSize)
@@ -52,6 +59,13 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, logg
 	approvalHandler := approval.NewHandler(approvalStore, engine, executeApproved, broadcaster, cfg.RequestTimeout, logger)
 	mw := NewMiddlewareStack(logger, cfg.TrustedAPIKeys)
 	handler := NewHandler(engine, tool, approvalStore, broadcaster, cfg.RequestTimeout, logger)
+
+	broadcaster.SetMetrics(registry)
+	approvalHandler.SetMetrics(registry)
+	mw.SetMetrics(registry)
+	if metered, ok := tool.(interface{ SetMetrics(*metrics.Registry) }); ok {
+		metered.SetMetrics(registry)
+	}
 
 	protected := http.NewServeMux()
 	protected.Handle("/mcp/tool_call", handler)
@@ -78,12 +92,17 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, logg
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		// Liveness only: do not echo configuration values (such as the engine
+		// address or upstream URL) to unauthenticated callers. Readiness is
+		// separate from this endpoint by design.
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status":       "ok",
-			"service":      "undolog-proxy",
-			"engine_addr":  cfg.EngineGRPCAddr,
-			"upstream_url": cfg.UpstreamToolURL,
+			"status":  "ok",
+			"service": "undolog-proxy",
 		})
+	})
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = io.WriteString(w, registry.Render())
 	})
 	protectedChain := mw.PanicRecovery(mw.RequestID(mw.StructuredLogging(mw.Auth(protected))))
 	mux.Handle("/mcp/tool_call", protectedChain)

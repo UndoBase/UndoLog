@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 )
 
@@ -39,7 +40,27 @@ type Client struct {
 	logger    *slog.Logger
 	conn      *grpc.ClientConn
 	transport Transport
+	metrics   *metrics.Registry
 }
+
+// SetMetrics wires the registry so engine RPC latency, error counts, and retry
+// counts are exposed on /metrics. A nil registry disables instrumentation.
+func (c *Client) SetMetrics(reg *metrics.Registry) {
+	c.metrics = reg
+}
+
+// RPC method labels used in engine RPC metrics.
+const (
+	rpcMethodIntercept   = "Intercept"
+	rpcMethodCommit      = "Commit"
+	rpcMethodFail        = "Fail"
+	rpcMethodApprove     = "Approve"
+	rpcMethodReject      = "Reject"
+	rpcMethodListPending = "ListPendingApprovals"
+	rpcDurationMetric    = "undolog_proxy_engine_rpc_duration_seconds"
+	rpcErrorsMetric      = "undolog_proxy_engine_rpc_errors_total"
+	rpcRetriesMetric     = "undolog_proxy_engine_rpc_retries_total"
+)
 
 // NewClient constructs a client for the given engine address.
 func NewClient(address string, retry RetryConfig, logger *slog.Logger) *Client {
@@ -118,9 +139,12 @@ func (c *Client) SetTransport(t Transport) {
 
 // Intercept asks the engine how the proxy should route one tool call.
 func (c *Client) Intercept(ctx context.Context, req protocol.InterceptRequest) (protocol.InterceptResponse, error) {
-	return call(c, func(t Transport) (protocol.InterceptResponse, error) {
+	start := time.Now()
+	resp, err := call(c, func(t Transport) (protocol.InterceptResponse, error) {
 		return t.Intercept(ctx, req)
 	})
+	c.observeRPC(rpcMethodIntercept, start, err)
+	return resp, err
 }
 
 // Commit reports a successful execution to the engine.
@@ -130,9 +154,12 @@ func (c *Client) Intercept(ctx context.Context, req protocol.InterceptRequest) (
 // effect is a no-op, never a double-apply. A retry cannot duplicate the tool
 // call, which already ran before this RPC.
 func (c *Client) Commit(ctx context.Context, req protocol.CommitRequest) error {
-	return c.retryVoid(ctx, func(t Transport) error {
+	start := time.Now()
+	err := c.retryVoid(ctx, rpcMethodCommit, func(t Transport) error {
 		return t.Commit(ctx, req)
 	})
+	c.observeRPC(rpcMethodCommit, start, err)
+	return err
 }
 
 // Fail reports a failed execution to the engine.
@@ -141,30 +168,42 @@ func (c *Client) Commit(ctx context.Context, req protocol.CommitRequest) error {
 // engine's executing|approved -> pending transition is idempotent, and the
 // effect is already in the state the proxy reports.
 func (c *Client) Fail(ctx context.Context, req protocol.FailRequest) error {
-	return c.retryVoid(ctx, func(t Transport) error {
+	start := time.Now()
+	err := c.retryVoid(ctx, rpcMethodFail, func(t Transport) error {
 		return t.Fail(ctx, req)
 	})
+	c.observeRPC(rpcMethodFail, start, err)
+	return err
 }
 
 // Approve resumes an approval request in the engine and returns execution data.
 func (c *Client) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
-	return call(c, func(t Transport) (protocol.ApproveResponse, error) {
+	start := time.Now()
+	resp, err := call(c, func(t Transport) (protocol.ApproveResponse, error) {
 		return t.Approve(ctx, req)
 	})
+	c.observeRPC(rpcMethodApprove, start, err)
+	return resp, err
 }
 
 // Reject rejects an approval request in the engine.
 func (c *Client) Reject(ctx context.Context, req protocol.RejectRequest) error {
-	return c.callVoid(func(t Transport) error {
+	start := time.Now()
+	err := c.callVoid(func(t Transport) error {
 		return t.Reject(ctx, req)
 	})
+	c.observeRPC(rpcMethodReject, start, err)
+	return err
 }
 
 // ListPendingApprovals returns the engine's unresolved approvals for one org.
 func (c *Client) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
-	return call(c, func(t Transport) (protocol.ListPendingApprovalsResponse, error) {
+	start := time.Now()
+	resp, err := call(c, func(t Transport) (protocol.ListPendingApprovalsResponse, error) {
 		return t.ListPendingApprovals(ctx, req)
 	})
+	c.observeRPC(rpcMethodListPending, start, err)
+	return resp, err
 }
 
 // call checks transport configuration, then delegates to fn.
@@ -188,7 +227,7 @@ func (c *Client) callVoid(fn func(Transport) error) error {
 // backoff. Only Commit and Fail use it: the engine's state-machine transitions
 // make both idempotent, so a retried call cannot double-apply. Intercept,
 // Approve, Reject, and ListPendingApprovals are intentionally not retried.
-func (c *Client) retryVoid(ctx context.Context, fn func(Transport) error) error {
+func (c *Client) retryVoid(ctx context.Context, method string, fn func(Transport) error) error {
 	if c.transport == nil {
 		return protocol.ErrEngineTransportNotConfigured
 	}
@@ -201,7 +240,8 @@ func (c *Client) retryVoid(ctx context.Context, fn func(Transport) error) error 
 		if !isRetryableRPCError(last) || attempt == c.retry.MaxAttempts {
 			return last
 		}
-		c.logger.Warn("engine RPC transient failure, retrying", "attempt", attempt, "max", c.retry.MaxAttempts, "error", last)
+		c.observeRetry(method)
+		c.logger.Warn("engine RPC transient failure, retrying", "method", method, "attempt", attempt, "max", c.retry.MaxAttempts, "error", last)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -209,6 +249,26 @@ func (c *Client) retryVoid(ctx context.Context, fn func(Transport) error) error 
 		}
 	}
 	return last
+}
+
+// observeRPC records one engine RPC call: a duration histogram always, and an
+// error counter when the call failed.
+func (c *Client) observeRPC(method string, start time.Time, err error) {
+	if c.metrics == nil {
+		return
+	}
+	c.metrics.Histogram(rpcDurationMetric, "Engine RPC call duration in seconds", nil, "method").Observe(time.Since(start).Seconds(), method)
+	if err != nil {
+		c.metrics.Counter(rpcErrorsMetric, "Engine RPC calls that returned an error", "method").Add(1, method)
+	}
+}
+
+// observeRetry increments the retry counter for one re-executed engine call.
+func (c *Client) observeRetry(method string) {
+	if c.metrics == nil {
+		return
+	}
+	c.metrics.Counter(rpcRetriesMetric, "Engine RPC calls that were retried after a transient failure", "method").Add(1, method)
 }
 
 // isRetryableRPCError reports whether a Commit or Fail failure is worth

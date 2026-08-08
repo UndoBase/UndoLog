@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Go proxy: the tool executor honors ``UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS``, and
   a ``4xx`` or ``5xx`` upstream response carrying a ``ToolResult`` body returns
   ``success: false`` to the caller instead of a 502 ``tool_error``.
+- Go proxy: a ``/metrics`` endpoint (Prometheus text format) exposes HTTP,
+  engine RPC, SSE, approval, and executor metrics, and ``/health`` stops
+  echoing configuration values.
+- Go proxy: request IDs are forwarded to the engine as ``x-request-id`` gRPC
+  metadata for cross-service log correlation.
 - Go proxy: ``GET /events`` now streams real SSE frames to the dashboard. The
   middleware chain preserves ``http.Flusher`` (the endpoint previously returned
   ``streaming unsupported``), the stream write deadline is cleared so long-lived

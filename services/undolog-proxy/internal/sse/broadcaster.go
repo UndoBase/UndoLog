@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"undolog-proxy/internal/metrics"
 )
 
 // EventType identifies a proxy lifecycle event in the dashboard stream.
@@ -61,6 +63,19 @@ type Broadcaster struct {
 	mu         sync.RWMutex
 	subs       map[string]map[uint64]chan Event
 	nextID     atomic.Uint64
+	metrics    *metrics.Registry
+}
+
+// Metric names published by the broadcaster.
+const (
+	sseSubscribersMetric   = "undolog_proxy_sse_subscribers"
+	sseEventsDroppedMetric = "undolog_proxy_sse_events_dropped_total"
+)
+
+// SetMetrics wires the registry so subscriber counts and dropped events are
+// exposed on /metrics. A nil registry disables instrumentation.
+func (b *Broadcaster) SetMetrics(reg *metrics.Registry) {
+	b.metrics = reg
 }
 
 // NewBroadcaster creates a broadcaster with the given channel buffer size.
@@ -88,12 +103,34 @@ func (b *Broadcaster) Emit(evt Event) {
 	defer b.mu.RUnlock()
 
 	// Drop events rather than blocking the proxy hot path.
+	dropped := 0
 	for _, ch := range b.subs[evt.OrgID] {
 		select {
 		case ch <- evt:
 		default:
+			dropped++
 		}
 	}
+	if dropped > 0 {
+		b.setDroppedMetric(evt.OrgID, dropped)
+	}
+}
+
+// setDroppedMetric records a dropped-event count for one org.
+func (b *Broadcaster) setDroppedMetric(org string, n int) {
+	if b.metrics == nil {
+		return
+	}
+	b.metrics.Counter(sseEventsDroppedMetric, "SSE events dropped because a subscriber channel was full", "org").
+		Add(float64(n), org)
+}
+
+// recordSubscriberMetric publishes the active subscriber count for one org.
+func (b *Broadcaster) recordSubscriberMetric(org string, count int) {
+	if b.metrics == nil {
+		return
+	}
+	b.metrics.Gauge(sseSubscribersMetric, "Active SSE dashboard subscribers", "org").Set(float64(count), org)
 }
 
 // Subscribe registers one org-scoped SSE subscriber and returns an unsubscribe function.
@@ -106,6 +143,7 @@ func (b *Broadcaster) Subscribe(orgID string) (<-chan Event, func()) {
 		b.subs[orgID] = make(map[uint64]chan Event)
 	}
 	b.subs[orgID][id] = ch
+	b.recordSubscriberMetric(orgID, len(b.subs[orgID]))
 	b.mu.Unlock()
 
 	unsubscribe := func() {
@@ -115,6 +153,7 @@ func (b *Broadcaster) Subscribe(orgID string) (<-chan Event, func()) {
 				delete(orgSubs, id)
 				close(sub)
 			}
+			b.recordSubscriberMetric(orgID, len(orgSubs))
 			if len(orgSubs) == 0 {
 				delete(b.subs, orgID)
 			}
@@ -208,6 +247,7 @@ func (b *Broadcaster) Close() {
 			close(ch)
 			delete(subs, id)
 		}
+		b.recordSubscriberMetric(orgID, 0)
 		delete(b.subs, orgID)
 	}
 }

@@ -216,11 +216,26 @@ Expected response:
 ```json
 {
   "status": "ok",
-  "service": "undolog-proxy",
-  "engine_addr": "engine:50051",
-  "upstream_url": "http://tool-server:8080/tools"
+  "service": "undolog-proxy"
 }
 ```
+
+The proxy health endpoint is a liveness probe that does not echo configuration
+values. For deeper visibility, scrape `/metrics` (Prometheus text format) from
+every proxy instance:
+
+```yaml
+scrape_configs:
+  - job_name: undolog-proxy
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["proxy:8080"]
+```
+
+The metric set covers HTTP traffic by route and status, engine RPC latency and
+errors, SSE subscriber and dropped-event counts, approval decision latency, and
+upstream tool executor latency. The metrics endpoint is unauthenticated like
+`/health`, so scope it behind a reverse-proxy rule if it must not be public.
 
 ```bash
 # Confirm TLS

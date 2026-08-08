@@ -11,10 +11,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
 )
@@ -326,5 +328,55 @@ func TestListApprovalsOrderedAndLimited(t *testing.T) {
 	}
 	if listed[0].ID != "newest" || listed[1].ID != "middle" {
 		t.Fatalf("expected newest then middle, got %s then %s", listed[0].ID, listed[1].ID)
+	}
+}
+
+// TestApprovalMetricsRecorded verifies decision outcomes and latency are
+// published through the shared registry.
+func TestApprovalMetricsRecorded(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{}
+	registry := metrics.NewRegistry()
+	handler := NewHandler(store, engine, nil, nil, 0, nil)
+	handler.SetMetrics(registry)
+
+	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
+
+	rej := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", bytes.NewBufferString(`{"actor":"alice"}`))
+	rej.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.RejectApproval(w, rej)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reject status: %d", w.Code)
+	}
+
+	// A second decision on the same record must hit the conflict path.
+	rej2 := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", bytes.NewBufferString(`{}`))
+	rej2.Header.Set("X-Org-Id", "org-1")
+	w2 := httptest.NewRecorder()
+	handler.RejectApproval(w2, rej2)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("expected 409 on double decision, got %d", w2.Code)
+	}
+
+	// A decision that never reaches the state machine must not add a latency
+	// sample, so the duration histogram only covers genuine decision attempts.
+	nf := httptest.NewRequest(http.MethodPost, "/approvals/does-not-exist/approve", bytes.NewBufferString(`{}`))
+	nf.Header.Set("X-Org-Id", "org-1")
+	nfw := httptest.NewRecorder()
+	handler.ApproveApproval(nfw, nf)
+	if nfw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on unknown approval, got %d", nfw.Code)
+	}
+
+	rendered := registry.Render()
+	for _, want := range []string{
+		`undolog_proxy_approval_decisions_total{action="reject",result="applied"} 1`,
+		`undolog_proxy_approval_decisions_total{action="reject",result="conflict"} 1`,
+		`undolog_proxy_approval_decision_duration_seconds_count{action="reject"} 2`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("expected metrics to contain %q, got:\n%s", want, rendered)
+		}
 	}
 }

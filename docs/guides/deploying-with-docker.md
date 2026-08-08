@@ -83,7 +83,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
 Expected proxy health response:
 
 ```json
-{"status":"ok","service":"undolog-proxy","engine_addr":"engine:50051","upstream_url":"http://tool-server:8080/tools"}
+{"status":"ok","service":"undolog-proxy"}
 ```
 
 ### 6. View logs
