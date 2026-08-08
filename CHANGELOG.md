@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   atomic compare-and-swap, the acting user is recorded in the audit trail, 
   a failed post-approval execution calls ``fail``, and lists are newest-first
   with a ``?limit=`` bound (default 100, max 500).
+- Go proxy: ``Commit`` and ``Fail`` engine RPC calls retry transient transport
+  failures with bounded backoff (``Unavailable``, ``Aborted``,
+  ``DeadlineExceeded``, ``Unknown``), so a momentary engine outage no longer
+  502s an effect the engine records once the connection recovers. Intercept,
+  Approve, and Reject are not retried. Attempts and base backoff are
+  configurable (``UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS``,
+  ``UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS``).
+- Go proxy: the tool executor honors ``UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS``, and
+  a ``4xx`` or ``5xx`` upstream response carrying a ``ToolResult`` body returns
+  ``success: false`` to the caller instead of a 502 ``tool_error``.
 - Go proxy: ``GET /events`` now streams real SSE frames to the dashboard. The
   middleware chain preserves ``http.Flusher`` (the endpoint previously returned
   ``streaming unsupported``), the stream write deadline is cleared so long-lived

@@ -11,16 +11,19 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"undolog-proxy/internal/protocol"
 )
 
-// RetryConfig controls engine connection retry behavior.
+// RetryConfig controls engine connection and Commit/Fail RPC retry behavior.
 type RetryConfig struct {
-	// MaxAttempts is the maximum number of connection attempts.
+	// MaxAttempts is the maximum number of attempts for a connection or for a
+	// retryable Commit/Fail RPC call.
 	MaxAttempts int
-	// Backoff is the base delay between retries.
+	// Backoff is the base delay between attempts.
 	Backoff time.Duration
 }
 
@@ -121,15 +124,24 @@ func (c *Client) Intercept(ctx context.Context, req protocol.InterceptRequest) (
 }
 
 // Commit reports a successful execution to the engine.
+//
+// Commit is retried on transient transport failures because the effect state
+// machine makes it idempotent: a retried commit against an already-committed
+// effect is a no-op, never a double-apply. A retry cannot duplicate the tool
+// call, which already ran before this RPC.
 func (c *Client) Commit(ctx context.Context, req protocol.CommitRequest) error {
-	return c.callVoid(func(t Transport) error {
+	return c.retryVoid(ctx, func(t Transport) error {
 		return t.Commit(ctx, req)
 	})
 }
 
 // Fail reports a failed execution to the engine.
+//
+// Fail is retried on transient failures for the same reason as Commit: the
+// engine's executing|approved -> pending transition is idempotent, and the
+// effect is already in the state the proxy reports.
 func (c *Client) Fail(ctx context.Context, req protocol.FailRequest) error {
-	return c.callVoid(func(t Transport) error {
+	return c.retryVoid(ctx, func(t Transport) error {
 		return t.Fail(ctx, req)
 	})
 }
@@ -170,4 +182,46 @@ func (c *Client) callVoid(fn func(Transport) error) error {
 		return protocol.ErrEngineTransportNotConfigured
 	}
 	return fn(c.transport)
+}
+
+// retryVoid invokes fn and retries transient transport failures with bounded
+// backoff. Only Commit and Fail use it: the engine's state-machine transitions
+// make both idempotent, so a retried call cannot double-apply. Intercept,
+// Approve, Reject, and ListPendingApprovals are intentionally not retried.
+func (c *Client) retryVoid(ctx context.Context, fn func(Transport) error) error {
+	if c.transport == nil {
+		return protocol.ErrEngineTransportNotConfigured
+	}
+	var last error
+	for attempt := 1; attempt <= c.retry.MaxAttempts; attempt++ {
+		last = fn(c.transport)
+		if last == nil {
+			return nil
+		}
+		if !isRetryableRPCError(last) || attempt == c.retry.MaxAttempts {
+			return last
+		}
+		c.logger.Warn("engine RPC transient failure, retrying", "attempt", attempt, "max", c.retry.MaxAttempts, "error", last)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(c.retry.Backoff * time.Duration(attempt)):
+		}
+	}
+	return last
+}
+
+// isRetryableRPCError reports whether a Commit or Fail failure is worth
+// retrying. Only transport-level failures qualify: an unavailable engine or a
+// response lost in transit. Deterministic errors (invalid arguments, a state
+// transition the effect already performed) are returned immediately. The
+// Unknown code covers connection-level failures that gRPC surfaces without a
+// specific status.
+func isRetryableRPCError(err error) bool {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.Aborted, codes.DeadlineExceeded, codes.Unknown:
+		return true
+	default:
+		return false
+	}
 }

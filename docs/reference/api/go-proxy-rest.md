@@ -61,6 +61,24 @@ Intercept and execute a tool call through the UndoLog engine.
 | `effect_id` | `string` | Effect log entry identifier. |
 | `result` | `object` | Upstream tool execution result. |
 
+A logical tool failure is returned as `status: "executed"` with
+`result.success: false`: when the upstream answers with a `4xx`/`5xx` HTTP
+status but a structured `ToolResult` body (as the mock tool server does), the
+proxy forwards that result to the engine instead of treating it as a transport
+error. Transport failures (unreachable upstream, non-`ToolResult` error bodies,
+timeouts) still surface as `502 tool_error`, and the effect is reported as
+failed through `Fail`.
+
+`Commit` and `Fail` are retried with bounded backoff on transient engine
+failures (for example an unavailable engine), so a momentary engine outage does
+not turn into a spurious `502 commit_failed` for an effect that the engine will
+record once the connection recovers. Intercept, Approve, and Reject are not
+retried. One residual window remains: if the engine applies a `Commit` or
+`Fail` but the response is lost in transit, a retried call hits the
+already-terminal state and the proxy reports the error even though the effect
+is recorded. Execution is still exactly-once there, because the SDK retry
+replays the cached result instead of re-running the tool.
+
 #### `200 OK`. Replayed
 
 ```json

@@ -116,7 +116,23 @@ HTTP bind address for the MCP proxy server.
 
 | Type | Default | Description |
 |------|---------|-------------|
-| `int` | `30` | Maximum seconds for tool execution and engine RPC calls. Applied as a context timeout on the interception flow. |
+| `int` | `30` | Maximum seconds for tool execution and engine RPC calls. Applied as a context timeout on the interception flow and as the upstream tool executor client timeout. |
+
+---
+
+### `UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int` | `3` | Maximum number of attempts for the engine connection bootstrap and for transient Commit/Fail RPC failures. Deterministic failures (for example an invalid state transition) are never retried. Setting this to `1` disables Commit/Fail retries. |
+
+---
+
+### `UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int` | `100` | Base delay in milliseconds between engine connection and Commit/Fail retry attempts, scaled linearly per attempt. |
 
 ---
 
@@ -210,6 +226,8 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_WRITE_TIMEOUT_SECS` | Proxy | `int` | `15` | No |
 | `UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS` | Proxy | `int` | `30` | No |
 | `UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS` | Proxy | `int` | `30` | No |
+| `UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS` | Proxy | `int` | `3` | No |
+| `UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS` | Proxy | `int` | `100` | No |
 | `UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE` | Proxy | `int` | `128` | No |
 | `UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS` | Proxy | `int` | `60` | No |
 | `UNDOLOG_PROXY_APPROVAL_RETENTION_SECS` | Proxy | `int` | `86400` | No |
