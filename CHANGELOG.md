@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   echoing configuration values.
 - Go proxy: request IDs are forwarded to the engine as ``x-request-id`` gRPC
   metadata for cross-service log correlation.
+- Go proxy: the engine gRPC connection is created lazily on the first RPC and
+  reconnects on demand, so the proxy no longer exits when the engine is down at
+  startup and recovers from engine restarts without a proxy restart. The compose
+  proxy also gains ``restart: unless-stopped``.
 - Go proxy: ``GET /events`` now streams real SSE frames to the dashboard. The
   middleware chain preserves ``http.Flusher`` (the endpoint previously returned
   ``streaming unsupported``), the stream write deadline is cleared so long-lived

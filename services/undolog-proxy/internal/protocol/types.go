@@ -150,3 +150,7 @@ type EngineClient interface {
 
 // ErrEngineTransportNotConfigured is returned when the engine client has no transport.
 var ErrEngineTransportNotConfigured = errors.New("engine transport not configured")
+
+// ErrEngineClientClosed is returned when an RPC is attempted after the engine
+// client was closed. A closed client never resurrects its connection.
+var ErrEngineClientClosed = errors.New("engine client closed")

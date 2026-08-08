@@ -124,7 +124,7 @@ HTTP bind address for the MCP proxy server.
 
 | Type | Default | Description |
 |------|---------|-------------|
-| `int` | `3` | Maximum number of attempts for the engine connection bootstrap and for transient Commit/Fail RPC failures. Deterministic failures (for example an invalid state transition) are never retried. Setting this to `1` disables Commit/Fail retries. |
+| `int` | `3` | Maximum number of attempts for transient Commit/Fail RPC failures. The engine connection itself is created lazily and reconnects automatically, so it has no retry budget. Deterministic failures (for example an invalid state transition) are never retried. Setting this to `1` disables Commit/Fail retries. |
 
 ---
 
@@ -132,7 +132,7 @@ HTTP bind address for the MCP proxy server.
 
 | Type | Default | Description |
 |------|---------|-------------|
-| `int` | `100` | Base delay in milliseconds between engine connection and Commit/Fail retry attempts, scaled linearly per attempt. |
+| `int` | `100` | Base delay in milliseconds between Commit/Fail retry attempts, scaled linearly per attempt. |
 
 ---
 

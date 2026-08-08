@@ -151,23 +151,22 @@ services:
 
 ### 6. Monitor health endpoints
 
-Set up your orchestrator to probe every 15 seconds:
+Set up your orchestrator to probe the health endpoints. Both the engine and the
+proxy images are intentionally shell-free (distroless / scratch), so a compose
+`healthcheck` cannot run `wget` or `curl` inside those containers. Probe from
+the host or the orchestrator instead, every 15 seconds:
 
-```yaml
-# Engine
-healthcheck:
-  test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/"]
-  interval: 15s
-  timeout: 3s
-  retries: 3
+```bash
+# Engine (HTTP liveness on 9090; answers on any path)
+curl -fsS -o /dev/null http://<engine-host>:9090/
 
 # Proxy
-healthcheck:
-  test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
-  interval: 15s
-  timeout: 3s
-  retries: 3
+curl -fsS http://<proxy-host>:8080/health
 ```
+
+The proxy reports `{"status":"ok","service":"undolog-proxy"}` once HTTP is up.
+Its engine connection is created lazily on the first RPC and reconnects on its
+own, so a proxying health signal does not depend on the engine being online.
 
 ### 7. Graceful shutdown
 
@@ -262,7 +261,7 @@ docker compose exec pgbouncer psql -h localhost -p 6432 -U postgres -c "SHOW POO
 | High lock contention | `UNDOLOG_LOCK_RETRY_MS` too low | Increase to 100–200ms; verify BRIN index is in place |
 | SSE dashboard disconnects | Reverse proxy buffers SSE | Set `proxy_buffering off; proxy_cache off;` for `/events` |
 | API key rejected | Key not in `UNDOLOG_PROXY_API_KEYS` | Restart proxy after changing env var; keys are loaded at startup |
-| gRPC connection reset | Engine restart | Proxy reconnects automatically with retry; check `MaxAttempts: 3` in proxy config |
+| gRPC connection reset | Engine restart | Proxy reconnects automatically: the engine connection is created lazily and self-healing, so the next RPC reaches the restarted engine. The retry config bounds Commit/Fail retries, not the connection |
 
 ## Next steps
 

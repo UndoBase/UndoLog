@@ -1,16 +1,21 @@
 // Package engine provides the gRPC client used to talk to the Rust UndoLog engine.
 //
 // The client isolates transport concerns from the proxy so tests can inject
-// fakes while production uses a retrying gRPC connection to the Rust service.
+// fakes while production connects lazily to the Rust service. The connection is
+// established on the first RPC and reconnected automatically by gRPC whenever
+// the engine restarts or is slow to become ready, so the proxy never has to
+// block on a bootstrap dial.
 package engine
 
 import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
@@ -19,10 +24,13 @@ import (
 	"undolog-proxy/internal/protocol"
 )
 
-// RetryConfig controls engine connection and Commit/Fail RPC retry behavior.
+// RetryConfig controls Commit/Fail RPC retry behavior.
+//
+// The initial connection is lazy and non-blocking, so it is not part of the
+// retry budget. Only the idempotent Commit and Fail calls retry, and only on
+// transient transport failures.
 type RetryConfig struct {
-	// MaxAttempts is the maximum number of attempts for a connection or for a
-	// retryable Commit/Fail RPC call.
+	// MaxAttempts is the maximum number of attempts for a retryable Commit/Fail RPC call.
 	MaxAttempts int
 	// Backoff is the base delay between attempts.
 	Backoff time.Duration
@@ -33,14 +41,34 @@ type Transport interface {
 	protocol.EngineClient
 }
 
-// Client manages the gRPC connection and RPC calls to the Rust engine.
+// reconnectBackoff bounds the gRPC reconnection schedule so a restarted engine
+// is reachable again within seconds instead of sitting in the default backoff,
+// which grows to minutes. The proxy stops RPC calls at the caller's deadline, so
+// the base delay only paces the background reconnect attempts.
+var reconnectBackoff = backoff.Config{
+	BaseDelay:  100 * time.Millisecond,
+	Multiplier: 1.6,
+	Jitter:     0.2,
+	MaxDelay:   8 * time.Second,
+}
+
+// Client manages the gRPC channel and RPC calls to the Rust engine.
+//
+// The channel is created lazily by the first RPC and shared for the lifetime of
+// the Client. gRPC reconnects automatically when the engine restarts, and each
+// connection-level failure resets its backoff so recovery is prompt. Concurrent
+// RPCs share one channel; the mutex guards channel creation, Close, and the
+// closed flag so a closed client never dials again.
 type Client struct {
 	address   string
 	retry     RetryConfig
 	logger    *slog.Logger
+	metrics   *metrics.Registry
+	dial      func(ctx context.Context, address string) (*grpc.ClientConn, error)
+	mu        sync.Mutex
 	conn      *grpc.ClientConn
 	transport Transport
-	metrics   *metrics.Registry
+	closed    bool
 }
 
 // SetMetrics wires the registry so engine RPC latency, error counts, and retry
@@ -62,7 +90,19 @@ const (
 	rpcRetriesMetric     = "undolog_proxy_engine_rpc_retries_total"
 )
 
-// NewClient constructs a client for the given engine address.
+// defaultDialer builds a non-blocking channel. Dialing does not block or
+// contact the engine; gRPC connects in the background, so an engine that starts
+// after the proxy (or restarts) is picked up without the proxy exiting.
+func defaultDialer(_ context.Context, address string) (*grpc.ClientConn, error) {
+	return grpc.NewClient(address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: reconnectBackoff}),
+	)
+}
+
+// NewClient constructs a client for the given engine address. It does not
+// connect until the first RPC, so the engine does not need to be ready when the
+// proxy starts.
 func NewClient(address string, retry RetryConfig, logger *slog.Logger) *Client {
 	if logger == nil {
 		logger = slog.Default()
@@ -77,70 +117,80 @@ func NewClient(address string, retry RetryConfig, logger *slog.Logger) *Client {
 		address: address,
 		retry:   retry,
 		logger:  logger,
+		dial:    defaultDialer,
 	}
 }
 
-// NewClientWithTransport constructs a client with an injected transport.
+// NewClientWithTransport constructs a client with an injected transport. It
+// disables lazy dialing so the provided transport is used unmodified; the
+// missing-transport path then yields ErrEngineTransportNotConfigured on RPCs.
 func NewClientWithTransport(address string, retry RetryConfig, transport Transport, logger *slog.Logger) *Client {
 	c := NewClient(address, retry, logger)
 	c.transport = transport
+	c.dial = nil
 	return c
 }
 
-// Connect opens the gRPC connection with retry and backoff.
-func (c *Client) Connect(ctx context.Context) error {
-	if c.address == "" {
-		return errors.New("engine address is empty")
-	}
-	if c.conn != nil {
-		return nil
-	}
-	var last error
-	for attempt := 1; attempt <= c.retry.MaxAttempts; attempt++ {
-		conn, err := grpc.DialContext( //nolint:staticcheck
-			ctx,
-			c.address,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithBlock(), //nolint:staticcheck
-		)
-		if err == nil {
-			c.conn = conn
-			return nil
-		}
-		last = err
-		c.logger.Warn("engine dial failed", "attempt", attempt, "error", err)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(c.retry.Backoff * time.Duration(attempt)):
-		}
-	}
-	return last
-}
-
-// Close closes the underlying gRPC connection if one was created.
+// Close closes the underlying gRPC channel if one was created and marks the
+// client closed. It is idempotent and safe to call on a client whose connection
+// was never established. RPCs after Close fail with ErrEngineClientClosed
+// instead of silently opening a fresh connection.
 func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
 	if c.conn == nil {
 		return nil
 	}
-	return c.conn.Close()
+	err := c.conn.Close()
+	c.conn = nil
+	c.transport = nil
+	return err
 }
 
-// Conn exposes the underlying gRPC connection (nil until Connect succeeds).
-func (c *Client) Conn() *grpc.ClientConn {
-	return c.conn
+// getTransport returns the transport for an RPC, creating the channel lazily on
+// first use. After the initial creation the same channel is reused, and gRPC
+// reconnects it on demand when the engine is temporarily unreachable. A closed
+// client does not dial again: it fails with ErrEngineClientClosed.
+func (c *Client) getTransport(ctx context.Context) (Transport, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, protocol.ErrEngineClientClosed
+	}
+	if c.transport != nil {
+		return c.transport, nil
+	}
+	if c.dial == nil {
+		return nil, protocol.ErrEngineTransportNotConfigured
+	}
+	if c.address == "" {
+		return nil, errors.New("engine address is empty")
+	}
+	conn, err := c.dial(ctx, c.address)
+	if err != nil {
+		return nil, err
+	}
+	c.conn = conn
+	c.transport = NewGRPCTransport(conn)
+	return c.transport, nil
 }
 
-// SetTransport sets the transport implementation used for RPC calls.
-// Must be called after Connect when using a real gRPC transport.
-func (c *Client) SetTransport(t Transport) {
-	c.transport = t
+// nudgeReconnect resets the gRPC backoff so a channel that lost its engine
+// reconnect begins dialing again promptly instead of waiting out its exponential
+// backoff. It is a no-op when no channel exists yet.
+func (c *Client) nudgeReconnect() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn != nil {
+		c.conn.ResetConnectBackoff()
+	}
 }
 
 // Intercept asks the engine how the proxy should route one tool call.
 func (c *Client) Intercept(ctx context.Context, req protocol.InterceptRequest) (protocol.InterceptResponse, error) {
 	start := time.Now()
-	resp, err := call(c, func(t Transport) (protocol.InterceptResponse, error) {
+	resp, err := call(ctx, c, func(t Transport) (protocol.InterceptResponse, error) {
 		return t.Intercept(ctx, req)
 	})
 	c.observeRPC(rpcMethodIntercept, start, err)
@@ -179,7 +229,7 @@ func (c *Client) Fail(ctx context.Context, req protocol.FailRequest) error {
 // Approve resumes an approval request in the engine and returns execution data.
 func (c *Client) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
 	start := time.Now()
-	resp, err := call(c, func(t Transport) (protocol.ApproveResponse, error) {
+	resp, err := call(ctx, c, func(t Transport) (protocol.ApproveResponse, error) {
 		return t.Approve(ctx, req)
 	})
 	c.observeRPC(rpcMethodApprove, start, err)
@@ -189,53 +239,69 @@ func (c *Client) Approve(ctx context.Context, req protocol.ApproveRequest) (prot
 // Reject rejects an approval request in the engine.
 func (c *Client) Reject(ctx context.Context, req protocol.RejectRequest) error {
 	start := time.Now()
-	err := c.callVoid(func(t Transport) error {
+	err := c.callVoid(ctx, func(t Transport) error {
 		return t.Reject(ctx, req)
 	})
 	c.observeRPC(rpcMethodReject, start, err)
 	return err
 }
 
-// ListPendingApprovals returns the engine's unresolved approvals for one org.
+// ListPendingApprovals returns the engine's unresolved approvals for one organization.
 func (c *Client) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
 	start := time.Now()
-	resp, err := call(c, func(t Transport) (protocol.ListPendingApprovalsResponse, error) {
+	resp, err := call(ctx, c, func(t Transport) (protocol.ListPendingApprovalsResponse, error) {
 		return t.ListPendingApprovals(ctx, req)
 	})
 	c.observeRPC(rpcMethodListPending, start, err)
 	return resp, err
 }
 
-// call checks transport configuration, then delegates to fn.
-// Generic over any return type T. Used by Intercept, Approve, and future RPCs.
-func call[T any](c *Client, fn func(Transport) (T, error)) (T, error) {
-	if c.transport == nil {
+// call obtains the transport lazily, then delegates to fn. Generic over any
+// return type T. Used by Intercept, Approve, and ListPendingApprovals.
+func call[T any](ctx context.Context, c *Client, fn func(Transport) (T, error)) (T, error) {
+	t, err := c.getTransport(ctx)
+	if err != nil {
 		var zero T
-		return zero, protocol.ErrEngineTransportNotConfigured
+		return zero, err
 	}
-	return fn(c.transport)
+	resp, err := fn(t)
+	if isConnectionLoss(err) {
+		c.nudgeReconnect()
+	}
+	return resp, err
 }
 
-func (c *Client) callVoid(fn func(Transport) error) error {
-	if c.transport == nil {
-		return protocol.ErrEngineTransportNotConfigured
+func (c *Client) callVoid(ctx context.Context, fn func(Transport) error) error {
+	t, err := c.getTransport(ctx)
+	if err != nil {
+		return err
 	}
-	return fn(c.transport)
+	rpcErr := fn(t)
+	if isConnectionLoss(rpcErr) {
+		c.nudgeReconnect()
+	}
+	return rpcErr
 }
 
 // retryVoid invokes fn and retries transient transport failures with bounded
 // backoff. Only Commit and Fail use it: the engine's state-machine transitions
 // make both idempotent, so a retried call cannot double-apply. Intercept,
 // Approve, Reject, and ListPendingApprovals are intentionally not retried.
+// A connection-level failure also resets the channel backoff so the engine is
+// reconnected promptly after the retry budget is exhausted.
 func (c *Client) retryVoid(ctx context.Context, method string, fn func(Transport) error) error {
-	if c.transport == nil {
-		return protocol.ErrEngineTransportNotConfigured
+	t, err := c.getTransport(ctx)
+	if err != nil {
+		return err
 	}
 	var last error
 	for attempt := 1; attempt <= c.retry.MaxAttempts; attempt++ {
-		last = fn(c.transport)
+		last = fn(t)
 		if last == nil {
 			return nil
+		}
+		if isConnectionLoss(last) {
+			c.nudgeReconnect()
 		}
 		if !isRetryableRPCError(last) || attempt == c.retry.MaxAttempts {
 			return last
@@ -269,6 +335,20 @@ func (c *Client) observeRetry(method string) {
 		return
 	}
 	c.metrics.Counter(rpcRetriesMetric, "Engine RPC calls that were retried after a transient failure", "method").Add(1, method)
+}
+
+// isConnectionLoss reports whether the error came from the transport rather than
+// the engine's application logic. Unavailable covers a down or restarting
+// engine; Unknown covers connection-level failures gRPC surfaces without a
+// specific status. On these the client resets the channel backoff so the engine
+// reconnects promptly.
+func isConnectionLoss(err error) bool {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.Unknown:
+		return true
+	default:
+		return false
+	}
 }
 
 // isRetryableRPCError reports whether a Commit or Fail failure is worth

@@ -56,9 +56,10 @@ func withTracingMetadata(ctx context.Context) context.Context {
 // GRPCTransport adapts the generated `pb.UndoLogEngineClient` to the
 // `protocol.EngineClient` interface expected by the proxy handler.
 //
-// Usage:
+// Production uses NewClient, which creates and reconnects the channel lazily.
+// This constructor is exposed for tests that need to wrap a prepared channel or
+// provide a stand-in transport:
 //
-//	conn, _ := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 //	transport := NewGRPCTransport(conn)
 //	client := NewClientWithTransport(address, retryConfig, transport, logger)
 type GRPCTransport struct {
