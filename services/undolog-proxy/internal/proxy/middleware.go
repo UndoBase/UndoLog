@@ -7,6 +7,8 @@ package proxy
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -28,11 +30,22 @@ const (
 	httpDurationMetric = "undolog_proxy_http_request_duration_seconds"
 )
 
+// apiKeyEntry holds one trusted API key as its SHA-256 digest so the request
+// path never compares plaintext keys. Constant-time digest comparison removes
+// the timing side channel a naive string membership check would expose.
+//
+// SHA-256 is deliberate: a slow password KDF such as bcrypt only helps
+// low-entropy passwords and would cost CPU time on every request.
+type apiKeyEntry struct {
+	digest [sha256.Size]byte
+	orgID  string
+}
+
 // MiddlewareStack composes the proxy middlewares into one reusable bundle.
 type MiddlewareStack struct {
-	logger         *slog.Logger
-	trustedAPIKeys map[string]string
-	metrics        *metrics.Registry
+	logger  *slog.Logger
+	apiKeys []apiKeyEntry
+	metrics *metrics.Registry
 }
 
 // NewMiddlewareStack builds the middleware chain used by the proxy server.
@@ -40,7 +53,11 @@ func NewMiddlewareStack(logger *slog.Logger, trustedAPIKeys map[string]string) *
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &MiddlewareStack{logger: logger, trustedAPIKeys: trustedAPIKeys}
+	entries := make([]apiKeyEntry, 0, len(trustedAPIKeys))
+	for key, org := range trustedAPIKeys {
+		entries = append(entries, apiKeyEntry{digest: sha256.Sum256([]byte(key)), orgID: org})
+	}
+	return &MiddlewareStack{logger: logger, apiKeys: entries}
 }
 
 // SetMetrics wires the registry so every processed request contributes an HTTP
@@ -57,7 +74,7 @@ func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "auth_failed", "X-Api-Key header required", "")
 			return
 		}
-		orgID, ok := m.trustedAPIKeys[apiKey]
+		orgID, ok := m.orgForKey(sha256.Sum256([]byte(apiKey)))
 		if !ok {
 			writeError(w, http.StatusForbidden, "auth_failed", "API key not recognized", "")
 			return
@@ -67,6 +84,18 @@ func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 		r.Header.Set("X-Org-Id", orgID)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// orgForKey resolves the organization served by an API-key digest. Every
+// candidate digest is compared in constant time so the lookup does not leak
+// which key (or whether any key) matched.
+func (m *MiddlewareStack) orgForKey(digest [sha256.Size]byte) (string, bool) {
+	for _, entry := range m.apiKeys {
+		if subtle.ConstantTimeCompare(digest[:], entry.digest[:]) == 1 {
+			return entry.orgID, true
+		}
+	}
+	return "", false
 }
 
 // RequestID assigns a request-scoped identifier for tracing and log correlation.

@@ -120,6 +120,38 @@ HTTP bind address for the MCP proxy server.
 
 ---
 
+### `UNDOLOG_PROXY_READ_HEADER_TIMEOUT_SECS`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int` | `15` | Seconds the server waits to read request headers before it drops the connection. Guards against slow-loris style timeouts. |
+
+---
+
+### `UNDOLOG_PROXY_IDLE_TIMEOUT_SECS`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int` | `60` | Seconds a keep-alive connection may sit idle between requests before the server closes it. |
+
+---
+
+### `UNDOLOG_PROXY_MAX_HEADER_BYTES`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int` | `1048576` | Maximum total bytes the server parses for request headers, including the request line. |
+
+---
+
+### `UNDOLOG_PROXY_MAX_BODY_BYTES`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int` | `1048576` | Maximum request body size in bytes for `/mcp/tool_call` and the approval decision endpoints. Larger bodies are rejected with HTTP `413`. |
+
+---
+
 ### `UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS`
 
 | Type | Default | Description |
@@ -194,7 +226,7 @@ Log level for the proxy server. Shared env var name across both engine and proxy
 
 | Type | Default | Description |
 |------|---------|-------------|
-| `string` | `""` | Comma-separated `key=org_id` pairs for API key authentication. Example: `sk-abc123=org-xyz,sk-def456=org-uvw` |
+| `string` | `""` | Comma-separated `key=org_id` pairs for API key authentication. Example: `sk-abc123=org-xyz,sk-def456=org-uvw`. At least one pair is required: the proxy refuses to start with none configured, and keys are compared as SHA-256 digests in constant time. |
 
 ---
 
@@ -226,6 +258,10 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_WRITE_TIMEOUT_SECS` | Proxy | `int` | `15` | No |
 | `UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS` | Proxy | `int` | `30` | No |
 | `UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS` | Proxy | `int` | `30` | No |
+| `UNDOLOG_PROXY_READ_HEADER_TIMEOUT_SECS` | Proxy | `int` | `15` | No |
+| `UNDOLOG_PROXY_IDLE_TIMEOUT_SECS` | Proxy | `int` | `60` | No |
+| `UNDOLOG_PROXY_MAX_HEADER_BYTES` | Proxy | `int` | `1048576` | No |
+| `UNDOLOG_PROXY_MAX_BODY_BYTES` | Proxy | `int` | `1048576` | No |
 | `UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS` | Proxy | `int` | `3` | No |
 | `UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS` | Proxy | `int` | `100` | No |
 | `UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE` | Proxy | `int` | `128` | No |
@@ -233,4 +269,4 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_APPROVAL_RETENTION_SECS` | Proxy | `int` | `86400` | No |
 | `UNDOLOG_PROXY_ENGINE_GRPC_ADDR` | Proxy | `string` | `localhost:50051` | Yes |
 | `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | Proxy | `string` | `""` | No |
-| `UNDOLOG_PROXY_API_KEYS` | Proxy | `string` | `""` | No |
+| `UNDOLOG_PROXY_API_KEYS` | Proxy | `string` | `""` | Yes |

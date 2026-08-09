@@ -43,16 +43,20 @@ type Handler struct {
 	broadcaster    eventBroadcaster
 	logger         *slog.Logger
 	requestTimeout time.Duration
+	maxBodyBytes   int64
 	metrics        *metrics.Registry
 }
 
 // NewHandler wires the approval store, engine client, executor callback, and broadcaster together.
-func NewHandler(store *Store, engineClient protocol.EngineClient, executeFn ExecuteApprovedFn, broadcaster eventBroadcaster, requestTimeout time.Duration, logger *slog.Logger) *Handler {
+func NewHandler(store *Store, engineClient protocol.EngineClient, executeFn ExecuteApprovedFn, broadcaster eventBroadcaster, requestTimeout time.Duration, maxBodyBytes int64, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if store == nil {
 		store = NewStore()
+	}
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = 1 << 20
 	}
 	return &Handler{
 		store:          store,
@@ -60,6 +64,7 @@ func NewHandler(store *Store, engineClient protocol.EngineClient, executeFn Exec
 		executeFn:      executeFn,
 		broadcaster:    broadcaster,
 		requestTimeout: requestTimeout,
+		maxBodyBytes:   maxBodyBytes,
 		logger:         logger,
 	}
 }
@@ -305,9 +310,15 @@ func (h *Handler) decodeDecisionBody(w http.ResponseWriter, r *http.Request) (de
 	if r.Body == nil || r.Body == http.NoBody {
 		return body, true
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, h.maxBodyBytes)).Decode(&body); err != nil {
 		if errors.Is(err, io.EOF) {
 			return body, true
+		}
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			h.logger.Warn("decision body exceeds limit", "error", err)
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return decisionBody{}, false
 		}
 		h.logger.Warn("malformed decision body", "error", err)
 		http.Error(w, "malformed request body", http.StatusBadRequest)

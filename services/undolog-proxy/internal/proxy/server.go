@@ -56,9 +56,9 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 	executeApproved := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return tool.Execute(ctx, call)
 	}
-	approvalHandler := approval.NewHandler(approvalStore, engine, executeApproved, broadcaster, cfg.RequestTimeout, logger)
+	approvalHandler := approval.NewHandler(approvalStore, engine, executeApproved, broadcaster, cfg.RequestTimeout, cfg.MaxBodyBytes, logger)
 	mw := NewMiddlewareStack(logger, cfg.TrustedAPIKeys)
-	handler := NewHandler(engine, tool, approvalStore, broadcaster, cfg.RequestTimeout, logger)
+	handler := NewHandler(engine, tool, approvalStore, broadcaster, cfg.RequestTimeout, cfg.MaxBodyBytes, logger)
 
 	broadcaster.SetMetrics(registry)
 	approvalHandler.SetMetrics(registry)
@@ -121,10 +121,13 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 		reconcileInterval: cfg.ApprovalReconcileInterval,
 		approvalRetention: cfg.ApprovalRetention,
 		httpSrv: http.Server{
-			Addr:         cfg.ListenAddr,
-			Handler:      mux,
-			ReadTimeout:  cfg.ReadTimeout,
-			WriteTimeout: cfg.WriteTimeout,
+			Addr:              cfg.ListenAddr,
+			Handler:           mux,
+			ReadTimeout:       cfg.ReadTimeout,
+			ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+			WriteTimeout:      cfg.WriteTimeout,
+			IdleTimeout:       cfg.IdleTimeout,
+			MaxHeaderBytes:    cfg.MaxHeaderBytes,
 		},
 		logger: logger,
 	}, nil
