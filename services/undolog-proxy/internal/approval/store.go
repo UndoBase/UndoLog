@@ -191,7 +191,8 @@ func (s *Store) Sweep(retainedBefore time.Time, activeIDs, failedOrgs map[string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	removed := 0
-	for id, rec := range s.records {
+	for id := range s.records {
+		rec := s.records[id]
 		if _, active := activeIDs[id]; active {
 			continue
 		}

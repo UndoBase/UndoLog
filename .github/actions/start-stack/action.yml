@@ -25,13 +25,13 @@ runs:
       shell: bash
       run: |
         echo "--- Proxy health ---"
-        curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:8080/health
+        curl --retry 10 --retry-delay 3 --retry-all-errors http://localhost:8080/health
         echo ""
         echo "--- Tool server health ---"
         curl --retry 5 --retry-delay 2 http://localhost:9091/health
         echo ""
         echo "--- Engine health ---"
-        curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:9090/health
+        curl --retry 10 --retry-delay 3 --retry-all-errors http://localhost:9090/health
         echo ""
 
     - name: Probe proxy-to-engine gRPC pipeline
