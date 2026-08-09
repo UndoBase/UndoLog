@@ -117,6 +117,134 @@ func TestLoadConfigDefaultsAndAPIKeys(t *testing.T) {
 	if cfg.EngineRetryBackoff != 250*time.Millisecond {
 		t.Fatalf("unexpected engine retry backoff: %s", cfg.EngineRetryBackoff)
 	}
+	if cfg.MaxBodyBytes != 1<<20 {
+		t.Fatalf("unexpected max body bytes: %d", cfg.MaxBodyBytes)
+	}
+	if cfg.ReadHeaderTimeout != 15*time.Second || cfg.IdleTimeout != 60*time.Second || cfg.MaxHeaderBytes != 1<<20 {
+		t.Fatalf("unexpected server hardening defaults: %+v", cfg)
+	}
+}
+
+// TestLoadConfigRejectsEmptyAPIKeys verifies LoadConfig fails fast when no API
+// keys are configured, so a deployment cannot start in a state where every
+// request would be rejected.
+func TestLoadConfigRejectsEmptyAPIKeys(t *testing.T) {
+	t.Setenv("UNDOLOG_PROXY_API_KEYS", "")
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "http://upstream:9091")
+	_, err := LoadConfig()
+	if err == nil || !strings.Contains(err.Error(), "UNDOLOG_PROXY_API_KEYS") {
+		t.Fatalf("expected a missing API keys error, got %v", err)
+	}
+}
+
+// TestLoadConfigValidatesUpstreamURL verifies the configured upstream endpoint
+// must be an absolute http(s) URL, while an unset one is still accepted.
+func TestLoadConfigValidatesUpstreamURL(t *testing.T) {
+	t.Setenv("UNDOLOG_PROXY_API_KEYS", "k1=o1")
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "not a url")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "UNDOLOG_PROXY_UPSTREAM_TOOL_URL") {
+		t.Fatalf("expected an upstream URL error, got %v", err)
+	}
+
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "ftp://tool-server:9091")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "http(s)") {
+		t.Fatalf("expected a scheme error, got %v", err)
+	}
+
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "http://tool-server:9091")
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("valid upstream URL rejected: %v", err)
+	}
+
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "")
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("empty upstream URL should still load, got %v", err)
+	}
+}
+
+// TestMaxBodyBytesEnvParses verifies the body cap env var overrides the default.
+func TestMaxBodyBytesEnvParses(t *testing.T) {
+	t.Setenv("UNDOLOG_PROXY_API_KEYS", "k1=o1")
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "")
+	t.Setenv("UNDOLOG_PROXY_MAX_BODY_BYTES", "4096")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.MaxBodyBytes != 4096 {
+		t.Fatalf("expected max body bytes 4096, got %d", cfg.MaxBodyBytes)
+	}
+}
+
+// TestServerHardeningValues verifies the HTTP server picks up the read-header,
+// idle, and header-size limits from the config.
+func TestServerHardeningValues(t *testing.T) {
+	cfg := Config{
+		ListenAddr:        ":0",
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 3 * time.Second,
+		IdleTimeout:       45 * time.Second,
+		MaxHeaderBytes:    8192,
+		EngineGRPCAddr:    "engine:50051",
+		UpstreamToolURL:   "http://upstream",
+		TrustedAPIKeys:    map[string]string{"key-1": "org-1"},
+	}
+	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), metrics.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	if server.httpSrv.ReadHeaderTimeout != 3*time.Second {
+		t.Fatalf("read header timeout: %s", server.httpSrv.ReadHeaderTimeout)
+	}
+	if server.httpSrv.IdleTimeout != 45*time.Second {
+		t.Fatalf("idle timeout: %s", server.httpSrv.IdleTimeout)
+	}
+	if server.httpSrv.MaxHeaderBytes != 8192 {
+		t.Fatalf("max header bytes: %d", server.httpSrv.MaxHeaderBytes)
+	}
+}
+
+// TestToolCallBodySizeLimit verifies an oversized /mcp/tool_call body returns
+// 413 instead of being decoded, and a body within the limit is accepted.
+func TestToolCallBodySizeLimit(t *testing.T) {
+	cfg := Config{
+		ListenAddr:            ":0",
+		RequestTimeout:        time.Second,
+		DashboardEventBufSize: 8,
+		MaxBodyBytes:          256,
+		EngineGRPCAddr:        "engine:50051",
+		UpstreamToolURL:       "http://upstream",
+		TrustedAPIKeys:        map[string]string{"key-1": "org-1"},
+	}
+	server, err := NewServer(cfg, &mockEngineClient{
+		interceptResp: protocol.InterceptResponse{Outcome: protocol.InterceptExecute, EffectID: "eff-1"},
+	}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{Success: true}, nil
+	}), metrics.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	big := strings.Repeat("x", 4096)
+	body := `{"session_id":"sess-1","tool_name":"search","args":{"payload":"` + big + `"}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))
+	req.Header.Set("X-Api-Key", "key-1")
+	rec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for oversized body, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	okReq := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(`{"session_id":"sess-1","tool_name":"search","args":{}}`))
+	okReq.Header.Set("X-Api-Key", "key-1")
+	okRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(okRec, okReq)
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for in-limit body, got %d (%s)", okRec.Code, okRec.Body.String())
+	}
 }
 
 // TestMiddlewareAuthAndRequestID verifies auth, request IDs, and logging middleware.
@@ -148,6 +276,30 @@ func TestMiddlewareAuthAndRequestID(t *testing.T) {
 	}
 }
 
+// TestMiddlewareAuthRejectsUnknownAndMissingKeys verifies the digest-based auth
+// middleware still enforces the 401/403 contract for missing and unknown keys.
+func TestMiddlewareAuthRejectsUnknownAndMissingKeys(t *testing.T) {
+	stack := NewMiddlewareStack(nil, map[string]string{"key-1": "org-1"})
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	unknown := httptest.NewRequest(http.MethodGet, "/approvals", nil)
+	unknown.Header.Set("X-Api-Key", "not-a-real-key")
+	uRec := httptest.NewRecorder()
+	stack.Auth(next).ServeHTTP(uRec, unknown)
+	if uRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for unknown key, got %d", uRec.Code)
+	}
+
+	missing := httptest.NewRequest(http.MethodGet, "/approvals", nil)
+	mRec := httptest.NewRecorder()
+	stack.Auth(next).ServeHTTP(mRec, missing)
+	if mRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for missing key, got %d", mRec.Code)
+	}
+}
+
 // TestHandlerRoutesExecuteReplayAndApproval covers the handler's three outcome paths.
 func TestHandlerRoutesExecuteReplayAndApproval(t *testing.T) {
 	t.Run("execute", func(t *testing.T) {
@@ -162,7 +314,7 @@ func TestHandlerRoutesExecuteReplayAndApproval(t *testing.T) {
 		executor := ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 			return protocol.ToolResult{Success: true, Output: json.RawMessage(`{"ok":true}`)}, nil
 		})
-		h := NewHandler(engine, executor, store, b, time.Second, nil)
+		h := NewHandler(engine, executor, store, b, time.Second, 1<<20, nil)
 
 		body := `{"session_id":"sess-1","tool_name":"search","args":{"q":"undo"}}`
 		req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))
@@ -190,7 +342,7 @@ func TestHandlerRoutesExecuteReplayAndApproval(t *testing.T) {
 		h := NewHandler(engine, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 			t.Fatal("executor should not be called")
 			return protocol.ToolResult{}, nil
-		}), approval.NewStore(), sse.NewBroadcaster(8), time.Second, nil)
+		}), approval.NewStore(), sse.NewBroadcaster(8), time.Second, 1<<20, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(`{"session_id":"sess-1","tool_name":"search","args":{}}`))
 		req = req.WithContext(context.WithValue(req.Context(), ctxKeyOrgID, "org-1"))
@@ -212,7 +364,7 @@ func TestHandlerRoutesExecuteReplayAndApproval(t *testing.T) {
 		h := NewHandler(engine, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 			t.Fatal("executor should not be called")
 			return protocol.ToolResult{}, nil
-		}), approval.NewStore(), sse.NewBroadcaster(8), time.Second, nil)
+		}), approval.NewStore(), sse.NewBroadcaster(8), time.Second, 1<<20, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(`{"session_id":"sess-1","tool_name":"delete_user","args":{}}`))
 		req = req.WithContext(context.WithValue(req.Context(), ctxKeyOrgID, "org-1"))
@@ -562,7 +714,7 @@ func TestHandlerCommitsLogicalToolFailure(t *testing.T) {
 			EffectID: "eff-1",
 		},
 	}
-	h := NewHandler(engine, executor, approval.NewStore(), sse.NewBroadcaster(8), time.Second, nil)
+	h := NewHandler(engine, executor, approval.NewStore(), sse.NewBroadcaster(8), time.Second, 1<<20, nil)
 
 	body := `{"session_id":"sess-1","tool_name":"get_customer","args":{"id":"u1"}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))
@@ -614,7 +766,7 @@ func TestHandlerExecuteFailureCallsFailAndReports502(t *testing.T) {
 			EffectID: "eff-1",
 		},
 	}
-	h := NewHandler(engine, executor, approval.NewStore(), sse.NewBroadcaster(8), time.Second, nil)
+	h := NewHandler(engine, executor, approval.NewStore(), sse.NewBroadcaster(8), time.Second, 1<<20, nil)
 
 	body := `{"session_id":"sess-1","tool_name":"search","args":{}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))

@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -28,8 +29,8 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	// RequestTimeout limits tool execution and engine RPC calls.
 	RequestTimeout time.Duration
-	// EngineRetryMaxAttempts is the maximum number of attempts for the engine
-	// connection and for transient Commit/Fail RPC failures.
+	// EngineRetryMaxAttempts is the maximum number of attempts for transient
+	// Commit/Fail RPC failures.
 	EngineRetryMaxAttempts int
 	// EngineRetryBackoff is the base delay (scaled per attempt) between engine
 	// connection and Commit/Fail retries.
@@ -50,6 +51,15 @@ type Config struct {
 	LogLevel string
 	// TrustedAPIKeys maps API keys to organization identifiers.
 	TrustedAPIKeys map[string]string
+	// MaxBodyBytes is the maximum size of a request body the proxy decodes.
+	MaxBodyBytes int64
+	// ReadHeaderTimeout limits how long the server waits to read request headers.
+	ReadHeaderTimeout time.Duration
+	// IdleTimeout limits how long a keep-alive connection may sit idle between
+	// requests before the server closes it.
+	IdleTimeout time.Duration
+	// MaxHeaderBytes limits the total size of request headers the server parses.
+	MaxHeaderBytes int
 }
 
 // LoadConfig reads proxy settings from environment variables and applies sane defaults.
@@ -69,6 +79,10 @@ func LoadConfig() (Config, error) {
 		UpstreamToolURL:           getenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", ""),
 		LogLevel:                  getenv("UNDOLOG_LOG_LEVEL", "info"),
 		TrustedAPIKeys:            parseAPIKeys(os.Getenv("UNDOLOG_PROXY_API_KEYS")),
+		MaxBodyBytes:              int64Env("UNDOLOG_PROXY_MAX_BODY_BYTES", 1<<20),
+		ReadHeaderTimeout:         durationEnv("UNDOLOG_PROXY_READ_HEADER_TIMEOUT_SECS", 15*time.Second),
+		IdleTimeout:               durationEnv("UNDOLOG_PROXY_IDLE_TIMEOUT_SECS", 60*time.Second),
+		MaxHeaderBytes:            intEnv("UNDOLOG_PROXY_MAX_HEADER_BYTES", 1<<20),
 	}
 
 	if cfg.ListenAddr == "" {
@@ -76,6 +90,15 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.EngineGRPCAddr == "" {
 		return Config{}, fmt.Errorf("engine gRPC address cannot be empty")
+	}
+	if len(cfg.TrustedAPIKeys) == 0 {
+		return Config{}, fmt.Errorf("UNDOLOG_PROXY_API_KEYS must define at least one key=org pair")
+	}
+	if cfg.UpstreamToolURL != "" {
+		u, err := url.Parse(cfg.UpstreamToolURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return Config{}, fmt.Errorf("UNDOLOG_PROXY_UPSTREAM_TOOL_URL must be an absolute http(s) URL, got %q", cfg.UpstreamToolURL)
+		}
 	}
 	return cfg, nil
 }
@@ -117,6 +140,18 @@ func intEnv(key string, fallback int) int {
 		return fallback
 	}
 	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func int64Env(key string, fallback int64) int64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || n <= 0 {
 		return fallback
 	}

@@ -97,7 +97,7 @@ func TestApprovalLifecycle(t *testing.T) {
 	mockExec := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return protocol.ToolResult{Success: true, Output: []byte(`{"deleted":true}`)}, nil
 	}
-	handler := NewHandler(store, engine, mockExec, broadcaster, 0, nil)
+	handler := NewHandler(store, engine, mockExec, broadcaster, 0, 1<<20, nil)
 
 	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
@@ -132,7 +132,7 @@ func TestApprovalLifecycle(t *testing.T) {
 func TestRejectForwardsActor(t *testing.T) {
 	store := NewStore()
 	engine := &mockEngine{}
-	handler := NewHandler(store, engine, nil, nil, 0, nil)
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
 	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", bytes.NewBufferString(`{"actor":"alice"}`))
@@ -152,7 +152,7 @@ func TestRejectForwardsActor(t *testing.T) {
 func TestRejectDefaultsActorToUnknown(t *testing.T) {
 	store := NewStore()
 	engine := &mockEngine{}
-	handler := NewHandler(store, engine, nil, nil, 0, nil)
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
 	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", nil)
@@ -197,7 +197,7 @@ func TestMalformedDecisionBodyReturns400(t *testing.T) {
 		t.Run(action.name, func(t *testing.T) {
 			store := NewStore()
 			engine := &mockEngine{}
-			handler := NewHandler(store, engine, nil, nil, 0, nil)
+			handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
 			rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 			req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/"+action.name, bytes.NewBufferString(`{"actor":`))
@@ -224,7 +224,7 @@ func TestConcurrentDoubleApproveReturns409(t *testing.T) {
 	mockExec := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return protocol.ToolResult{Success: true, Output: []byte(`{"deleted":true}`)}, nil
 	}
-	handler := NewHandler(store, engine, mockExec, nil, 0, nil)
+	handler := NewHandler(store, engine, mockExec, nil, 0, 1<<20, nil)
 	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	const workers = 8
@@ -277,7 +277,7 @@ func TestPostApprovalExecutionFailureUsesFail(t *testing.T) {
 	mockExec := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
 		return protocol.ToolResult{}, errors.New("upstream exploded")
 	}
-	handler := NewHandler(store, engine, mockExec, nil, 0, nil)
+	handler := NewHandler(store, engine, mockExec, nil, 0, 1<<20, nil)
 	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/approve", nil)
@@ -304,7 +304,7 @@ func TestPostApprovalExecutionFailureUsesFail(t *testing.T) {
 func TestListApprovalsOrderedAndLimited(t *testing.T) {
 	store := NewStore()
 	engine := &mockEngine{}
-	handler := NewHandler(store, engine, nil, nil, 0, nil)
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
 
 	now := time.Now().UTC()
 	store.Create(Record{ID: "oldest", OrgID: "org-1", SessionID: "s-1", EffectID: "e-1", ToolName: "delete_user", Args: []byte(`{}`), Status: StatusPending, CreatedAt: now.Add(-2 * time.Hour)})
@@ -337,7 +337,7 @@ func TestApprovalMetricsRecorded(t *testing.T) {
 	store := NewStore()
 	engine := &mockEngine{}
 	registry := metrics.NewRegistry()
-	handler := NewHandler(store, engine, nil, nil, 0, nil)
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
 	handler.SetMetrics(registry)
 
 	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
@@ -378,5 +378,27 @@ func TestApprovalMetricsRecorded(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("expected metrics to contain %q, got:\n%s", want, rendered)
 		}
+	}
+}
+
+// TestDecisionBodySizeLimit verifies an oversized decision body returns 413
+// before the record is mutated, so it cannot flip a pending approval.
+func TestDecisionBodySizeLimit(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{}
+	handler := NewHandler(store, engine, nil, nil, 0, 64, nil)
+	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
+
+	big := strings.Repeat("x", 4096)
+	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", bytes.NewBufferString(`{"actor":"`+big+`"}`))
+	req.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.RejectApproval(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for oversized decision body, got %d", w.Code)
+	}
+	if got, ok := store.Get(rec.ID); !ok || got.Status != StatusPending {
+		t.Fatalf("an oversized body must not mutate the record, got %+v", got)
 	}
 }

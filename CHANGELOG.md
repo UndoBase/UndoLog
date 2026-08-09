@@ -9,9 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Go proxy: HTTP hardening: configurable body/header caps (413 on oversized
+  bodies), read-header and idle timeouts, fail-fast config on missing API keys
+  or invalid upstream URLs, and constant-time API-key auth via SHA-256 digests.
 - Go proxy: durable, ordered approval workflow backed by the engine database.
   Pending approvals are reconciled on startup and periodically, decisions use
-  atomic compare-and-swap, the acting user is recorded in the audit trail, 
+  atomic compare-and-swap, the acting user is recorded in the audit trail,
   a failed post-approval execution calls ``fail``, and lists are newest-first
   with a ``?limit=`` bound (default 100, max 500).
 - Go proxy: ``Commit`` and ``Fail`` engine RPC calls retry transient transport

@@ -170,13 +170,17 @@ type Handler struct {
 	approvals      *approval.Store
 	broadcaster    *sse.Broadcaster
 	requestTimeout time.Duration
+	maxBodyBytes   int64
 	logger         *slog.Logger
 }
 
 // NewHandler wires the engine client, executor, approval store, and broadcaster together.
-func NewHandler(engineClient protocol.EngineClient, executor ToolExecutor, approvals *approval.Store, broadcaster *sse.Broadcaster, requestTimeout time.Duration, logger *slog.Logger) *Handler {
+func NewHandler(engineClient protocol.EngineClient, executor ToolExecutor, approvals *approval.Store, broadcaster *sse.Broadcaster, requestTimeout time.Duration, maxBodyBytes int64, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = 1 << 20
 	}
 	return &Handler{
 		engineClient:   engineClient,
@@ -184,6 +188,7 @@ func NewHandler(engineClient protocol.EngineClient, executor ToolExecutor, appro
 		approvals:      approvals,
 		broadcaster:    broadcaster,
 		requestTimeout: requestTimeout,
+		maxBodyBytes:   maxBodyBytes,
 		logger:         logger,
 	}
 }
@@ -210,8 +215,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req toolCallRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", requestIDFrom(r.Context()))
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, h.maxBodyBytes)).Decode(&req)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds the configured limit", requestIDFrom(r.Context()))
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", requestIDFrom(r.Context()))
+		}
 		return
 	}
 	if req.SessionID == "" || req.ToolName == "" {
