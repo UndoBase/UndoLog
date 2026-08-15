@@ -95,7 +95,7 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 		// Liveness only: do not echo configuration values (such as the engine
 		// address or upstream URL) to unauthenticated callers. Readiness is
 		// separate from this endpoint by design.
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeJSON(w, logger, http.StatusOK, map[string]any{
 			"status":  "ok",
 			"service": "undolog-proxy",
 		})

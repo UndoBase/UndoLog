@@ -97,7 +97,7 @@ func (h *Handler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, h.store.List(orgID, status, parseLimit(r.URL.Query().Get("limit"))))
+	h.writeJSON(w, h.store.List(orgID, status, parseLimit(r.URL.Query().Get("limit"))))
 }
 
 // ApproveApproval marks one pending approval as approved and resumes the engine.
@@ -110,14 +110,11 @@ func (h *Handler) RejectApproval(w http.ResponseWriter, r *http.Request) {
 	h.resolveDecision(w, r, StatusRejected)
 }
 
-// Health reports a minimal readiness response for the approval subsystem.
-func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{"status": "ok"})
-}
-
 // CreatePending stores a new pending approval record for one intercepted call.
-func (h *Handler) CreatePending(orgID, sessionID, effectID, toolName string, args []byte) Record {
+// The caller supplies the approval identifier issued by the engine.
+func (h *Handler) CreatePending(id, orgID, sessionID, effectID, toolName string, args []byte) Record {
 	return h.store.Create(Record{
+		ID:        id,
 		OrgID:     orgID,
 		SessionID: sessionID,
 		EffectID:  effectID,
@@ -256,7 +253,7 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 			resp["execution"] = "committed"
 			resp["result"] = result
 		}
-		writeJSON(w, resp)
+		h.writeJSON(w, resp)
 		h.recordDecision(action, "applied")
 
 	case StatusRejected:
@@ -283,7 +280,7 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 			}
 		}
 
-		writeJSON(w, map[string]any{
+		h.writeJSON(w, map[string]any{
 			"status":      string(target),
 			"approval_id": id,
 		})
@@ -379,10 +376,12 @@ func approvalIDFromPath(path string) (string, bool) {
 	return parts[0], true
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
+// writeJSON writes one JSON response using the handler's logger so encode
+// failures surface through the request-scoped observability channel.
+func (h *Handler) writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Warn("writeJSON failed", "error", err)
+		h.logger.Warn("writeJSON failed", "error", err)
 	}
 }

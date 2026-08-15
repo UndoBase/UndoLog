@@ -23,8 +23,6 @@ type EventType string
 const (
 	// EventEffectIntercepted marks when a call reaches the engine.
 	EventEffectIntercepted EventType = "effect_intercepted"
-	// EventEffectExecuted marks a tool call that ran upstream.
-	EventEffectExecuted EventType = "effect_executed"
 	// EventEffectCommitted marks a successful commit in the engine.
 	EventEffectCommitted EventType = "effect_committed"
 	// EventEffectReplayed marks a call served from cached state.

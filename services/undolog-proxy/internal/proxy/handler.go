@@ -204,13 +204,13 @@ type toolCallRequest struct {
 // ServeHTTP processes POST /mcp/tool_call requests through the interception flow.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required", requestIDFrom(r.Context()))
+		writeError(w, h.logger, http.StatusMethodNotAllowed, "method_not_allowed", "POST required", requestIDFrom(r.Context()))
 		return
 	}
 
 	orgID := orgIDFrom(r.Context())
 	if orgID == "" {
-		writeError(w, http.StatusUnauthorized, "auth_failed", "org id missing from request context", requestIDFrom(r.Context()))
+		writeError(w, h.logger, http.StatusUnauthorized, "auth_failed", "org id missing from request context", requestIDFrom(r.Context()))
 		return
 	}
 
@@ -219,20 +219,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds the configured limit", requestIDFrom(r.Context()))
+			writeError(w, h.logger, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds the configured limit", requestIDFrom(r.Context()))
 		} else {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", requestIDFrom(r.Context()))
+			writeError(w, h.logger, http.StatusBadRequest, "invalid_request", "invalid JSON body", requestIDFrom(r.Context()))
 		}
 		return
 	}
 	if req.SessionID == "" || req.ToolName == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "session_id and tool_name are required", requestIDFrom(r.Context()))
+		writeError(w, h.logger, http.StatusBadRequest, "invalid_request", "session_id and tool_name are required", requestIDFrom(r.Context()))
 		return
 	}
 
 	signature, err := CanonicalSignature(req.ToolName, req.Args)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "unable to canonicalize tool args", requestIDFrom(r.Context()))
+		writeError(w, h.logger, http.StatusBadRequest, "invalid_request", "unable to canonicalize tool args", requestIDFrom(r.Context()))
 		return
 	}
 
@@ -262,7 +262,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			SessionID: req.SessionID,
 			Payload:   json.RawMessage(`{"stage":"intercept","error":"failed"}`),
 		})
-		writeError(w, http.StatusBadGateway, "intercept_failed", err.Error(), requestIDFrom(r.Context()))
+		writeError(w, h.logger, http.StatusBadGateway, "intercept_failed", err.Error(), requestIDFrom(r.Context()))
 		return
 	}
 
@@ -293,7 +293,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				EffectID:  outcome.EffectID,
 				Payload:   json.RawMessage(`{"stage":"execute","error":"failed"}`),
 			})
-			writeError(w, http.StatusBadGateway, "tool_error", execErr.Error(), requestIDFrom(r.Context()))
+			writeError(w, h.logger, http.StatusBadGateway, "tool_error", execErr.Error(), requestIDFrom(r.Context()))
 			return
 		}
 		if err := h.engineClient.Commit(ctx, protocol.CommitRequest{
@@ -309,7 +309,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				EffectID:  outcome.EffectID,
 				Payload:   json.RawMessage(`{"stage":"commit","error":"failed"}`),
 			})
-			writeError(w, http.StatusBadGateway, "commit_failed", err.Error(), requestIDFrom(r.Context()))
+			writeError(w, h.logger, http.StatusBadGateway, "commit_failed", err.Error(), requestIDFrom(r.Context()))
 			return
 		}
 		h.emit(sse.Event{
@@ -319,7 +319,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			EffectID:  outcome.EffectID,
 			Payload:   json.RawMessage(`{"stage":"committed"}`),
 		})
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeJSON(w, h.logger, http.StatusOK, map[string]any{
 			"status":    "executed",
 			"effect_id": outcome.EffectID,
 			"result":    result,
@@ -332,7 +332,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			EffectID:  outcome.EffectID,
 			Payload:   json.RawMessage(`{"stage":"replayed"}`),
 		})
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeJSON(w, h.logger, http.StatusOK, map[string]any{
 			"status":    "replayed",
 			"effect_id": outcome.EffectID,
 			"result":    outcome.CachedResult,
@@ -359,13 +359,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ApprovalID: approvalID,
 			Payload:    json.RawMessage(`{"stage":"approval_required"}`),
 		})
-		writeJSON(w, http.StatusAccepted, map[string]any{
+		writeJSON(w, h.logger, http.StatusAccepted, map[string]any{
 			"status":      "pending_approval",
 			"approval_id": approvalID,
 			"retry_after": 5,
 		})
 	default:
-		writeError(w, http.StatusInternalServerError, "intercept_failed", "unexpected intercept outcome", requestIDFrom(r.Context()))
+		writeError(w, h.logger, http.StatusInternalServerError, "intercept_failed", "unexpected intercept outcome", requestIDFrom(r.Context()))
 	}
 }
 

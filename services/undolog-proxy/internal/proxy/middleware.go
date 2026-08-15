@@ -71,12 +71,12 @@ func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiKey := strings.TrimSpace(r.Header.Get("X-Api-Key"))
 		if apiKey == "" {
-			writeError(w, http.StatusUnauthorized, "auth_failed", "X-Api-Key header required", "")
+			writeError(w, m.logger, http.StatusUnauthorized, "auth_failed", "X-Api-Key header required", "")
 			return
 		}
 		orgID, ok := m.orgForKey(sha256.Sum256([]byte(apiKey)))
 		if !ok {
-			writeError(w, http.StatusForbidden, "auth_failed", "API key not recognized", "")
+			writeError(w, m.logger, http.StatusForbidden, "auth_failed", "API key not recognized", "")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxKeyOrgID, orgID)
@@ -169,7 +169,7 @@ func (m *MiddlewareStack) PanicRecovery(next http.Handler) http.Handler {
 					"request_id", requestIDFrom(r.Context()),
 					"panic", rec,
 				)
-				writeError(w, http.StatusInternalServerError, "internal_error", "internal server error", requestIDFrom(r.Context()))
+				writeError(w, m.logger, http.StatusInternalServerError, "internal_error", "internal server error", requestIDFrom(r.Context()))
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -248,16 +248,19 @@ func requestIDFrom(ctx context.Context) string {
 	return ""
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
+func writeJSON(w http.ResponseWriter, logger *slog.Logger, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Warn("writeJSON failed", "error", err)
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("writeJSON failed", "error", err)
 	}
 }
 
-func writeError(w http.ResponseWriter, status int, code, message, requestID string) {
-	writeJSON(w, status, map[string]any{
+func writeError(w http.ResponseWriter, logger *slog.Logger, status int, code, message, requestID string) {
+	writeJSON(w, logger, status, map[string]any{
 		"request_id": requestID,
 		"code":       code,
 		"message":    message,

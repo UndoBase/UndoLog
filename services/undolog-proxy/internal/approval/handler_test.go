@@ -99,7 +99,7 @@ func TestApprovalLifecycle(t *testing.T) {
 	}
 	handler := NewHandler(store, engine, mockExec, broadcaster, 0, 1<<20, nil)
 
-	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
+	rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	req := httptest.NewRequest(http.MethodGet, "/approvals?state=pending", nil)
 	req.Header.Set("X-Org-Id", "org-1")
@@ -133,7 +133,7 @@ func TestRejectForwardsActor(t *testing.T) {
 	store := NewStore()
 	engine := &mockEngine{}
 	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
-	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
+	rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", bytes.NewBufferString(`{"actor":"alice"}`))
 	req.Header.Set("X-Org-Id", "org-1")
@@ -153,7 +153,7 @@ func TestRejectDefaultsActorToUnknown(t *testing.T) {
 	store := NewStore()
 	engine := &mockEngine{}
 	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
-	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
+	rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", nil)
 	req.Header.Set("X-Org-Id", "org-1")
@@ -198,7 +198,7 @@ func TestMalformedDecisionBodyReturns400(t *testing.T) {
 			store := NewStore()
 			engine := &mockEngine{}
 			handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
-			rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
+			rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 			req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/"+action.name, bytes.NewBufferString(`{"actor":`))
 			req.Header.Set("X-Org-Id", "org-1")
@@ -225,7 +225,7 @@ func TestConcurrentDoubleApproveReturns409(t *testing.T) {
 		return protocol.ToolResult{Success: true, Output: []byte(`{"deleted":true}`)}, nil
 	}
 	handler := NewHandler(store, engine, mockExec, nil, 0, 1<<20, nil)
-	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
+	rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	const workers = 8
 	start := make(chan struct{})
@@ -278,7 +278,7 @@ func TestPostApprovalExecutionFailureUsesFail(t *testing.T) {
 		return protocol.ToolResult{}, errors.New("upstream exploded")
 	}
 	handler := NewHandler(store, engine, mockExec, nil, 0, 1<<20, nil)
-	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
+	rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{"id":"u1"}`))
 
 	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/approve", nil)
 	req.Header.Set("X-Org-Id", "org-1")
@@ -340,7 +340,7 @@ func TestApprovalMetricsRecorded(t *testing.T) {
 	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
 	handler.SetMetrics(registry)
 
-	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
+	rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
 
 	rej := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", bytes.NewBufferString(`{"actor":"alice"}`))
 	rej.Header.Set("X-Org-Id", "org-1")
@@ -387,7 +387,7 @@ func TestDecisionBodySizeLimit(t *testing.T) {
 	store := NewStore()
 	engine := &mockEngine{}
 	handler := NewHandler(store, engine, nil, nil, 0, 64, nil)
-	rec := handler.CreatePending("org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
+	rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
 
 	big := strings.Repeat("x", 4096)
 	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/reject", bytes.NewBufferString(`{"actor":"`+big+`"}`))
