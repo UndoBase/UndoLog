@@ -5,8 +5,6 @@
 package approval
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
@@ -57,22 +55,10 @@ func NewStore() *Store {
 	return &Store{records: make(map[string]Record)}
 }
 
-// NewID generates a UUID-like identifier for a new approval record.
-func NewID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	buf := make([]byte, 32)
-	hex.Encode(buf, b[:])
-	return string(buf)
-}
-
-// Create inserts a new approval record and returns the stored copy.
+// Create inserts a new approval record and returns the stored copy. The caller
+// supplies the record ID; the engine issues stable approval identifiers, so the
+// store never fabricates one.
 func (s *Store) Create(rec Record) Record {
-	if rec.ID == "" {
-		rec.ID = NewID()
-	}
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = time.Now().UTC()
 	}
@@ -159,12 +145,10 @@ func (s *Store) RestorePending(id string) {
 }
 
 // UpsertPending inserts a pending record or refreshes an existing one in place.
-// The reconciler uses it to restore the proxy's approval view from the engine;
-// it never downgrades an already-resolved local record back to pending.
+// The caller supplies the record ID; the reconciler passes engine-issued
+// approval identifiers, so the store never fabricates one. It also never
+// downgrades an already-resolved local record back to pending.
 func (s *Store) UpsertPending(rec Record) {
-	if rec.ID == "" {
-		rec.ID = NewID()
-	}
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = time.Now().UTC()
 	}

@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   it idle forever, the organisation id must come from the authenticated request
   (the ``?org_id=`` query fallback is removed), and subscriber channels are
   closed before graceful shutdown.
+- Go proxy: ``writeJSON`` failures log through the injected logger and
+  ``LogLevel`` accepts ``warn``/``error``; the stale proxy ``Dockerfile`` and
+  dead code (``effect_executed`` event, ``store.NewID``, advisory-lock helper)
+  are removed.
 
 ### Changed
 
