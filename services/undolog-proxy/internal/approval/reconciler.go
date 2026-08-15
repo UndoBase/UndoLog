@@ -21,7 +21,7 @@ import (
 // are always kept, and the records of a failed organization are left untouched
 // until the next cycle restores its status, so a transient engine error never
 // sweeps approvals a human may still decide on.
-func ReconcileApprovals(ctx context.Context, engine protocol.EngineClient, store *Store, orgIDs []string, logger *slog.Logger) (active map[string]struct{}, failedOrgs map[string]struct{}) {
+func ReconcileApprovals(ctx context.Context, engine protocol.EngineClient, store *Store, orgIDs []string, logger *slog.Logger) (active, failedOrgs map[string]struct{}) {
 	if logger == nil {
 		logger = slog.Default()
 	}

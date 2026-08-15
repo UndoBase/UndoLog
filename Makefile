@@ -48,7 +48,7 @@ lint:
 
 test:
 	cargo test --lib --workspace --exclude undolog-engine
-	cd services/undolog-proxy && go test ./... -count=1
+	cd services/undolog-proxy && go test -race ./... -count=1
 	cd sdks/undolog-py && python -m pytest -v
 	cd apps/www && npm run build
 

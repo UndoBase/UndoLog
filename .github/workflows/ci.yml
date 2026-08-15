@@ -58,6 +58,12 @@ jobs:
       - name: Run make check
         run: make check
 
+      - name: lint-go
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: services/undolog-proxy
+
       - name: Run example tests (unit only)
         run: |
           for dir in examples/*-support-agent; do

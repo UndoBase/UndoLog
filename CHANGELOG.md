@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   so ``npm publish`` emits no auto-correction warning.
 - ``sdks/undolog-ts/scripts/release.sh``: header now notes the script creates
   the tag and prints the push command rather than pushing itself.
+- Go proxy: ``golangci-lint`` (repo config) enforced and ``go test -race``
+  enabled in CI.
 
 ## [0.2.0] - 2026-08-01
 
