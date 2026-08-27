@@ -93,21 +93,34 @@ result = await kernel.invoke(
 
 ### 4. Handle the approval gate
 
-```python
-import httpx
+When an irreversible tool triggers `AwaitingApprovalError`, surface the approval
+identifier and pause. The human approves via the dashboard (`GET /events`
+SSE stream) or via `POST /approvals/{id}/approve`. Once the approval is
+resolved, retry the same tool call; the engine replays the cached result
+instead of re-executing.
 
-async def poll_approval(approval_id: str, timeout_secs: int = 300) -> bool:
-    """Poll until the approval is resolved or time runs out."""
-    client = httpx.AsyncClient(base_url="http://localhost:8080")
-    for _ in range(timeout_secs // 5):
-        resp = await client.get(f"/approvals/{approval_id}")
-        data = resp.json()
-        if data["status"] == "approved":
-            return True
-        elif data["status"] == "rejected":
-            return False
-        await asyncio.sleep(5)
-    return False
+```python
+from undolog_sdk import AwaitingApprovalError
+
+async def run_with_approval():
+    async with UndoLogSession(org_id="org_prod", session_id="doc-workflow-1") as session:
+        agent = ChatCompletionAgent(
+            service_id="gpt-4",
+            kernel=kernel,
+            name="DocManager",
+            instructions="You manage documents. Search, update, and archive as needed.",
+        )
+        history = []
+        try:
+            async for response in agent.invoke(history):
+                print(f"{response.role}: {response.content}")
+        except AwaitingApprovalError as e:
+            print(f"Awaiting approval: {e.approval_id}")
+            print("Approve via the dashboard or POST /approvals/" + e.approval_id + "/approve")
+            # After human approval, retry the same tool call.
+            # The engine replays the cached result (no re-execution).
+            async for response in agent.invoke(history):
+                print(f"{response.role}: {response.content}")
 ```
 
 ## Verify it works

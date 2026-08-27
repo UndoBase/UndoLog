@@ -140,7 +140,10 @@ The length prefixes ensure these produce different hashes even though the concat
 
 ## FNV-1a Advisory Lock Derivation
 
-The call signature is used to derive PostgreSQL advisory lock keys for concurrent write protection.
+The call signature is used by the **Rust engine** to derive PostgreSQL
+advisory lock keys for concurrent write protection. The Go proxy computes
+its own canonical JSON for signing but delegates deduplication and advisory
+locking to the engine via gRPC.
 
 ### Algorithm
 
@@ -149,17 +152,16 @@ FNV-1a 64-bit hash of the 64-char hex signature string
 → int64 (signed, for pg_try_advisory_xact_lock)
 ```
 
-### Implementation references
+### Implementation reference
 
 | Language | Location |
 |----------|----------|
-| Rust | `undolog-engine/src/engine.rs` internal logic |
-| Go | `services/undolog-proxy/internal/lock/advisory.go`: `func AdvisoryLockKey(signature string) int64` |
+| Rust | `undolog-store/src/effect_store.rs` advisory lock acquisition |
 
 ### Lock strategy
 
 ```
-1. Compute AdvisoryLockKey(call_signature)
+1. Compute advisory_lock_key(call_signature)  -- Rust engine
 2. SELECT pg_try_advisory_xact_lock(key)
 3. If false: retry up to UNDOLOG_LOCK_MAX_ATTEMPTS with UNDOLOG_LOCK_RETRY_MS backoff
 4. If still false: return AdvisoryLockTimeout error

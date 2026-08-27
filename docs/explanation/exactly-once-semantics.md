@@ -107,13 +107,12 @@ when the surrounding transaction commits or rolls back. This prevents two
 concurrent proxy instances from racing to insert the same signature. The
 lock key derivation uses FNV-1a, not BLAKE3, because advisory locks
 require a 64-bit integer key and FNV-1a is fast (no cryptographic
-overhead for a non-security use case). The Rust and Go implementations
-produce identical keys:
+overhead for a non-security use case). Advisory locking is implemented
+entirely in the Rust engine:
 
 | Language | Implementation |
 |---|---|
 | Rust | `crates/undolog-store/src/effect_store.rs:585-602` |
-| Go | `services/undolog-proxy/internal/lock/advisory.go:10-14` |
 
 If the lock cannot be acquired after `max_attempts` (default: 3) with
 `retry_ms` delay (default: 100ms), the engine returns
@@ -221,9 +220,7 @@ most conflicts before the INSERT.
 - Code: `crates/undolog-types/src/effect.rs:27-59`. CallSignature
   computation
 - Code: `crates/undolog-store/src/effect_store.rs:52-81`: advisory lock
-  acquisition
-- Code: `services/undolog-proxy/internal/lock/advisory.go:10-14`. Go
-  FNV-1a implementation
+  acquisition (Rust engine)
 - Code: `sdks/undolog-py/undolog_sdk/signature.py:45-109`. Python
   call_signature implementation
 - Schema: `migrations/0001_initial.sql:344-350`. UNIQUE constraint on

@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Documentation: sync proxy API, integration, and cross-reference docs to
+  reflect shipped approval flow, SSE events, and advisory locking ownership.
 - TypeScript SDK: publish via npm Trusted Publishing (OIDC) with no
   long-lived npm token; redundant publish build step removed.
 - CI workflows: Node 20 bumped to 24 (Node 20 is deprecated on GitHub
