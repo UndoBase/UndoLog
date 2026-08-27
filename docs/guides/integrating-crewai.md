@@ -94,30 +94,26 @@ async def run_crew_with_undolog():
 
 ### 3. Handle the approval flow
 
-CrewAI does not natively support mid-execution pauses. When an irreversible tool triggers `AwaitingApprovalError`, catch it and poll for approval:
+CrewAI does not natively support mid-execution pauses. When an irreversible
+tool triggers `AwaitingApprovalError`, surface the approval identifier and
+pause. The human approves via the dashboard (`GET /events` SSE stream) or via
+`POST /approvals/{id}/approve`. Once the approval is resolved, retry the same
+tool call; the engine replays the cached result instead of re-executing.
 
 ```python
-import time
-import httpx
+from undolog_sdk import AwaitingApprovalError
 
-async def run_with_approval_polling():
-    async with UndoLogSession(org_id="org_prod") as session:
+def run_crew_with_approval():
+    with UndoLogSession(org_id="org_prod") as session:
         crew = Crew(agents=[publisher], tasks=[Task(description="Send newsletter", agent=publisher)], process=Process.sequential)
-        while True:
-            try:
-                return crew.kickoff()
-            except AwaitingApprovalError as e:
-                print(f"Awaiting approval: {e.approval_id}")
-                while True:
-                    resp = httpx.get(f"http://localhost:8080/approvals/{e.approval_id}")
-                    data = resp.json()
-                    if data["status"] == "approved":
-                        print("Approved: continuing")
-                        break
-                    elif data["status"] == "rejected":
-                        print("Rejected: halting crew")
-                        return
-                    await asyncio.sleep(5)
+        try:
+            return crew.kickoff()
+        except AwaitingApprovalError as e:
+            print(f"Awaiting approval: {e.approval_id}")
+            print("Approve via the dashboard or POST /approvals/" + e.approval_id + "/approve")
+            # After human approval, retry the same tool call.
+            # The engine replays the cached result (no re-execution).
+            return crew.kickoff()
 ```
 
 ## Verify it works

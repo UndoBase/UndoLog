@@ -160,7 +160,7 @@ Rust, Go, and Python:
 |---|---|---|---|
 | Canonical JSON (sorted keys) | `canonical_json` in `undolog-types/src/effect.rs:81-103` | `writeCanonicalJSON` in `internal/proxy/signature.go:33-72` | `canonical_json` in `undolog_sdk/signature.py:19-42` |
 | BLAKE3 call signature | `CallSignature::compute` in `undolog-types/src/effect.rs:33-59` | (delegated to Rust engine) | `call_signature` in `undolog_sdk/signature.py:45-109` |
-| FNV-1a advisory lock key | `advisory_lock_key` in `undolog-store/src/effect_store.rs:585-602` | `AdvisoryLockKey` in `internal/lock/advisory.go:10-14` | (not needed. Python sends to proxy) |
+| FNV-1a advisory lock key | `advisory_lock_key` in `undolog-store/src/effect_store.rs:585-602` | (engine-owned) | (not needed. Python sends to proxy) |
 
 Each implementation includes unit tests that verify cross-language
 equivalence. The canonical JSON tests sort keys recursively and strip
@@ -252,8 +252,6 @@ ecosystem.
   shared protocol types
 - Code: `services/undolog-proxy/internal/proxy/signature.go:15-31` .
   canonical JSON in Go
-- Code: `services/undolog-proxy/internal/lock/advisory.go:10-14`. FNV-1a
-  in Go
 - Code: `sdks/undolog-py/undolog_sdk/decorators.py:51-176`: framework-
   agnostic Python decorator
 - Code: `sdks/undolog-py/undolog_sdk/signature.py:45-109`. Python

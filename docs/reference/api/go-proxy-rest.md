@@ -290,7 +290,10 @@ Approve a pending approval request and resume the suspended session.
 ```json
 {
   "status": "approved",
-  "approval_id": "uuid"
+  "approval_id": "uuid",
+  "effect_id": "uuid",
+  "execution": "committed",
+  "result": {}
 }
 ```
 
@@ -298,6 +301,10 @@ Approve a pending approval request and resume the suspended session.
 |-------|------|-------------|
 | `status` | `string` | `"approved"` |
 | `approval_id` | `string` | Approval request identifier. |
+| `effect_id` | `string` | Effect identifier. |
+| `execution` | `string` | `"committed"` on success, `"failed"` if the tool execution failed after approval. |
+| `result` | `object` | Upstream tool execution result (present when `execution` is `"committed"`). |
+| `error` | `string` | Execution error message (present when `execution` is `"failed"`). |
 
 #### Error Responses
 
@@ -380,7 +387,6 @@ Server-Sent Events stream for real-time dashboard updates.
 | Event | Description |
 |-------|-------------|
 | `effect_intercepted` | Tool call reached the engine for interception. |
-| `effect_executed` | Tool call ran upstream. |
 | `effect_committed` | Engine committed the effect successfully. |
 | `effect_replayed` | Tool call served from cached state. |
 | `effect_failed` | Failure at any interception stage. |
