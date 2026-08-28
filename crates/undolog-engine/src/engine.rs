@@ -34,11 +34,23 @@ pub struct EngineConfig {
     pub lock_max_attempts: u32,
     /// Delay in milliseconds between lock acquisition attempts (default: 100).
     pub lock_retry_ms: u64,
+    /// Approval timeout in seconds (default: 86400 = 24 hours).
+    pub approval_timeout_secs: i64,
+    /// Whether to auto-approve approvals that time out (default: false).
+    pub auto_approve_on_timeout: bool,
+    /// How often to check for timed-out approvals in seconds (default: 60).
+    pub timeout_check_interval_secs: u64,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        Self { lock_max_attempts: 3, lock_retry_ms: 100 }
+        Self {
+            lock_max_attempts: 3,
+            lock_retry_ms: 100,
+            approval_timeout_secs: 86400,
+            auto_approve_on_timeout: false,
+            timeout_check_interval_secs: 60,
+        }
     }
 }
 
@@ -238,8 +250,8 @@ impl EffectEngine {
                     agent_context: serde_json::json!({}),
                     state: ApprovalState::Pending,
                     created_at: now,
-                    timeout_at: now + chrono::Duration::hours(24),
-                    auto_approve_on_timeout: false,
+                    timeout_at: now + chrono::Duration::seconds(self.config.approval_timeout_secs),
+                    auto_approve_on_timeout: self.config.auto_approve_on_timeout,
                     resolved_at: None,
                     resolved_by: None,
                     approved_args: None,
@@ -473,5 +485,24 @@ mod tests {
         let config = EngineConfig::default();
         assert_eq!(config.lock_max_attempts, 3);
         assert_eq!(config.lock_retry_ms, 100);
+        assert_eq!(config.approval_timeout_secs, 86400);
+        assert!(!config.auto_approve_on_timeout);
+        assert_eq!(config.timeout_check_interval_secs, 60);
+    }
+
+    #[test]
+    fn engine_config_custom_values() {
+        let config = EngineConfig {
+            lock_max_attempts: 5,
+            lock_retry_ms: 200,
+            approval_timeout_secs: 3600,
+            auto_approve_on_timeout: true,
+            timeout_check_interval_secs: 30,
+        };
+        assert_eq!(config.lock_max_attempts, 5);
+        assert_eq!(config.lock_retry_ms, 200);
+        assert_eq!(config.approval_timeout_secs, 3600);
+        assert!(config.auto_approve_on_timeout);
+        assert_eq!(config.timeout_check_interval_secs, 30);
     }
 }

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Engine: approval timeout processing with configurable interval, timeout
+  duration, and auto-approve policy with audit events.
 - Go proxy: HTTP hardening: configurable body/header caps (413 on oversized
   bodies), read-header and idle timeouts, fail-fast config on missing API keys
   or invalid upstream URLs, and constant-time API-key auth via SHA-256 digests.

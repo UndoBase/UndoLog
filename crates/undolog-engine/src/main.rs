@@ -27,11 +27,16 @@ const ENV_LOG_LEVEL: &str = "UNDOLOG_LOG_LEVEL";
 const ENV_REGISTRY_REFRESH_SECS: &str = "UNDOLOG_REGISTRY_REFRESH_SECS";
 const ENV_LOCK_MAX_ATTEMPTS: &str = "UNDOLOG_LOCK_MAX_ATTEMPTS";
 const ENV_LOCK_RETRY_MS: &str = "UNDOLOG_LOCK_RETRY_MS";
+const ENV_APPROVAL_TIMEOUT_SECS: &str = "UNDOLOG_APPROVAL_TIMEOUT_SECS";
+const ENV_AUTO_APPROVE_ON_TIMEOUT: &str = "UNDOLOG_AUTO_APPROVE_ON_TIMEOUT";
+const ENV_TIMEOUT_CHECK_INTERVAL_SECS: &str = "UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS";
 
 const DEFAULT_GRPC_ADDR: &str = "0.0.0.0:50051";
 const DEFAULT_HEALTH_ADDR: &str = "0.0.0.0:9090";
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_REGISTRY_REFRESH_SECS: &str = "15";
+const DEFAULT_APPROVAL_TIMEOUT_SECS: &str = "86400";
+const DEFAULT_TIMEOUT_CHECK_INTERVAL_SECS: &str = "60";
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
@@ -55,6 +60,17 @@ async fn main() -> Result<()> {
         env_or(ENV_LOCK_MAX_ATTEMPTS, "3").parse().context("Invalid UNDOLOG_LOCK_MAX_ATTEMPTS")?;
     let lock_retry_ms: u64 =
         env_or(ENV_LOCK_RETRY_MS, "100").parse().context("Invalid UNDOLOG_LOCK_RETRY_MS")?;
+    let approval_timeout_secs: i64 =
+        env_or(ENV_APPROVAL_TIMEOUT_SECS, DEFAULT_APPROVAL_TIMEOUT_SECS)
+            .parse()
+            .context("Invalid UNDOLOG_APPROVAL_TIMEOUT_SECS")?;
+    let auto_approve_on_timeout: bool = env_or(ENV_AUTO_APPROVE_ON_TIMEOUT, "false")
+        .parse()
+        .context("Invalid UNDOLOG_AUTO_APPROVE_ON_TIMEOUT")?;
+    let timeout_check_interval_secs: u64 =
+        env_or(ENV_TIMEOUT_CHECK_INTERVAL_SECS, DEFAULT_TIMEOUT_CHECK_INTERVAL_SECS)
+            .parse()
+            .context("Invalid UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS")?;
 
     // Initialize structured JSON logging.
     tracing_subscriber::fmt()
@@ -67,7 +83,13 @@ async fn main() -> Result<()> {
         .json()
         .init();
 
-    let engine_config = EngineConfig { lock_max_attempts, lock_retry_ms };
+    let engine_config = EngineConfig {
+        lock_max_attempts,
+        lock_retry_ms,
+        approval_timeout_secs,
+        auto_approve_on_timeout,
+        timeout_check_interval_secs,
+    };
 
     info!(
         grpc_addr = %grpc_addr,
