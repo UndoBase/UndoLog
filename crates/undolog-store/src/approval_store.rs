@@ -142,6 +142,38 @@ impl ApprovalStore {
         Ok(())
     }
 
+    /// Append an immutable audit event within an existing transaction.
+    pub async fn append_audit_event_with_tx(
+        &self,
+        tx: &mut Transaction<'static, sqlx::Postgres>,
+        req_id: &ApprovalRequestId,
+        org_id: &OrgId,
+        action: &ApprovalAction,
+        actor: &str,
+        note: Option<&str>,
+    ) -> UndoLogResult<()> {
+        let action_str = Self::approval_action_to_string(action);
+
+        sqlx::query(
+            r#"
+            INSERT INTO undolog_approval_events (
+                event_id, approval_request_id, org_id,
+                action, actor, note, occurred_at
+            )
+            VALUES (gen_random_uuid(), $1, $2, $3::undolog_approval_action, $4, $5, now())
+            "#,
+        )
+        .bind(*req_id.as_uuid())
+        .bind(*org_id.as_uuid())
+        .bind(action_str)
+        .bind(actor)
+        .bind(note)
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(())
+    }
+
     fn approval_action_to_string(action: &ApprovalAction) -> &'static str {
         match action {
             ApprovalAction::Approve => "approve",
@@ -161,29 +193,89 @@ impl ApprovalStore {
 
     /// Auto-approve or auto-reject timed-out requests.
     ///
-    /// Called by a background task on a regular interval.
+    /// Called by a background task on a regular interval. Records an audit
+    /// event for each processed request so the approval lifecycle is
+    /// fully traceable.
+    ///
     /// Returns the number of requests processed.
     pub async fn process_timeouts(&self, org_id: &OrgId) -> UndoLogResult<u64> {
-        let rows = sqlx::query(
+        let mut tx = self.pool.begin().await?;
+
+        // Find pending approvals that have timed out.
+        let rows: Vec<(ApprovalRequestId, bool)> = sqlx::query(
             r#"
-            UPDATE undolog_approval_requests
-            SET state       = CASE
-                                WHEN auto_approve_on_timeout THEN 'auto_approved'::undolog_approval_state
-                                ELSE 'timed_out'::undolog_approval_state
-                              END,
-                resolved_at = now(),
-                resolved_by = 'system:timeout'
-            WHERE org_id   = $1
-              AND state    = 'pending'::undolog_approval_state
+            SELECT approval_request_id, auto_approve_on_timeout
+            FROM undolog_approval_requests
+            WHERE org_id = $1
+              AND state  = 'pending'::undolog_approval_state
               AND timeout_at < now()
             "#,
         )
         .bind(*org_id.as_uuid())
-        .execute(&self.pool)
+        .fetch_all(&mut *tx)
         .await?
-        .rows_affected();
+        .iter()
+        .map(|row| {
+            (
+                ApprovalRequestId::from_uuid(row.try_get("approval_request_id").unwrap()),
+                row.try_get("auto_approve_on_timeout").unwrap(),
+            )
+        })
+        .collect();
 
-        Ok(rows)
+        let count = rows.len() as u64;
+
+        for (approval_id, auto_approve) in &rows {
+            let new_state = if *auto_approve { "auto_approved" } else { "timed_out" };
+
+            sqlx::query(
+                r#"
+                UPDATE undolog_approval_requests
+                SET state       = $1::undolog_approval_state,
+                    resolved_at = now(),
+                    resolved_by = 'system:timeout'
+                WHERE approval_request_id = $2
+                  AND org_id = $3
+                "#,
+            )
+            .bind(new_state)
+            .bind(*approval_id.as_uuid())
+            .bind(*org_id.as_uuid())
+            .execute(&mut *tx)
+            .await?;
+
+            // Record audit event.
+            self.append_audit_event_with_tx(
+                &mut tx,
+                approval_id,
+                org_id,
+                &ApprovalAction::Timeout,
+                "system:timeout",
+                None,
+            )
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(count)
+    }
+
+    /// Return all organisation IDs that have pending approval requests.
+    ///
+    /// Used by the background timeout processor to avoid scanning orgs with
+    /// no pending approvals.
+    pub async fn list_orgs_with_pending_approvals(&self) -> UndoLogResult<Vec<OrgId>> {
+        let rows = sqlx::query_scalar(
+            r#"
+            SELECT DISTINCT org_id
+            FROM undolog_approval_requests
+            WHERE state = 'pending'::undolog_approval_state
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(OrgId::from_uuid).collect())
     }
 
     /// Load all unresolved approval requests for an organization.

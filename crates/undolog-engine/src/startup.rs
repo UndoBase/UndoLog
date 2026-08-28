@@ -119,9 +119,19 @@ pub async fn build_engine(
     info!(interval_secs = registry_refresh_interval.as_secs(), "Spawning registry refresh loop");
     crate::tier_registry::spawn_refresh_loop(
         registry.read().await.clone(),
-        pool,
+        pool.clone(),
         registry_refresh_interval,
     );
+
+    // Spawn the approval timeout processor (runs in background, processes timed-out approvals).
+    let timeout_interval = Duration::from_secs(config.timeout_check_interval_secs);
+    info!(
+        interval_secs = timeout_interval.as_secs(),
+        approval_timeout_secs = config.approval_timeout_secs,
+        auto_approve = config.auto_approve_on_timeout,
+        "Spawning approval timeout processor"
+    );
+    spawn_timeout_processor(approval_store.clone(), timeout_interval);
 
     // Build and return the engine.
     let engine = EffectEngine::new(effect_store, session_store, approval_store, registry, config);
@@ -165,4 +175,51 @@ async fn wait_for_schema(pool: &sqlx::PgPool) -> Result<(), UndoLogError> {
          ensure database migrations have been applied"
             .into(),
     ))
+}
+
+/// Spawn a background task that periodically processes timed-out approvals.
+///
+/// The task iterates over all organisations with pending approvals and
+/// calls `process_timeouts` to transition expired requests to `timed_out`
+/// or `auto_approved` states. Each processed request gets an audit event
+/// recorded in `undolog_approval_events`.
+fn spawn_timeout_processor(approval_store: ApprovalStore, interval: Duration) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            ticker.tick().await;
+
+            match approval_store.list_orgs_with_pending_approvals().await {
+                Ok(org_ids) => {
+                    for org_id in &org_ids {
+                        match approval_store.process_timeouts(org_id).await {
+                            Ok(count) if count > 0 => {
+                                info!(
+                                    org_id = %org_id,
+                                    processed = count,
+                                    "Approval timeout processor: handled timed-out approvals"
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                warn!(
+                                    org_id = %org_id,
+                                    error = %e,
+                                    "Approval timeout processor: failed to process timeouts"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Approval timeout processor: failed to list orgs"
+                    );
+                }
+            }
+        }
+    });
 }
