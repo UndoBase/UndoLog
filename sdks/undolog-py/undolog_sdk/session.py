@@ -14,10 +14,15 @@ Usage::
 
 from __future__ import annotations
 
+import sys
 import types
 import uuid
 from dataclasses import dataclass, field
-from typing import Self
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 
 @dataclass

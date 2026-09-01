@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Python SDK: ``approve`` and ``reject`` methods on ``UndoLogClient`` for the
+  approval lifecycle, and ``UndoLogSession`` exported from the top-level package.
 - Engine: approval timeout processing with configurable interval, timeout
   duration, and auto-approve policy with audit events.
 - Go proxy: HTTP hardening: configurable body/header caps (413 on oversized
@@ -53,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Python SDK (breaking):** SAFE-tier tools no longer consume a step index,
+  aligning Python behaviour with TypeScript.
+- Python SDK: ``typing.Self`` import fixed for Python 3.10 via
+  ``typing_extensions`` conditional dependency.
+- Python SDK: ``commit``/``fail`` docstrings corrected (no-ops through proxy);
+  ``InterceptResponse.effect_id`` docstring corrected (not present for
+  AwaitingApproval); unknown proxy status raises ``ValueError``; ``fail``
+  error chaining preserves the original tool exception.
 - Documentation: sync proxy API, integration, and cross-reference docs to
   reflect shipped approval flow, SSE events, and advisory locking ownership.
 - TypeScript SDK: publish via npm Trusted Publishing (OIDC) with no

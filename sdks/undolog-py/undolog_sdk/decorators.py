@@ -106,12 +106,13 @@ def undolog_tool(
                     f"Pass {session_param}=session to the call."
                 )
 
-            step_index = session.next_step()
             cl = client if client is not None else _get_default_client()
 
             # Safe tier: bypass the proxy entirely - execute freely.
             if tier is ToolTier.SAFE:
                 return await func(*args, **kwargs)
+
+            step_index = session.next_step()
 
             # Build the args dict from all parameters.
             sig = inspect.signature(func)
@@ -146,12 +147,15 @@ def undolog_tool(
                 result = await func(*args, **kwargs)
             except Exception as exc:
                 if response.effect_id:
-                    await cl.fail(
-                        org_id=session.org_id,
-                        session_id=session.session_id,
-                        effect_id=response.effect_id,
-                        error=str(exc),
-                    )
+                    try:
+                        await cl.fail(
+                            org_id=session.org_id,
+                            session_id=session.session_id,
+                            effect_id=response.effect_id,
+                            error=str(exc),
+                        )
+                    except Exception:
+                        raise exc from None
                 raise
 
             if response.effect_id:
