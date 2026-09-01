@@ -68,7 +68,7 @@ class TestSafeTier:
             return "ok"
 
         await noop(_session=session)
-        assert session._step_index == 1
+        assert session._step_index == 0
 
 
 # ── Compensable tier - Execute outcome ────────────────────────────────────
@@ -421,10 +421,10 @@ class TestNetworkErrors:
             await my_tool(_session=session)
 
     async def test_fail_connect_error(self, session: UndoLogSession) -> None:
-        """ConnectError during fail replaces the original function error.
+        """ConnectError during fail preserves the original function error.
 
         When the function body raises and the subsequent ``fail()`` call also
-        fails, the network error propagates (the original exception is lost).
+        fails, the original exception is preserved (not the network error).
         """
         call_count: int = 0
 
@@ -451,5 +451,5 @@ class TestNetworkErrors:
         async def failing_tool() -> str:
             raise ValueError("tool error")
 
-        with pytest.raises(httpx.ConnectError):
+        with pytest.raises(ValueError, match="tool error"):
             await failing_tool(_session=session)

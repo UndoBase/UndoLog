@@ -28,7 +28,7 @@ class InterceptResponse:
     =================== ========== ========== ================
     Field                Execute    Replay     AwaitingApproval
     =================== ========== ========== ================
-    ``effect_id``        ✓          ✓          ✓
+    ``effect_id``        ✓          ✓          -
     ``approval_id``      -          -          ✓
     ``cached_result``    -          ✓          -
     =================== ========== ========== ================
@@ -38,13 +38,13 @@ class InterceptResponse:
     """One of ``Execute``, ``Replay``, ``AwaitingApproval``."""
 
     effect_id: str | None = None
-    """Effect log entry identifier - present for all outcomes."""
+    """Effect log entry identifier. Present for Execute and Replay outcomes."""
 
     approval_id: str | None = None
-    """Approval request identifier - present only for AwaitingApproval."""
+    """Approval request identifier: present only for AwaitingApproval."""
 
     cached_result: dict[str, Any] | None = None
-    """Cached tool result - present only for Replay."""
+    """Cached tool result: present only for Replay."""
 
 
 def _default_proxy_url() -> str:
@@ -136,7 +136,9 @@ class UndoLogClient:
             "replayed": "Replay",
             "pending_approval": "AwaitingApproval",
         }
-        outcome = outcome_map.get(status, status.capitalize())
+        if status not in outcome_map:
+            raise ValueError(f"Unexpected proxy status: {status!r}")
+        outcome = outcome_map[status]
         return InterceptResponse(
             outcome=outcome,
             effect_id=body.get("effect_id"),
@@ -154,10 +156,13 @@ class UndoLogClient:
         """Commit a tool result for a proxy-originated call.
 
         For calls routed through ``POST /mcp/tool_call`` the proxy commits
-        inline and this method is a safe no-op.  For direct engine access
-        this sends ``PUT /effects/{effect_id}/commit`` to persist the result.
+        inline and this method is a safe no-op (returns empty dict).
 
-        Returns the server response body (or empty dict for the inline path).
+        This method exists for API parity with a future direct-engine HTTP
+        surface.  Against the current proxy it always returns ``{}``.
+
+        Returns:
+            Empty dict (the proxy commits inline via ``POST /mcp/tool_call``).
         """
         url = f"/effects/{effect_id}/commit"
         body = {"session_id": session_id, "result": result}
@@ -181,10 +186,13 @@ class UndoLogClient:
         """Mark an effect as failed and trigger compensation rollback.
 
         For calls routed through ``POST /mcp/tool_call`` the proxy handles
-        failure inline and this method is a safe no-op.  For direct engine
-        access this sends ``PUT /effects/{effect_id}/fail``.
+        failure inline and this method is a safe no-op (returns empty dict).
 
-        Returns the server response body (or empty dict for the inline path).
+        This method exists for API parity with a future direct-engine HTTP
+        surface.  Against the current proxy it always returns ``{}``.
+
+        Returns:
+            Empty dict (the proxy handles failure inline via ``POST /mcp/tool_call``).
         """
         url = f"/effects/{effect_id}/fail"
         body = {"session_id": session_id, "error": error}
@@ -195,6 +203,63 @@ class UndoLogClient:
         )
         if resp.status_code == 404:
             return {}
+        resp.raise_for_status()
+        return cast(dict[str, Any], resp.json())
+
+    async def approve(
+        self,
+        org_id: str,
+        approval_id: str,
+    ) -> dict[str, Any]:
+        """Approve a pending approval request and resume the session.
+
+        Args:
+            org_id: Organisation identifier (advisory; the proxy derives org
+                from ``X-Api-Key``).
+            approval_id: Approval request identifier from ``AwaitingApprovalError``.
+
+        Returns:
+            Server response with ``status``, ``approval_id``, ``effect_id``,
+            ``execution``, and ``result`` fields.
+
+        Raises:
+            httpx.HTTPStatusError: On proxy-level HTTP errors (4xx/5xx).
+            httpx.RequestError: On connection or timeout errors.
+        """
+        url = f"/approvals/{approval_id}/approve"
+        resp = await self._http.post(
+            url,
+            headers=self._headers(org_id, ""),
+            json={},
+        )
+        resp.raise_for_status()
+        return cast(dict[str, Any], resp.json())
+
+    async def reject(
+        self,
+        org_id: str,
+        approval_id: str,
+    ) -> dict[str, Any]:
+        """Reject a pending approval request and halt the session.
+
+        Args:
+            org_id: Organisation identifier (advisory; the proxy derives org
+                from ``X-Api-Key``).
+            approval_id: Approval request identifier from ``AwaitingApprovalError``.
+
+        Returns:
+            Server response with ``status`` and ``approval_id`` fields.
+
+        Raises:
+            httpx.HTTPStatusError: On proxy-level HTTP errors (4xx/5xx).
+            httpx.RequestError: On connection or timeout errors.
+        """
+        url = f"/approvals/{approval_id}/reject"
+        resp = await self._http.post(
+            url,
+            headers=self._headers(org_id, ""),
+            json={},
+        )
         resp.raise_for_status()
         return cast(dict[str, Any], resp.json())
 

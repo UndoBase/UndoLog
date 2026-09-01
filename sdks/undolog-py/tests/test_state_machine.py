@@ -121,7 +121,7 @@ class TestEffectTransitions:
         self, session: UndoLogSession, mock_client: AsyncMock
     ) -> None:
         mock_client.intercept.return_value = InterceptResponse(
-            outcome="AwaitingApproval", effect_id="e4", approval_id="ap-1"
+            outcome="AwaitingApproval", approval_id="ap-1"
         )
 
         @undolog_tool(tier=ToolTier.IRREVERSIBLE, client=mock_client)
@@ -176,16 +176,18 @@ class TestSessionStepInvariants:
         assert session.next_step() == 3
         assert session._step_index == 3
 
-    async def test_safe_tools_increment_step(self, session: UndoLogSession) -> None:
+    async def test_safe_tools_do_not_increment_step(
+        self, session: UndoLogSession
+    ) -> None:
         @undolog_tool(tier=ToolTier.SAFE)
         async def t() -> str:
             return "ok"
 
         await t(_session=session)
-        assert session._step_index == 1
+        assert session._step_index == 0
 
         await t(_session=session)
-        assert session._step_index == 2
+        assert session._step_index == 0
 
     async def test_compensable_tools_increment_step(
         self, session: UndoLogSession, mock_client: AsyncMock
