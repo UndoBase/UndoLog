@@ -10,6 +10,7 @@ Environment configuration:
 from __future__ import annotations
 
 import os
+import types
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -266,6 +267,19 @@ class UndoLogClient:
     async def aclose(self) -> None:
         """Close the underlying HTTP client session."""
         await self._http.aclose()
+
+    async def __aenter__(self) -> UndoLogClient:
+        """Enter the async context manager."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        """Exit the async context manager, closing the HTTP client."""
+        await self.aclose()
 
     def _headers(self, org_id: str, session_id: str) -> dict[str, str]:
         """Build tenant-scoped headers for every proxy request.

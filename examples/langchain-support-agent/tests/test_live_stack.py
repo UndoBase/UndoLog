@@ -601,11 +601,11 @@ class TestConcurrentExecution:
 
             effects = await fetch_effects(db_conn, session_id)
             # SAFE tool (lookup_customer) does not create an effect-log entry.
-            # The 10 send_email calls produce steps 2-11.
+            # The 10 send_email calls produce steps 1-10.
             assert len(effects) == 10, f"Expected 10 effects, got {len(effects)}"
 
             steps = [e["step_index"] for e in effects]
-            assert steps == list(range(2, 12)), f"Unexpected step indices: {steps}"
+            assert steps == list(range(1, 11)), f"Unexpected step indices: {steps}"
 
             for e in effects:
                 assert e["state"] == "committed", (
@@ -693,11 +693,11 @@ class TestCompensationChain:
             undo_entries = await fetch_undo_stack(db_conn, session_id)
             assert len(undo_entries) == 4
 
-            # SAFE tool (lookup_user) consumes step 1 without going through
-            # the proxy, so COMPENSABLE tools get steps 2-5.  Undo stack
-            # positions match step indices, ordered DESC (LIFO).
-            assert undo_entries[0]["stack_position"] == 5
-            assert undo_entries[3]["stack_position"] == 2
+            # SAFE tool (lookup_user) does not create an effect-log entry.
+            # COMPENSABLE tools get steps 1-4.  Undo stack positions match
+            # step indices, ordered DESC (LIFO).
+            assert undo_entries[0]["stack_position"] == 4
+            assert undo_entries[3]["stack_position"] == 1
 
             for entry in undo_entries:
                 assert entry["state"] in ("pending", "running", "compensated", "failed"), (

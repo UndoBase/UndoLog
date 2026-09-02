@@ -15,10 +15,17 @@ Key exports:
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+
 from undolog_sdk.client import UndoLogClient
 from undolog_sdk.decorators import AwaitingApprovalError, undolog_tool
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.tier import CompensationDescriptor, ToolTier
+
+try:
+    __version__ = version("undolog-sdk")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
 
 __all__ = [
     "AwaitingApprovalError",
@@ -26,5 +33,6 @@ __all__ = [
     "ToolTier",
     "UndoLogClient",
     "UndoLogSession",
+    "__version__",
     "undolog_tool",
 ]
