@@ -7,7 +7,7 @@ name = "undolog-sdk"
 version = "0.1.0"
 description = "Python SDK for the UndoLog effect-tracking and exactly-once execution system"
 readme = "README.md"
-license = {text = "MIT"}
+license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
     {name = "UndoLog Contributors"},
@@ -16,7 +16,6 @@ keywords = ["undolog", "exactly-once", "effect-tracking", "llm", "mcp"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -37,6 +36,9 @@ Tracker = "https://github.com/UndoBase/UndoLog/issues"
 
 [tool.setuptools.packages.find]
 include = ["undolog_sdk*"]
+
+[tool.setuptools.package-data]
+undolog_sdk = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

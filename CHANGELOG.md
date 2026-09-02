@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Python SDK: ``__version__`` exposed via ``importlib.metadata``; async context
+  manager on ``UndoLogClient``; ``py.typed`` PEP 561 marker.
 - Python SDK: ``approve`` and ``reject`` methods on ``UndoLogClient`` for the
   approval lifecycle, and ``UndoLogSession`` exported from the top-level package.
 - Engine: approval timeout processing with configurable interval, timeout
@@ -57,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **Python SDK (breaking):** SAFE-tier tools no longer consume a step index,
   aligning Python behaviour with TypeScript.
+- Python SDK: license metadata corrected from MIT to Apache-2.0 (matches repo
+  root ``LICENSE`` and README).
 - Python SDK: ``typing.Self`` import fixed for Python 3.10 via
   ``typing_extensions`` conditional dependency.
 - Python SDK: ``commit``/``fail`` docstrings corrected (no-ops through proxy);
