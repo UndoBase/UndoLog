@@ -58,6 +58,9 @@ jobs:
       - name: Run make check
         run: make check
 
+      - name: Type check (mypy)
+        run: make typecheck
+
       - name: lint-go
         uses: golangci/golangci-lint-action@v9
         with:
