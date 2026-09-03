@@ -165,7 +165,8 @@
     "esbuild": "0.28.1",
     "fast-uri": "3.1.7",
     "ip-address": "10.7.0",
-    "hono": "4.13.5"
+    "hono": "4.13.5",
+    "postcss": "8.5.27"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0"
