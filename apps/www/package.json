@@ -34,7 +34,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "js-yaml": "^3.15.0",
+    "js-yaml": "^3.15.1",
     "typescript": "^5"
   }
 }
