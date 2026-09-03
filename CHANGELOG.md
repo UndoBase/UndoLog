@@ -151,6 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Security: bumped ``fast-uri`` to 3.1.7 in the TypeScript SDK, fixing 5 High
   severity host confusion and SSRF vulnerabilities.
+- Security: bumped ``ip-address`` to 10.7.0 in the TypeScript SDK, fixing 3
+  SSRF and trust-boundary bypass vulnerabilities.
 
 - TypeScript SDK: tests are type-checked in CI; ``sessionId`` validated on
   ``intercept()``; ``wrapTool`` compensates when ``commit()`` fails and logs
