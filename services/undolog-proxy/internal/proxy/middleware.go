@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -30,14 +31,15 @@ const (
 	httpDurationMetric = "undolog_proxy_http_request_duration_seconds"
 )
 
-// apiKeyEntry holds one trusted API key as its SHA-256 digest so the request
-// path never compares plaintext keys. Constant-time digest comparison removes
-// the timing side channel a naive string membership check would expose.
+// apiKeyEntry holds one trusted API key as its HMAC-SHA-256 digest so the
+// request path never compares plaintext keys. Constant-time digest comparison
+// removes the timing side channel a naive string membership check would expose.
 //
-// SHA-256 is deliberate: a slow password KDF such as bcrypt only helps
-// low-entropy passwords and would cost CPU time on every request.
+// HMAC-SHA-256 with a random secret prevents rainbow table attacks and satisfies
+// CodeQL's weak-crypto rule, while keeping the performance profile of a fast
+// hash (API keys are high-entropy; a slow KDF like bcrypt is unnecessary).
 type apiKeyEntry struct {
-	digest [sha256.Size]byte
+	digest []byte
 	orgID  string
 }
 
@@ -45,6 +47,7 @@ type apiKeyEntry struct {
 type MiddlewareStack struct {
 	logger  *slog.Logger
 	apiKeys []apiKeyEntry
+	hmacKey []byte
 	metrics *metrics.Registry
 }
 
@@ -53,11 +56,24 @@ func NewMiddlewareStack(logger *slog.Logger, trustedAPIKeys map[string]string) *
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Generate a random HMAC secret at startup. API keys are re-hashed on
+	// every boot from the configuration, so this is safe.
+	hmacKey := make([]byte, 32)
+	if _, err := rand.Read(hmacKey); err != nil {
+		panic("failed to generate HMAC key: " + err.Error())
+	}
 	entries := make([]apiKeyEntry, 0, len(trustedAPIKeys))
 	for key, org := range trustedAPIKeys {
-		entries = append(entries, apiKeyEntry{digest: sha256.Sum256([]byte(key)), orgID: org})
+		entries = append(entries, apiKeyEntry{digest: hmacDigest(hmacKey, key), orgID: org})
 	}
-	return &MiddlewareStack{logger: logger, apiKeys: entries}
+	return &MiddlewareStack{logger: logger, apiKeys: entries, hmacKey: hmacKey}
+}
+
+// hmacDigest computes HMAC-SHA-256 of the given data using the provided key.
+func hmacDigest(key []byte, data string) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(data))
+	return mac.Sum(nil)
 }
 
 // SetMetrics wires the registry so every processed request contributes an HTTP
@@ -74,7 +90,7 @@ func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 			writeError(w, m.logger, http.StatusUnauthorized, "auth_failed", "X-Api-Key header required", "")
 			return
 		}
-		orgID, ok := m.orgForKey(sha256.Sum256([]byte(apiKey)))
+		orgID, ok := m.orgForKey(hmacDigest(m.hmacKey, apiKey))
 		if !ok {
 			writeError(w, m.logger, http.StatusForbidden, "auth_failed", "API key not recognized", "")
 			return
@@ -89,9 +105,9 @@ func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 // orgForKey resolves the organization served by an API-key digest. Every
 // candidate digest is compared in constant time so the lookup does not leak
 // which key (or whether any key) matched.
-func (m *MiddlewareStack) orgForKey(digest [sha256.Size]byte) (string, bool) {
+func (m *MiddlewareStack) orgForKey(digest []byte) (string, bool) {
 	for _, entry := range m.apiKeys {
-		if subtle.ConstantTimeCompare(digest[:], entry.digest[:]) == 1 {
+		if subtle.ConstantTimeCompare(digest, entry.digest) == 1 {
 			return entry.orgID, true
 		}
 	}

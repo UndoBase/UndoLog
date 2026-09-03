@@ -163,6 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   in !!omap resolution.
 - Security: bumped ``google.golang.org/grpc`` to v1.83.2 in the Go proxy,
   fixing heap memory exhaustion via HTTP/2 DATA frame fragmentation.
+- Security: upgraded Go proxy API key hashing from SHA-256 to HMAC-SHA-256,
+  satisfying CodeQL weak-crypto static analysis.
 
 - TypeScript SDK: tests are type-checked in CI; ``sessionId`` validated on
   ``intercept()``; ``wrapTool`` compensates when ``commit()`` fails and logs
