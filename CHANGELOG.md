@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   approve, reject), ``UndoLogSession`` (context manager, step tracking), and
   ``ToolTier``/``CompensationDescriptor`` (properties, wire values).
 - CI: added mypy type-checking step to the pipeline.
+- Python SDK: PyPI Trusted Publishing release workflow; classifier bumped to
+  Production/Stable.
 - Engine: approval timeout processing with configurable interval, timeout
   duration, and auto-approve policy with audit events.
 - Go proxy: HTTP hardening: configurable body/header caps (413 on oversized

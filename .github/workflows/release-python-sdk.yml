@@ -1,0 +1,52 @@
+# Publish undolog-sdk to PyPI when a release tag is pushed.
+# Tag format: undolog-sdk@v<major>.<minor>.<patch>
+# Requires Trusted Publishing configured on PyPI:
+#   Owner: UndoBase, Repo: UndoLog, Workflow: release-python-sdk.yml
+
+name: Release Python SDK
+
+on:
+  push:
+    tags:
+      - "undolog-sdk@v*.*.*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    environment: pypi
+    defaults:
+      run:
+        working-directory: sdks/undolog-py
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install build twine
+          pip install -e ".[dev]"
+
+      - name: Run checks
+        run: |
+          ruff check .
+          ruff format --check .
+          mypy undolog_sdk/ tests/
+          pytest tests/ -v
+
+      - name: Build
+        run: python -m build
+
+      - name: Check
+        run: twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdks/undolog-py/dist/
