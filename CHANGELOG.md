@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Python SDK: test coverage for ``UndoLogClient`` (intercept, commit, fail,
   approve, reject), ``UndoLogSession`` (context manager, step tracking), and
   ``ToolTier``/``CompensationDescriptor`` (properties, wire values).
+- CI: added mypy type-checking step to the pipeline.
 - Engine: approval timeout processing with configurable interval, timeout
   duration, and auto-approve policy with audit events.
 - Go proxy: HTTP hardening: configurable body/header caps (413 on oversized
