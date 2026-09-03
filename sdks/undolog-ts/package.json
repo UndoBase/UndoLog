@@ -164,7 +164,8 @@
     "@hono/node-server": "2.0.10",
     "esbuild": "0.28.1",
     "fast-uri": "3.1.7",
-    "ip-address": "10.7.0"
+    "ip-address": "10.7.0",
+    "hono": "4.13.5"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0"

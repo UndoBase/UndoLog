@@ -153,6 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   severity host confusion and SSRF vulnerabilities.
 - Security: bumped ``ip-address`` to 10.7.0 in the TypeScript SDK, fixing 3
   SSRF and trust-boundary bypass vulnerabilities.
+- Security: bumped ``hono`` to 4.13.5 in the TypeScript SDK, fixing ReDoS,
+  data disclosure, header leak, and algorithmic complexity DoS.
 
 - TypeScript SDK: tests are type-checked in CI; ``sessionId`` validated on
   ``intercept()``; ``wrapTool`` compensates when ``commit()`` fails and logs
