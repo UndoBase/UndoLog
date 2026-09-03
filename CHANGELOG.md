@@ -157,6 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   data disclosure, header leak, and algorithmic complexity DoS.
 - Security: bumped ``postcss`` to 8.5.27 in the TypeScript SDK, fixing
   arbitrary .map file read via attacker-controlled sourceMappingURL.
+- Security: bumped ``nanoid`` to 3.3.18 in the dashboard, fixing infinite
+  loop when generator size is zero.
 
 - TypeScript SDK: tests are type-checked in CI; ``sessionId`` validated on
   ``intercept()``; ``wrapTool`` compensates when ``commit()`` fails and logs
