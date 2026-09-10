@@ -192,6 +192,22 @@ describe("headers", () => {
     );
   });
 
+  it("does not allow per-request headers to override X-Api-Key", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({}));
+    client = createHttpClient({ baseUrl: "http://localhost:8080", apiKey: "sk_real" });
+
+    await client.request({
+      path: "/test",
+      headers: { "X-Api-Key": "sk_fake" },
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ "X-Api-Key": "sk_real" }),
+      }),
+    );
+  });
+
   it("auto-generates Idempotency-Key for POST requests", async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({}));
     client = createHttpClient({ baseUrl: "http://localhost:8080" });
