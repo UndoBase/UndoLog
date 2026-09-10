@@ -180,4 +180,49 @@ describe("UndoLogMcpServer", () => {
     expect(server).toBeDefined();
     expect(typeof server.connect).toBe("function");
   });
+
+  it("skips intercept for Safe tier tools", async () => {
+    const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+    const interceptSpy = vi.spyOn(client, "intercept");
+    const fn = vi.fn().mockResolvedValue({ ok: true });
+    const server = createUndoLogMcpServer(client, [
+      {
+        name: "safe_tool",
+        description: "No approval needed",
+        tier: ToolTier.Safe,
+        execute: fn,
+      },
+    ]);
+    const mcpClient = await createLinkedClientServer(server);
+    await mcpClient.callTool({ name: "safe_tool", arguments: { key: "value" } });
+    expect(interceptSpy).not.toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledWith({ key: "value" }, undefined);
+  });
+
+  it("calls multiple tools independently", async () => {
+    const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+    const fnA = vi.fn().mockResolvedValue({ from: "a" });
+    const fnB = vi.fn().mockResolvedValue({ from: "b" });
+    const server = createUndoLogMcpServer(client, [
+      {
+        name: "tool_a",
+        description: "First tool",
+        tier: ToolTier.Safe,
+        execute: fnA,
+      },
+      {
+        name: "tool_b",
+        description: "Second tool",
+        tier: ToolTier.Safe,
+        execute: fnB,
+      },
+    ]);
+    const mcpClient = await createLinkedClientServer(server);
+    const resultA = await mcpClient.callTool({ name: "tool_a", arguments: {} });
+    const resultB = await mcpClient.callTool({ name: "tool_b", arguments: {} });
+    expect(JSON.parse(textFrom(asTextResult(resultA)))).toEqual({ from: "a" });
+    expect(JSON.parse(textFrom(asTextResult(resultB)))).toEqual({ from: "b" });
+    expect(fnA).toHaveBeenCalledTimes(1);
+    expect(fnB).toHaveBeenCalledTimes(1);
+  });
 });

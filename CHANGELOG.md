@@ -193,6 +193,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   non-retry and GET network error retry behavior.
 - TypeScript SDK: added test coverage for ``getEffect`` and ``getSession``
   query methods including 404 error mapping.
+- TypeScript SDK: added MCP server tests for safe tier bypass and
+  multiple tool registration.
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added
