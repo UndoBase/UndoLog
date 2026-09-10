@@ -65,6 +65,15 @@ describe("request", () => {
     );
   });
 
+  it("returns array JSON without coercion to Record", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse([1, 2, 3]));
+    client = createHttpClient({ baseUrl: "http://localhost:8080" });
+
+    const result = await client.request<number[]>({ path: "/items" });
+    expect(result).toEqual([1, 2, 3]);
+    expect(Array.isArray(result)).toBe(true);
+  });
+
   it("sends POST with JSON body", async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ id: "abc" }));
     client = createHttpClient({ baseUrl: "http://localhost:8080" });
