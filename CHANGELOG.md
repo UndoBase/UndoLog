@@ -207,6 +207,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   client-level ``X-Api-Key``.
 - TypeScript SDK: ``safeJsonParse`` return type changed to ``unknown``
   for type soundness; added test for array JSON response.
+- TypeScript SDK: documented Mastra context pass-through limitation
+  in README.
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added

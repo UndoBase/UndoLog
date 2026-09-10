@@ -204,6 +204,10 @@ const reverseTool = undologMastraTool(
 );
 ```
 
+> **Note:** Mastra's implicit execution context is not forwarded
+> automatically. Pass context explicitly as the second argument to
+> `execute` when your tool requires it.
+
 ## MCP server
 
 Expose UndoLog-wrapped tools as MCP tools over stdio transport:
