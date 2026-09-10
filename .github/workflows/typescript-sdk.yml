@@ -186,6 +186,17 @@ jobs:
           console.log(`All ${checks} parity checks passed (${Object.keys(parity).length} fixtures)`);
           NODEEOF
 
+      - name: Verify canonical JSON fuzz fixtures against Python reference
+        run: |
+          python tests/fixtures/generate_fuzz_fixtures.py -o /tmp/canonical-json-fuzz-live.json
+          diff -q tests/fixtures/canonical-json-fuzz.json /tmp/canonical-json-fuzz-live.json || {
+            echo "FAIL: canonical-json-fuzz.json differs from Python reference."
+            echo "Regenerate with: python tests/fixtures/generate_fuzz_fixtures.py -o tests/fixtures/canonical-json-fuzz.json"
+            exit 1
+          }
+          FUZZ_COUNT=$(python -c "import json; print(len(json.load(open('tests/fixtures/canonical-json-fuzz.json'))))")
+          echo "Fuzz fixtures verified: ${FUZZ_COUNT} entries match Python reference"
+
       - name: Check bundle size via metafile
         run: |
           node --input-type=module << 'NODEEOF'

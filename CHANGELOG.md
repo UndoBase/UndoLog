@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Documentation: added ADR 0008 defining the cross-language canonical JSON
   fuzz testing strategy for Python, Go, TypeScript, and Rust.
+- TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
+  generated fixtures, CI verification step, and a Python fixture generator.
 - Python SDK: ``__version__`` exposed via ``importlib.metadata``; async context
   manager on ``UndoLogClient``; ``py.typed`` PEP 561 marker.
 - Python SDK: ``approve`` and ``reject`` methods on ``UndoLogClient`` for the
@@ -176,6 +178,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   headers always win in merge order; ``buildUrl`` normalises a missing leading
   ``/``; all API paths aligned with the proxy (intercept/commit/fail/approve/
   reject) so live-stack tests no longer 404.
+- Python SDK: ``canonicalJson`` now escapes dict keys and uses a custom
+  string encoder matching TypeScript output, including surrogate pair
+  encoding for supplementary characters (code points above U+FFFF).
+- TypeScript SDK: ``canonicalJson`` escapes supplementary characters via
+  surrogate pairs and sorts object keys by Unicode code point order.
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added
