@@ -11,145 +11,258 @@
   {
     "name": "single_key",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 0,
+    "step_index": 1,
     "tool_name": "echo",
     "args": {
       "msg": "hello"
     },
     "expected_json": "{\"msg\":\"hello\"}",
-    "expected_signature": "526f56c8e6cd337f107c5af645026e82e484f443a10123b1712d7cb4e0e5b805"
+    "expected_signature": "004508d41146fa7e7a541498a054b9d08fb9ad3008abc2cd5590181d50166227"
   },
   {
     "name": "two_keys_sorted",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 0,
-    "tool_name": "sort_check",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 2,
+    "tool_name": "echo",
     "args": {
-      "z": 1,
-      "a": 2
+      "b": 2,
+      "a": 1
     },
-    "expected_json": "{\"a\":2,\"z\":1}",
-    "expected_signature": "d1649d517ec42072ee814bd8fd5641f9f613e5475f4deb09bb92fe75a4610bc1"
+    "expected_json": "{\"a\":1,\"b\":2}",
+    "expected_signature": "3f3134361d2095d4ba962c4925a56c9db24f9bba3eaa52ec90ab0e18aae04e10"
   },
   {
     "name": "three_keys_sorted",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 1,
-    "tool_name": "sort_check_3",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 3,
+    "tool_name": "echo",
     "args": {
       "c": 3,
       "a": 1,
       "b": 2
     },
     "expected_json": "{\"a\":1,\"b\":2,\"c\":3}",
-    "expected_signature": "09011d1138c304c8474cd6e4f7885ccdb3f08a25dafe03c2daff0717355dad4f"
+    "expected_signature": "f5dbdbf4901250d41963ec289233b87e47303943b94a7a30bbf727510800a31a"
   },
   {
     "name": "many_keys",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 2,
-    "tool_name": "many_keys",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 4,
+    "tool_name": "echo",
     "args": {
-      "z": 9,
-      "y": 8,
-      "x": 7,
-      "w": 6,
-      "v": 5
+      "z": 0,
+      "y": 1,
+      "x": 2,
+      "w": 3,
+      "v": 4,
+      "u": 5,
+      "t": 6,
+      "s": 7,
+      "r": 8,
+      "q": 9,
+      "p": 10,
+      "o": 11,
+      "n": 12,
+      "m": 13,
+      "l": 14,
+      "k": 15,
+      "j": 16,
+      "i": 17,
+      "h": 18,
+      "g": 19,
+      "f": 20,
+      "e": 21,
+      "d": 22,
+      "c": 23,
+      "b": 24,
+      "a": 25
     },
-    "expected_json": "{\"v\":5,\"w\":6,\"x\":7,\"y\":8,\"z\":9}",
-    "expected_signature": "17024b478ea1349c16d8671b920f522ea350ae1949c9763b87ba9fca7d37e023"
+    "expected_json": "{\"a\":25,\"b\":24,\"c\":23,\"d\":22,\"e\":21,\"f\":20,\"g\":19,\"h\":18,\"i\":17,\"j\":16,\"k\":15,\"l\":14,\"m\":13,\"n\":12,\"o\":11,\"p\":10,\"q\":9,\"r\":8,\"s\":7,\"t\":6,\"u\":5,\"v\":4,\"w\":3,\"x\":2,\"y\":1,\"z\":0}",
+    "expected_signature": "beb918acff6f5c86d32059291671e876c8f38eb1403a4f276a0d75361e6b04eb"
   },
   {
     "name": "int_arg",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 1,
-    "tool_name": "int_tool",
+    "step_index": 5,
+    "tool_name": "calc",
     "args": {
       "value": 42
     },
     "expected_json": "{\"value\":42}",
-    "expected_signature": "60cce204a37d5eea6ad031b673e8d2241c8cfeeffc346aec81593ca2e698b398"
+    "expected_signature": "b198cce0a5e66466e42dee4666e38fdaf9bbd1f259efd155161db865cab514e6"
   },
   {
     "name": "float_arg",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 2,
-    "tool_name": "float_tool",
+    "step_index": 6,
+    "tool_name": "calc",
     "args": {
       "value": 3.14
     },
     "expected_json": "{\"value\":3.14}",
-    "expected_signature": "fe786eeaf91cd11626b9ae627ba42b60df590b742879ae8eb4bb481daf1b5051"
+    "expected_signature": "9d6f94932390aa53d48b933c1dd11314eb138d8207d761f83c03de443f581f1a"
+  },
+  {
+    "name": "negative_zero",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 7,
+    "tool_name": "calc",
+    "args": {
+      "value": -0.0
+    },
+    "expected_json": "{\"value\":0}",
+    "expected_signature": "c83be4ce0269e764ecd7985ff61550db10e1976dd72b097a25480806b1fc415c"
+  },
+  {
+    "name": "positive_zero",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 8,
+    "tool_name": "calc",
+    "args": {
+      "value": 0.0
+    },
+    "expected_json": "{\"value\":0}",
+    "expected_signature": "cef77e4d72cb8f208da49276a447d0a29bf49f83f9642ac5243b5e1b1685cf55"
+  },
+  {
+    "name": "small_exponential",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 9,
+    "tool_name": "calc",
+    "args": {
+      "value": 1e-07
+    },
+    "expected_json": "{\"value\":1e-7}",
+    "expected_signature": "d5bd3c8d34e9765a07bb466336c5c3a8a235c1293b49ff0b88b11ebf2f1bd48e"
+  },
+  {
+    "name": "large_exponential",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 10,
+    "tool_name": "calc",
+    "args": {
+      "value": 1e+21
+    },
+    "expected_json": "{\"value\":1e+21}",
+    "expected_signature": "f56108f53960c4854501219973ca388da9e7e7a44120b2bc33412425d8db7c78"
+  },
+  {
+    "name": "denormal_float",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 11,
+    "tool_name": "calc",
+    "args": {
+      "value": 5e-324
+    },
+    "expected_json": "{\"value\":5e-324}",
+    "expected_signature": "3e98f7593b05ef71f8d92c84d9a533c779389621314c6ff0b3c7c0f30ce4314b"
+  },
+  {
+    "name": "max_safe_integer",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 12,
+    "tool_name": "calc",
+    "args": {
+      "value": 9007199254740991
+    },
+    "expected_json": "{\"value\":9007199254740991}",
+    "expected_signature": "7475be9d8ed8d71f653ce5abbac329bd5c3a9b1c04ee044ac75ccbb84c51eee4"
+  },
+  {
+    "name": "negative_numbers",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 13,
+    "tool_name": "calc",
+    "args": {
+      "a": -1,
+      "b": -42,
+      "c": -999999
+    },
+    "expected_json": "{\"a\":-1,\"b\":-42,\"c\":-999999}",
+    "expected_signature": "f1b6e98818f8c3e9de967fd2764deffd279484b38c0dd27db4dbe74dcea4531a"
   },
   {
     "name": "bool_true",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 3,
-    "tool_name": "bool_tool",
+    "step_index": 14,
+    "tool_name": "flag",
     "args": {
-      "flag": true
+      "enabled": true
     },
-    "expected_json": "{\"flag\":true}",
-    "expected_signature": "0faef23f0bf396ec37c10587f78e9f88ef89e82c0264be2d9290c651632466ce"
+    "expected_json": "{\"enabled\":true}",
+    "expected_signature": "4aabf701ef5d020d33a5bb0a3d50c59864c6a089fa6901c297684f2302de0afc"
   },
   {
     "name": "bool_false",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 4,
-    "tool_name": "bool_tool",
+    "step_index": 15,
+    "tool_name": "flag",
     "args": {
-      "flag": false
+      "enabled": false
     },
-    "expected_json": "{\"flag\":false}",
-    "expected_signature": "99b96d77a2a63e20145559e8ef66821c22efc89f8518191c2d1a3e327470689b"
+    "expected_json": "{\"enabled\":false}",
+    "expected_signature": "281cce9e503d56b3a235dea78a600ba5216d1e15ce5cc7ce081a93a03b094faf"
   },
   {
     "name": "null_arg",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 5,
-    "tool_name": "null_tool",
+    "step_index": 16,
+    "tool_name": "flag",
     "args": {
       "value": null
     },
     "expected_json": "{\"value\":null}",
-    "expected_signature": "06af1b395c5ecbdaab889f1c60ce4675d73d115fb369e10cb4757ae234432396"
+    "expected_signature": "1470f622de97eb8ff6c994febd1e56ae539e895855f791cf5a6c3981e5135077"
+  },
+  {
+    "name": "mixed_bool_null",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 17,
+    "tool_name": "flag",
+    "args": {
+      "a": true,
+      "b": null,
+      "c": false
+    },
+    "expected_json": "{\"a\":true,\"b\":null,\"c\":false}",
+    "expected_signature": "8fb0219d4bb28b3f3ccc1d6f722497ed71fd7414233b5940f91cc5a189f537c5"
   },
   {
     "name": "int_list",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 6,
-    "tool_name": "list_tool",
+    "step_index": 18,
+    "tool_name": "batch",
     "args": {
-      "items": [
+      "ids": [
         1,
         2,
         3
       ]
     },
-    "expected_json": "{\"items\":[1,2,3]}",
-    "expected_signature": "394d5ac3ea49aed93a63cd3874f0b64ebc51b438979dcb14d9699a25d506a24a"
+    "expected_json": "{\"ids\":[1,2,3]}",
+    "expected_signature": "a155d6912e38341fc8dc62a120d8683b4100850de3a96aadfa61303303706851"
   },
   {
     "name": "mixed_list",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 7,
-    "tool_name": "mixed_list",
+    "step_index": 19,
+    "tool_name": "batch",
     "args": {
-      "v": [
+      "data": [
         1,
-        "a",
+        "two",
         true,
         null
       ]
     },
-    "expected_json": "{\"v\":[1,\"a\",true,null]}",
-    "expected_signature": "6191db05487c0c949ad04aa6ad8532edc8bae4b6538d91bb7d6d1600776a720d"
+    "expected_json": "{\"data\":[1,\"two\",true,null]}",
+    "expected_signature": "1f3dba5a937adbe019ab4606617d176d66d0bbecb0039df2c14bcd965e328ba4"
   },
   {
     "name": "nested_list",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 8,
-    "tool_name": "nested_list",
+    "step_index": 20,
+    "tool_name": "batch",
     "args": {
       "matrix": [
         [
@@ -163,58 +276,57 @@
       ]
     },
     "expected_json": "{\"matrix\":[[1,2],[3,4]]}",
-    "expected_signature": "e820247e1d6c9c89c9b9bd399ee5fe6e7bf231aa3c4d5cb6623f311ce8e0e6ca"
+    "expected_signature": "2f9e774054b2baa8913175b0bddbf932d1681f4d6a1c7203aa101f4a45b17d9b"
   },
   {
     "name": "empty_list",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 9,
-    "tool_name": "empty_list",
+    "step_index": 21,
+    "tool_name": "batch",
     "args": {
-      "v": []
+      "items": []
     },
-    "expected_json": "{\"v\":[]}",
-    "expected_signature": "e3b5d1a698e5dfd12802d6c9293c983c77bf7c1242b2deae427abaaa52f3f42f"
+    "expected_json": "{\"items\":[]}",
+    "expected_signature": "d9e10b668162475014893c72a92d3c2cb3dc857c37d74750a1bd7bbf748f34bb"
   },
   {
     "name": "list_with_dicts",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 10,
-    "tool_name": "list_dict",
+    "step_index": 22,
+    "tool_name": "batch",
     "args": {
-      "rows": [
+      "items": [
         {
-          "b": 1,
-          "a": 2
+          "b": 2,
+          "a": 1
         },
         {
-          "d": 3,
-          "c": 4
+          "d": 4,
+          "c": 3
         }
       ]
     },
-    "expected_json": "{\"rows\":[{\"a\":2,\"b\":1},{\"c\":4,\"d\":3}]}",
-    "expected_signature": "d7a7c64684edbc592589a7b7d25402dcd0f6450cb05c0c716da8e0f99511c5fe"
+    "expected_json": "{\"items\":[{\"a\":1,\"b\":2},{\"c\":3,\"d\":4}]}",
+    "expected_signature": "ab4335e8f3635d35c1957791bc3e3b81f1256fde655fe7c7923c95eb75814a14"
   },
   {
     "name": "nested_dict",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 11,
-    "tool_name": "nested",
+    "step_index": 23,
+    "tool_name": "struct",
     "args": {
-      "nested": {
-        "a": 1,
-        "z": 2
+      "a": {
+        "b": 1
       }
     },
-    "expected_json": "{\"nested\":{\"a\":1,\"z\":2}}",
-    "expected_signature": "cc9b2685d81699d2b794d4a7f8cd3e3aa4ebae29938b7cff6305fdba9ac76fa7"
+    "expected_json": "{\"a\":{\"b\":1}}",
+    "expected_signature": "e59b4cdc30039f80209f069151ad613d4d50a09c5bb8b7baa58794c2bc9d5f28"
   },
   {
     "name": "double_nested",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 12,
-    "tool_name": "nested2",
+    "step_index": 24,
+    "tool_name": "struct",
     "args": {
       "a": {
         "b": {
@@ -223,299 +335,318 @@
       }
     },
     "expected_json": "{\"a\":{\"b\":{\"c\":1}}}",
-    "expected_signature": "e392ead379f566dc0cad495516554d7b05b974a1ba3e178c78b5d321ed102c5a"
+    "expected_signature": "6b6be975edbf5878baec5dce5ead492bb87d2c54d83ed5e78db8a37738b143b1"
   },
   {
     "name": "deep_nesting",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 13,
-    "tool_name": "deep",
+    "step_index": 25,
+    "tool_name": "struct",
     "args": {
-      "l1": {
-        "l2": {
-          "l3": {
-            "l4": "deep"
+      "l0": {
+        "l1": {
+          "l2": {
+            "l3": {
+              "l4": 1
+            }
           }
         }
       }
     },
-    "expected_json": "{\"l1\":{\"l2\":{\"l3\":{\"l4\":\"deep\"}}}}",
-    "expected_signature": "f38abd9088366da5258034be24e3ddfab0900a22ede176a2f24d6c0cb6d42b87"
+    "expected_json": "{\"l0\":{\"l1\":{\"l2\":{\"l3\":{\"l4\":1}}}}}",
+    "expected_signature": "22f313b6ab423af9efcdf9f057e9f3bf3f375aa0931e39f45472ebd35b0ba651"
   },
   {
     "name": "nested_key_order",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 14,
-    "tool_name": "nested_sort",
+    "step_index": 26,
+    "tool_name": "struct",
     "args": {
-      "outer": {
-        "z": 9,
+      "z": {
         "a": 1,
-        "m": 5
+        "z": 2
+      },
+      "a": {
+        "z": 3,
+        "a": 4
       }
     },
-    "expected_json": "{\"outer\":{\"a\":1,\"m\":5,\"z\":9}}",
-    "expected_signature": "ec92fc5ccb7a036002cbd2cc0b3be1cb85a0ca37667d12c05ef4c61f5ead0b96"
+    "expected_json": "{\"a\":{\"a\":4,\"z\":3},\"z\":{\"a\":1,\"z\":2}}",
+    "expected_signature": "ad9a9ecefb9b0723f9adc7811993c741f1fc3b2b6894a5a019d8ab51bce755bb"
   },
   {
     "name": "nested_empty",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 15,
-    "tool_name": "nested_empty",
+    "step_index": 27,
+    "tool_name": "struct",
     "args": {
-      "x": {}
+      "a": {},
+      "b": []
     },
-    "expected_json": "{\"x\":{}}",
-    "expected_signature": "67e4c12cad16fbd11a528d34e7d0b879ff866ca2f227842d3d40deab1db5a4e3"
+    "expected_json": "{\"a\":{},\"b\":[]}",
+    "expected_signature": "6bb1aee3020ddc261b5a11b239a4b8114240ab08e6c358647f3c77efa1895929"
   },
   {
-    "name": "unicode",
+    "name": "unicode_bmp",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 16,
-    "tool_name": "unicode",
+    "step_index": 28,
+    "tool_name": "text",
     "args": {
-      "msg": "héllo 世界"
+      "v": "helloé"
     },
-    "expected_json": "{\"msg\":\"h\\u00e9llo \\u4e16\\u754c\"}",
-    "expected_signature": "d0bee92eb505d8d3e6126d4361fbe383c42c6ce7bcbb972ec1e5108c16e2d814"
+    "expected_json": "{\"v\":\"hello\\u00e9\"}",
+    "expected_signature": "2dccf54d336807774c1329e65a3c41adfb20d55f93a3f2480d540ef4a318632c"
+  },
+  {
+    "name": "unicode_supplementary",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 29,
+    "tool_name": "text",
+    "args": {
+      "v": "😀"
+    },
+    "expected_json": "{\"v\":\"\\ud83d\\ude00\"}",
+    "expected_signature": "1b5f465e6475f871c69458fc57b50c3dfc6a3cbbefa8ab64fd54f4e669173aea"
+  },
+  {
+    "name": "unicode_null_char",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 30,
+    "tool_name": "text",
+    "args": {
+      "v": "\u0000"
+    },
+    "expected_json": "{\"v\":\"\\u0000\"}",
+    "expected_signature": "56a7ed7732f50b96f4d4fe1fd35af49818d294159707c7e4c6fb2a48929536bc"
+  },
+  {
+    "name": "unicode_control_chars",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 31,
+    "tool_name": "text",
+    "args": {
+      "v": "\u0001\u0002\u001f"
+    },
+    "expected_json": "{\"v\":\"\\u0001\\u0002\\u001f\"}",
+    "expected_signature": "c5896787d250daec62337e56034553dcf956fefe156edc2045432f0e4e5c2b6d"
+  },
+  {
+    "name": "unicode_backslash",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 32,
+    "tool_name": "text",
+    "args": {
+      "v": "a\\b"
+    },
+    "expected_json": "{\"v\":\"a\\\\b\"}",
+    "expected_signature": "ea3b709e6a2add2605e503561ec0683ad42301e3973b29b97c460352f6d52b5b"
+  },
+  {
+    "name": "unicode_quote",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 33,
+    "tool_name": "text",
+    "args": {
+      "v": "a\"b"
+    },
+    "expected_json": "{\"v\":\"a\\\"b\"}",
+    "expected_signature": "cfc4f9c186e53a819ed51a413d680731ba74c43a36825a4b0acb00dbcbdfe9c3"
   },
   {
     "name": "special_chars",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 17,
-    "tool_name": "special",
+    "step_index": 34,
+    "tool_name": "text",
     "args": {
-      "query": "a&b=c"
+      "v": "line1\nline2\ttab"
     },
-    "expected_json": "{\"query\":\"a&b=c\"}",
-    "expected_signature": "24862118469c1cc55526205d2b4be8d121eee2ca702de16d395a1dc6050cef09"
+    "expected_json": "{\"v\":\"line1\\nline2\\ttab\"}",
+    "expected_signature": "d3ccc4ae600862a0acead54c98d0bf17eeb0882f45865552c2cc31dfc75ead40"
   },
   {
-    "name": "json_string",
+    "name": "empty_string",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 18,
-    "tool_name": "json_string",
+    "step_index": 35,
+    "tool_name": "text",
     "args": {
-      "payload": "{\"nested\": true}"
+      "v": ""
     },
-    "expected_json": "{\"payload\":\"{\\\"nested\\\": true}\"}",
-    "expected_signature": "a1c5a703fd419088d9e9ab2383fdcdf6c29fa532a5de037dc21b88eea9b24733"
+    "expected_json": "{\"v\":\"\"}",
+    "expected_signature": "ff66537b0a3c6e6b4d29f8b95979c48c105a2b1c500c1e5dc64cc70ade0c7664"
   },
   {
     "name": "long_string",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 19,
-    "tool_name": "long_str",
+    "step_index": 36,
+    "tool_name": "text",
     "args": {
-      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "v": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     },
-    "expected_json": "{\"text\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
-    "expected_signature": "5a0b71549be0945b01c8752296dfb67d0e645f5a89d2d86c1105937a47bb0e81"
+    "expected_json": "{\"v\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+    "expected_signature": "4c18912e43a3616d9920ca6b7189db5f246a4dca2ad1550e58ec18fa7039d236"
   },
   {
     "name": "whitespace_string",
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "step_index": 20,
-    "tool_name": "whitespace",
+    "step_index": 37,
+    "tool_name": "text",
     "args": {
-      "val": "  spaced  "
+      "v": "  \t\n  "
     },
-    "expected_json": "{\"val\":\"  spaced  \"}",
-    "expected_signature": "4412474eabefc3dbf1e10a65887b486413f4cac0ad242d014611f7011714e1d9"
+    "expected_json": "{\"v\":\"  \\t\\n  \"}",
+    "expected_signature": "ab06d5d3c2da81c17651fc839e0a3c9d9d683f4d1a6dd71214ce6dccbc90cbdd"
+  },
+  {
+    "name": "unicode_key_bmp",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 38,
+    "tool_name": "text",
+    "args": {
+      "kéy": "value"
+    },
+    "expected_json": "{\"k\\u00e9y\":\"value\"}",
+    "expected_signature": "4fae1e8b384751418e42e0325a77f3da7fe75e23da2e3aa5e78e642126adfd10"
+  },
+  {
+    "name": "unicode_key_supplementary",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 39,
+    "tool_name": "text",
+    "args": {
+      "😀key": "value"
+    },
+    "expected_json": "{\"\\ud83d\\ude00key\":\"value\"}",
+    "expected_signature": "26ed841068686f0e249388a81738ec944da8af968789565c85c6941e7eb52f7d"
+  },
+  {
+    "name": "unicode_key_control",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 40,
+    "tool_name": "text",
+    "args": {
+      "k\u0000ey": "value"
+    },
+    "expected_json": "{\"k\\u0000ey\":\"value\"}",
+    "expected_signature": "8d76e287c3d65288785676710e984cdde62761941cd91be59c82e5af2f0cf371"
+  },
+  {
+    "name": "all_types",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 41,
+    "tool_name": "struct",
+    "args": {
+      "a": 1,
+      "b": "two",
+      "c": null,
+      "d": true,
+      "e": false,
+      "f": [
+        1,
+        2
+      ],
+      "g": {
+        "x": 1
+      }
+    },
+    "expected_json": "{\"a\":1,\"b\":\"two\",\"c\":null,\"d\":true,\"e\":false,\"f\":[1,2],\"g\":{\"x\":1}}",
+    "expected_signature": "20e0f4ef721e159e23fc302fe0ba10281a8f74c668aa5f43a1c46257af3d4776"
+  },
+  {
+    "name": "numeric_string",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 42,
+    "tool_name": "text",
+    "args": {
+      "v": "12345"
+    },
+    "expected_json": "{\"v\":\"12345\"}",
+    "expected_signature": "069eb38073aa41767518958585ca6ceea9ae2b593fb89b1277c46bec2d7224ff"
+  },
+  {
+    "name": "url_string",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 43,
+    "tool_name": "text",
+    "args": {
+      "v": "https://example.com/path?q=1&r=2"
+    },
+    "expected_json": "{\"v\":\"https://example.com/path?q=1&r=2\"}",
+    "expected_signature": "743c9cef62898153a36d92b9ab242b9252f4d042190be26592db42d56a4a812e"
   },
   {
     "name": "search_tool",
-    "session_id": "11111111-1111-1111-1111-111111111111",
-    "step_index": 0,
-    "tool_name": "search",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 44,
+    "tool_name": "web_search",
     "args": {
-      "query": "hello world",
-      "max_results": 10
+      "query": "rust blake3 crate",
+      "limit": 5
     },
-    "expected_json": "{\"max_results\":10,\"query\":\"hello world\"}",
-    "expected_signature": "5668cf6010ac85dadb753efead34a5c2a0c6305d019947e5a42597f695320766"
+    "expected_json": "{\"limit\":5,\"query\":\"rust blake3 crate\"}",
+    "expected_signature": "0dc3f7c3fa29444cfea9d0e84784c6aaf33a9401b0c269a42b06d8ac1260ff6d"
   },
   {
     "name": "email_tool",
-    "session_id": "11111111-1111-1111-1111-111111111111",
-    "step_index": 1,
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 45,
     "tool_name": "send_email",
     "args": {
       "to": "alice@example.com",
       "subject": "Hello",
-      "cc": []
+      "body": "Hi!"
     },
-    "expected_json": "{\"cc\":[],\"subject\":\"Hello\",\"to\":\"alice@example.com\"}",
-    "expected_signature": "c07a1835d55f598adec5098e9106abc8e0029c5cfea053e5f9764ef10f73d6c4"
+    "expected_json": "{\"body\":\"Hi!\",\"subject\":\"Hello\",\"to\":\"alice@example.com\"}",
+    "expected_signature": "8d2f1571b9347894ca610d75d4febc75b7b605dc681b54d9e170edf413091939"
   },
   {
     "name": "transfer_tool",
-    "session_id": "11111111-1111-1111-1111-111111111111",
-    "step_index": 2,
-    "tool_name": "transfer",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 46,
+    "tool_name": "transfer_funds",
     "args": {
-      "from": "alice",
-      "to": "bob",
+      "from": "acc_1",
+      "to": "acc_2",
       "amount": 100.5
     },
-    "expected_json": "{\"amount\":100.5,\"from\":\"alice\",\"to\":\"bob\"}",
-    "expected_signature": "bf9533e7f5fa2b4192de359659a9b9a9202aa61c2f6d04e87eb99713ccced999"
+    "expected_json": "{\"amount\":100.5,\"from\":\"acc_1\",\"to\":\"acc_2\"}",
+    "expected_signature": "3e9d5b07e1e5d8b5474f4fa1cd384d7e0ed5ef7b869122b9fedf80ed893877b3"
   },
   {
     "name": "create_record",
-    "session_id": "11111111-1111-1111-1111-111111111111",
-    "step_index": 3,
-    "tool_name": "create_record",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 47,
+    "tool_name": "db_create",
     "args": {
       "table": "users",
       "data": {
-        "name": "Alice",
+        "name": "Bob",
         "age": 30
       }
     },
-    "expected_json": "{\"data\":{\"age\":30,\"name\":\"Alice\"},\"table\":\"users\"}",
-    "expected_signature": "1f4af0926b148c718612aadb0a58fac983c6bb1279e65095e54e31b81c58edfc"
+    "expected_json": "{\"data\":{\"age\":30,\"name\":\"Bob\"},\"table\":\"users\"}",
+    "expected_signature": "56394435a606ff70b797fff3785f8940b34eeb152a21a957dc3fba48415812a4"
   },
   {
     "name": "batch_operation",
-    "session_id": "11111111-1111-1111-1111-111111111111",
-    "step_index": 4,
-    "tool_name": "batch",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "step_index": 48,
+    "tool_name": "batch_execute",
     "args": {
-      "operations": [
+      "ops": [
         {
-          "type": "create",
-          "data": {
-            "id": 1
-          }
+          "action": "create",
+          "id": 1
         },
         {
-          "type": "delete",
-          "data": {
-            "id": 2
+          "action": "update",
+          "id": 2,
+          "patch": {
+            "name": "Alice"
           }
         }
       ]
     },
-    "expected_json": "{\"operations\":[{\"data\":{\"id\":1},\"type\":\"create\"},{\"data\":{\"id\":2},\"type\":\"delete\"}]}",
-    "expected_signature": "66fa8409ad600632be947699aa273b812c8ac98cdce6dc3bae1dfae0f724204d"
-  },
-  {
-    "name": "zero_values",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 99,
-    "tool_name": "zero",
-    "args": {
-      "int": 0,
-      "float": 0.0,
-      "str": "",
-      "lst": [],
-      "dct": {}
-    },
-    "expected_json": "{\"dct\":{},\"float\":0,\"int\":0,\"lst\":[],\"str\":\"\"}",
-    "expected_signature": "e65aecee8bf88c91d22e1c988df7146cc047a6f5bcc5d9fc21c1c6cb26d81b1f"
-  },
-  {
-    "name": "negative_zero",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 100,
-    "tool_name": "neg_zero",
-    "args": {
-      "v": -0.0
-    },
-    "expected_json": "{\"v\":0}",
-    "expected_signature": "5dba867ad65080247a08a6a2909363c9baf0800c177966577e6004a6b36eb52c"
-  },
-  {
-    "name": "small_exponential",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 104,
-    "tool_name": "small_exp",
-    "args": {
-      "boundary": 1e-06,
-      "one_under": 9.999999e-07,
-      "one_over": 1e-07
-    },
-    "expected_json": "{\"boundary\":0.000001,\"one_over\":1e-7,\"one_under\":9.999999e-7}",
-    "expected_signature": "32948b353a28466f3f7317402139a8f46eb1e02ddae3cecc4d5d47901c706211"
-  },
-  {
-    "name": "large_exponential",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 105,
-    "tool_name": "large_exp",
-    "args": {
-      "under": 1e+20,
-      "boundary": 1e+21,
-      "over": 1.5e+21
-    },
-    "expected_json": "{\"boundary\":1e+21,\"over\":1.5e+21,\"under\":100000000000000000000}",
-    "expected_signature": "1f8ed7ede8cdca33ce14b68df641c5e4e82e5ab9d4f0ef950d3521c8b454d7db"
-  },
-  {
-    "name": "denormal_float",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 106,
-    "tool_name": "denormal",
-    "args": {
-      "min": 5e-324
-    },
-    "expected_json": "{\"min\":5e-324}",
-    "expected_signature": "bac713b267b1e9d736934594c01f6d954ac1d0a111b7b5f59eec212972685ad8"
-  },
-  {
-    "name": "negative_numbers",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 101,
-    "tool_name": "neg",
-    "args": {
-      "neg": -42,
-      "pos": 7,
-      "neg_float": -3.14
-    },
-    "expected_json": "{\"neg\":-42,\"neg_float\":-3.14,\"pos\":7}",
-    "expected_signature": "de3590083541695036b430e830b55385ffa4ba6b22aa65e3adafacd65f86089e"
-  },
-  {
-    "name": "numeric_string",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 102,
-    "tool_name": "num_str",
-    "args": {
-      "id": "12345"
-    },
-    "expected_json": "{\"id\":\"12345\"}",
-    "expected_signature": "36317e2c925619bb6a8d26bcf7bb7282a1fa78c67e3bb011023e0c85cdbb10bd"
-  },
-  {
-    "name": "url_string",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "step_index": 103,
-    "tool_name": "url_tool",
-    "args": {
-      "url": "https://example.com/path?q=1&lang=en"
-    },
-    "expected_json": "{\"url\":\"https://example.com/path?q=1&lang=en\"}",
-    "expected_signature": "1ecd1d111515b9a87f9fee6fc8eed29193d461cf1a25d14d923b72c196a5c906"
-  },
-  {
-    "name": "mixed_types",
-    "session_id": "ffffffff-ffff-ffff-ffff-ffffffffffff",
-    "step_index": 0,
-    "tool_name": "mixed",
-    "args": {
-      "score": 98.6,
-      "name": "test",
-      "active": false,
-      "tags": [
-        "x",
-        "y"
-      ],
-      "meta": {
-        "v": 2
-      }
-    },
-    "expected_json": "{\"active\":false,\"meta\":{\"v\":2},\"name\":\"test\",\"score\":98.6,\"tags\":[\"x\",\"y\"]}",
-    "expected_signature": "38ae3bfb53fd0e161c94bd0bd0691d975924f00a1643b1e7596ebad8c9468d44"
+    "expected_json": "{\"ops\":[{\"action\":\"create\",\"id\":1},{\"action\":\"update\",\"id\":2,\"patch\":{\"name\":\"Alice\"}}]}",
+    "expected_signature": "da639e6e0e855bdebbd5c213dd605647d28a7861498b9c5f7d076e86a4c95e9f"
   }
 ]
