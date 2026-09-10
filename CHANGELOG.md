@@ -211,6 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   in README.
 - TypeScript SDK: LangChain example rewritten to demonstrate tool
   creation, invocation, and approval handling.
+- TypeScript SDK: ``requireCurrentSession`` exported from the top-level
+  package; added tests for export and error behavior.
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added
