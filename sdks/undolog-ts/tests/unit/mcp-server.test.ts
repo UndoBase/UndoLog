@@ -174,6 +174,34 @@ describe("UndoLogMcpServer", () => {
     });
   });
 
+  it("exposes approvalId as extractable string field", async () => {
+    const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+    vi.spyOn(client, "intercept").mockRejectedValue(
+      new AwaitingApprovalError(
+        "drop_table",
+        { table: "users" },
+        "approval-042",
+        "Confirm deletion",
+      ),
+    );
+    const server = createUndoLogMcpServer(client, [
+      {
+        name: "drop_table",
+        description: "Drop a table",
+        tier: ToolTier.Irreversible,
+        execute: async () => ({ ok: true }),
+      },
+    ]);
+    const mcpClient = await createLinkedClientServer(server);
+    const result = await mcpClient.callTool({
+      name: "drop_table",
+      arguments: { table: "users" },
+    });
+    const parsed = JSON.parse(textFrom(asTextResult(result)));
+    expect(typeof parsed.approvalId).toBe("string");
+    expect(parsed.approvalId).toBe("approval-042");
+  });
+
   it("creates a Server instance", async () => {
     const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
     const server = createUndoLogMcpServer(client, []);
