@@ -197,6 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   multiple tool registration.
 - TypeScript SDK: added test verifying ``approvalId`` is an extractable
   string field in MCP error responses.
+- TypeScript SDK: concurrent ``intercept()`` calls with the same session
+  now produce distinct step indices via a per-session mutex.
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added

@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { createHttpClient } from "./http.js";
 import type { HttpClient } from "./http.js";
 import { getCurrentSession } from "./session.js";
+import type { UndoLogSession } from "./session.js";
 import { callSignature } from "./signature.js";
 import type { ToolTier } from "./tier.js";
 import type { CompensationDescriptor } from "./tier.js";
@@ -102,6 +103,7 @@ export interface InterceptParams {
  */
 export class UndoLogClient {
   readonly #http: HttpClient;
+  readonly #sessionMutexes = new Map<string, Promise<void>>();
 
   /**
    * @param options - Server URL, credentials, and HTTP behaviour.
@@ -153,6 +155,20 @@ export class UndoLogClient {
       );
     }
 
+    const prev = this.#sessionMutexes.get(sessionId) ?? Promise.resolve();
+    const next = prev.then(
+      () => this.#interceptInner(params, sessionId, session),
+      () => this.#interceptInner(params, sessionId, session),
+    );
+    this.#sessionMutexes.set(sessionId, next.then(() => {}, () => {}));
+    return next;
+  }
+
+  async #interceptInner(
+    params: InterceptParams,
+    sessionId: string,
+    session: UndoLogSession | undefined,
+  ): Promise<EffectRecord> {
     let stepIndex: number;
     if (params.stepIndex !== undefined) {
       stepIndex = params.stepIndex;

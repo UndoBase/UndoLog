@@ -548,6 +548,42 @@ describe("intercept() retry behavior", () => {
 });
 
 // ---------------------------------------------------------------------------
+// intercept() - concurrent stepIndex allocation
+// ---------------------------------------------------------------------------
+
+describe("intercept() concurrent stepIndex allocation", () => {
+  it("produces distinct step indices for concurrent calls with same session", async () => {
+    const session = new UndoLogSession({
+      sessionId: "550e8400-e29b-41d4-a716-446655440000",
+    });
+    let callCount = 0;
+    vi.mocked(fetch).mockImplementation(() => {
+      callCount++;
+      return Promise.resolve(
+        jsonResponse({ ...proxyInterceptResponse(), effect_id: `eff_${callCount}` }),
+      );
+    });
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const params = {
+      toolName: "send_email",
+      args: { to: "user@example.com", subject: "Hello" },
+      tier: ToolTier.Safe,
+    };
+    const [result1, result2] = await runWithSession(session, () =>
+      Promise.all([
+        client.intercept(params),
+        client.intercept(params),
+      ]),
+    );
+
+    expect(result1.stepIndex).not.toBe(result2.stepIndex);
+    expect(result1.sessionId).toBe(session.sessionId);
+    expect(result2.sessionId).toBe(session.sessionId);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // commit()
 // ---------------------------------------------------------------------------
 
