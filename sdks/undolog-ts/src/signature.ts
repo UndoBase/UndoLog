@@ -13,11 +13,12 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Escape a string for JSON with Python's ``ensure_ascii=True`` semantics.
+/** Escape a string for JSON with ``ensure_ascii`` semantics.
  *
  * Non-ASCII characters (code point >= 0x80) are emitted as ``\\uXXXX`` escape
- * sequences. This matches Python ``json.dumps(..., ensure_ascii=True)`` and
- * Rust ``serde_json`` output.
+ * sequences. Supplementary characters (code points above U+FFFF) use surrogate
+ * pairs (``\\uD8XX\\uDXXX``). This matches the Python SDK's custom
+ * ``_escape_json_string`` and Rust ``serde_json`` output.
  *
  * @param s - Raw string to escape.
  * @returns JSON-encoded string literal (including surrounding double quotes).
@@ -54,8 +55,15 @@ function escapeJsonString(s: string): string {
           result += `\\u${code.toString(16).padStart(4, "0")}`;
         } else if (code < 0x80) {
           result += ch;
-        } else {
+        } else if (code <= 0xFFFF) {
           result += `\\u${code.toString(16).padStart(4, "0")}`;
+        } else {
+          // Supplementary character: encode as surrogate pair.
+          const cp = s.codePointAt(i) ?? code;
+          const hi = 0xd800 + ((cp - 0x10000) >> 10);
+          const lo = 0xdc00 + ((cp - 0x10000) & 0x3ff);
+          result += `\\u${hi.toString(16).padStart(4, "0")}\\u${lo.toString(16).padStart(4, "0")}`;
+          i++; // Skip the low surrogate.
         }
     }
   }
@@ -69,7 +77,7 @@ function escapeJsonString(s: string): string {
  * ``{"b":1,"a":2}`` and ``{"a":2,"b":1}`` produce the same canonical string.
  *
  * Non-ASCII characters are escaped (``ensure_ascii`` semantics) to match
- * Python's ``json.dumps(..., ensure_ascii=True)`` and Rust ``serde_json``.
+ * the Python SDK's ``_escape_json_string`` and Rust ``serde_json``.
  *
  * IEEE 754 special values are rejected: ``NaN``, ``Infinity``, and
  * ``-Infinity`` throw a ``TypeError``. Numbers follow ECMAScript
@@ -99,6 +107,27 @@ function escapeJsonString(s: string): string {
  * canonicalJson("hello");        // '"hello"'
  * ```
  */
+
+/** Compare two strings by Unicode code point order (matching Python ``sorted()``). */
+function compareByCodePoint(a: string, b: string): number {
+  const aLen = a.length;
+  const bLen = b.length;
+  let ia = 0;
+  let ib = 0;
+  let aCount = 0;
+  let bCount = 0;
+  while (ia < aLen && ib < bLen) {
+    const aCp = a.codePointAt(ia) as number;
+    const bCp = b.codePointAt(ib) as number;
+    if (aCp !== bCp) return aCp - bCp;
+    ia += aCp > 0xFFFF ? 2 : 1;
+    ib += bCp > 0xFFFF ? 2 : 1;
+    aCount++;
+    bCount++;
+  }
+  return aCount - bCount || aLen - bLen;
+}
+
 export function canonicalJson(value: unknown): string {
   if (value === null) {
     return "null";
@@ -140,7 +169,7 @@ export function canonicalJson(value: unknown): string {
   }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
+    const keys = Object.keys(obj).sort(compareByCodePoint);
     const pairs = keys.map((k) => {
       const v = obj[k];
       return `${escapeJsonString(k)}:${v === undefined ? "null" : canonicalJson(v)}`;

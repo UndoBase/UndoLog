@@ -10,7 +10,6 @@ Cross-language invariant:
 
 from __future__ import annotations
 
-import json
 import math
 import struct
 import uuid
@@ -103,9 +102,9 @@ def canonical_json(value: Any) -> str:
             SDK, which throws a ``TypeError`` for the same inputs.
     """
     if isinstance(value, dict):
-        pairs = [(k, canonical_json(v)) for k, v in value.items()]
-        pairs.sort(key=lambda x: x[0])
-        inner = ",".join(f'"{k}":{v}' for k, v in pairs)
+        keys = sorted(value.keys())
+        pairs = [(_escape_json_string(k), canonical_json(value[k])) for k in keys]
+        inner = ",".join(f"{k}:{v}" for k, v in pairs)
         return f"{{{inner}}}"
     if isinstance(value, (list, tuple)):
         inner = ",".join(canonical_json(v) for v in value)
@@ -124,7 +123,10 @@ def canonical_json(value: Any) -> str:
 def _escape_json_string(value: str) -> str:
     """Encode a string as JSON with ``ensure_ascii`` semantics.
 
-    Matches Python ``json.dumps(value, ensure_ascii=True)`` output.
+    Matches TypeScript ``escapeJsonString`` output: control characters and
+    non-ASCII characters are emitted as ``\\uXXXX`` escape sequences.
+    Supplementary characters (code points above U+FFFF) use surrogate pairs.
+    Backslashes and double-quotes are escaped with a single backslash.
 
     Args:
         value: String to encode.
@@ -132,7 +134,39 @@ def _escape_json_string(value: str) -> str:
     Returns:
         The JSON-encoded string literal (including surrounding double quotes).
     """
-    return json.dumps(value, ensure_ascii=True)
+    result = ['"']
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        code = ord(ch)
+        if ch == '"':
+            result.append('\\"')
+        elif ch == "\\":
+            result.append("\\\\")
+        elif ch == "\b":
+            result.append("\\b")
+        elif ch == "\f":
+            result.append("\\f")
+        elif ch == "\n":
+            result.append("\\n")
+        elif ch == "\r":
+            result.append("\\r")
+        elif ch == "\t":
+            result.append("\\t")
+        elif code < 0x20:
+            result.append(f"\\u{code:04x}")
+        elif code < 0x80:
+            result.append(ch)
+        elif code <= 0xFFFF:
+            result.append(f"\\u{code:04x}")
+        else:
+            # Supplementary character: encode as surrogate pair.
+            hi = 0xD800 + ((code - 0x10000) >> 10)
+            lo = 0xDC00 + ((code - 0x10000) & 0x3FF)
+            result.append(f"\\u{hi:04x}\\u{lo:04x}")
+        i += 1
+    result.append('"')
+    return "".join(result)
 
 
 def call_signature(
