@@ -189,6 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TypeScript SDK: HTTP 401 with token-expiry body now returns
   ``AuthenticationError`` with reason ``"expired"``; other 401 cases
   return ``"invalid"``.
+- TypeScript SDK: added test coverage for POST/PUT network error
+  non-retry and GET network error retry behavior.
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added

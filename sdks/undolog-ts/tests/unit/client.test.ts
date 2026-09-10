@@ -402,6 +402,36 @@ describe("intercept() retry behavior", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("does not retry PUT on network error", async () => {
+    const mockFetch = vi.mocked(fetch);
+    mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080", maxRetries: 2 });
+
+    const promise = client.fail("eff_001", "error").catch((e) => e);
+    await vi.advanceTimersByTimeAsync(15000);
+    const err = await promise;
+
+    expect(err).toBeInstanceOf(UndoLogError);
+    expect((err as UndoLogError).code).toBe("NETWORK_ERROR");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries GET on network error up to maxRetries", async () => {
+    const mockFetch = vi.mocked(fetch);
+    mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080", maxRetries: 2 });
+
+    const promise = client.getEffect("eff_001").catch((e) => e);
+    await vi.advanceTimersByTimeAsync(15000);
+    const err = await promise;
+
+    expect(err).toBeInstanceOf(UndoLogError);
+    expect((err as UndoLogError).code).toBe("NETWORK_ERROR");
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
   it("exhausts retries on persistent 429 and throws last error", async () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch.mockImplementation(() =>
