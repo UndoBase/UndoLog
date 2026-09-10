@@ -343,6 +343,74 @@ describe("intercept() error mapping", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getEffect / getSession query methods
+// ---------------------------------------------------------------------------
+
+describe("getEffect", () => {
+  it("sends GET and returns typed EffectRecord", async () => {
+    const effectData = {
+      effectId: "eff_123",
+      status: "committed",
+      toolName: "send_email",
+      tier: "compensable",
+      sessionId: "550e8400-e29b-41d4-a716-446655440000",
+      stepIndex: 0,
+      args: { to: "alice@example.com" },
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(effectData));
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const result = await client.getEffect("eff_123");
+
+    expect(result.effectId).toBe("eff_123");
+    expect(result.status).toBe("committed");
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/v1/effects/eff_123",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("maps 404 to NotFoundError", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ message: "not found" }, 404));
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const err = await client.getEffect("eff_unknown").catch((e) => e);
+    expect(err).toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("getSession", () => {
+  it("sends GET and returns typed SessionRecord", async () => {
+    const sessionData = {
+      sessionId: "550e8400-e29b-41d4-a716-446655440000",
+      stepCount: 5,
+      createdAt: "2026-01-01T00:00:00Z",
+      metadata: {},
+    };
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(sessionData));
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const result = await client.getSession("550e8400-e29b-41d4-a716-446655440000");
+
+    expect(result.sessionId).toBe("550e8400-e29b-41d4-a716-446655440000");
+    expect(result.stepCount).toBe(5);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/v1/sessions/550e8400-e29b-41d4-a716-446655440000",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("maps 404 to NotFoundError", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ message: "not found" }, 404));
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const err = await client.getSession("00000000-0000-0000-0000-000000000000").catch((e) => e);
+    expect(err).toBeInstanceOf(NotFoundError);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // intercept() - retry behavior
 // ---------------------------------------------------------------------------
 
