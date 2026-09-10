@@ -264,6 +264,37 @@ describe("intercept() error mapping", () => {
     expect((err as AuthenticationError).reason).toBe("invalid");
   });
 
+  it("maps HTTP 401 to AuthenticationError with reason expired when body indicates token expiry", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({ message: "token expired" }, 401),
+    );
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const err = await client.intercept(buildDefaultParams()).catch((e) => e);
+    expect(err).toBeInstanceOf(AuthenticationError);
+    expect((err as AuthenticationError).reason).toBe("expired");
+  });
+
+  it("maps HTTP 401 to reason invalid when body has no expiry keywords", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({ message: "unauthorized access" }, 401),
+    );
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const err = await client.intercept(buildDefaultParams()).catch((e) => e);
+    expect(err).toBeInstanceOf(AuthenticationError);
+    expect((err as AuthenticationError).reason).toBe("invalid");
+  });
+
+  it("maps HTTP 401 to reason invalid when body is empty", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({}, 401));
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+
+    const err = await client.intercept(buildDefaultParams()).catch((e) => e);
+    expect(err).toBeInstanceOf(AuthenticationError);
+    expect((err as AuthenticationError).reason).toBe("invalid");
+  });
+
   it("maps HTTP 403 to AuthenticationError with reason forbidden", async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: "token expired" }, 403));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
