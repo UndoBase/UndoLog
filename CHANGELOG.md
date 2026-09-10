@@ -186,6 +186,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   encoding for supplementary characters (code points above U+FFFF).
 - TypeScript SDK: ``canonicalJson`` escapes supplementary characters via
   surrogate pairs and sorts object keys by Unicode code point order.
+- TypeScript SDK: HTTP 401 with token-expiry body now returns
+  ``AuthenticationError`` with reason ``"expired"``; other 401 cases
+  return ``"invalid"``.
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added

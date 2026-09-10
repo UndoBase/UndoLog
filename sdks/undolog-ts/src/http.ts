@@ -74,6 +74,23 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
+/** Check if a 401 response body indicates token expiry.
+ *
+ * Inspects the ``message`` and ``error`` fields for expiry keywords.
+ * Only these two fields are checked to avoid false positives from
+ * unrelated body content.
+ */
+function isTokenExpired(body: Record<string, unknown> | undefined): boolean {
+  if (!body) return false;
+  const candidates = [body.message, body.error];
+  for (const value of candidates) {
+    if (typeof value === "string" && /expir/i.test(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function calculateBackoff(attempt: number, response?: Response): number {
   const maxDelay = 30_000;
   if (response) {
@@ -100,8 +117,10 @@ function mapHttpError(
   const message =
     (bodyRecord?.message as string) ?? (bodyRecord?.error as string) ?? `HTTP ${status}`;
   switch (status) {
-    case 401:
-      return new AuthenticationError("invalid", message);
+    case 401: {
+      const reason = isTokenExpired(bodyRecord) ? "expired" : "invalid";
+      return new AuthenticationError(reason, message);
+    }
     case 403:
       return new AuthenticationError("forbidden", message);
     case 404:
