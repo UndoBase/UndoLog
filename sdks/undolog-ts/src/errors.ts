@@ -39,9 +39,15 @@ export const ErrorCodes = {
   EFFECT_LOG_FAILED: "EFFECT_LOG_FAILED",
   MISSING_SESSION: "MISSING_SESSION",
   NOT_FOUND: "NOT_FOUND",
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  RATE_LIMITED: "RATE_LIMITED",
   SERIALIZATION_FAILED: "SERIALIZATION_FAILED",
+  SERVER_ERROR: "SERVER_ERROR",
   TIMEOUT: "TIMEOUT",
+  TOOL_NOT_REGISTERED: "TOOL_NOT_REGISTERED",
   TOOL_REGISTRATION_FAILED: "TOOL_REGISTRATION_FAILED",
+  INVALID_STATE_TRANSITION: "INVALID_STATE_TRANSITION",
+  APPROVAL_NOT_FOUND: "APPROVAL_NOT_FOUND",
   VALIDATION_FAILED: "VALIDATION_FAILED",
 } as const;
 
@@ -291,5 +297,121 @@ export class ValidationError extends UndoLogError {
     this.name = "ValidationError";
     this.field = field;
     this.constraint = constraint;
+  }
+}
+
+/**
+ * Insufficient permissions for the requested operation.
+ *
+ * @remarks
+ * Thrown when the authenticated principal lacks the required permission
+ * to perform the operation.
+ */
+export class PermissionError extends UndoLogError {
+  /** The permission that was required. */
+  readonly permission: string;
+
+  constructor(permission: string, message?: string) {
+    const msg = message ?? `Permission denied: ${permission}`;
+    super(ErrorCodes.PERMISSION_DENIED, msg);
+    this.name = "PermissionError";
+    this.permission = permission;
+  }
+}
+
+/**
+ * The requested tool is not registered.
+ *
+ * @remarks
+ * Thrown when attempting to intercept or execute a tool that has not
+ * been registered with the effect engine.
+ */
+export class ToolNotRegisteredError extends UndoLogError {
+  /** The tool name that was not found. */
+  readonly toolName: string;
+
+  constructor(toolName: string, message?: string) {
+    const msg = message ?? `Tool "${toolName}" is not registered`;
+    super(ErrorCodes.TOOL_NOT_REGISTERED, msg);
+    this.name = "ToolNotRegisteredError";
+    this.toolName = toolName;
+  }
+}
+
+/**
+ * Invalid state transition attempted.
+ *
+ * @remarks
+ * Thrown when an effect is in a state that does not allow the requested
+ * transition (e.g. committing an already committed effect).
+ */
+export class InvalidStateTransitionError extends UndoLogError {
+  /** The current state of the effect. */
+  readonly currentState: string;
+  /** The attempted target state. */
+  readonly targetState: string;
+
+  constructor(currentState: string, targetState: string, message?: string) {
+    const msg = message ?? `Cannot transition from "${currentState}" to "${targetState}"`;
+    super(ErrorCodes.INVALID_STATE_TRANSITION, msg);
+    this.name = "InvalidStateTransitionError";
+    this.currentState = currentState;
+    this.targetState = targetState;
+  }
+}
+
+/**
+ * The requested approval was not found.
+ *
+ * @remarks
+ * Thrown when attempting to approve or reject an approval ID that does
+ * not exist or has already been processed.
+ */
+export class ApprovalNotFoundError extends UndoLogError {
+  /** The approval ID that was not found. */
+  readonly approvalId: string;
+
+  constructor(approvalId: string, message?: string) {
+    const msg = message ?? `Approval "${approvalId}" not found`;
+    super(ErrorCodes.APPROVAL_NOT_FOUND, msg);
+    this.name = "ApprovalNotFoundError";
+    this.approvalId = approvalId;
+  }
+}
+
+/**
+ * Rate limit exceeded.
+ *
+ * @remarks
+ * Thrown when the server responds with 429 Too Many Requests and retry
+ * has been exhausted or is not enabled.
+ */
+export class RateLimitError extends UndoLogError {
+  /** The number of seconds to wait before retrying. */
+  readonly retryAfterSeconds?: number;
+
+  constructor(message?: string, retryAfterSeconds?: number) {
+    const msg = message ?? "Rate limit exceeded";
+    super(ErrorCodes.RATE_LIMITED, msg);
+    this.name = "RateLimitError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/**
+ * The server returned an unexpected error.
+ *
+ * @remarks
+ * Thrown when the server responds with a 5xx status code.
+ */
+export class ServerError extends UndoLogError {
+  /** The HTTP status code from the server. */
+  readonly statusCode: number;
+
+  constructor(statusCode: number, message?: string) {
+    const msg = message ?? `Server error (${statusCode})`;
+    super(ErrorCodes.SERVER_ERROR, msg);
+    this.name = "ServerError";
+    this.statusCode = statusCode;
   }
 }

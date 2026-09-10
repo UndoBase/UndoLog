@@ -199,6 +199,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   string field in MCP error responses.
 - TypeScript SDK: concurrent ``intercept()`` calls with the same session
   now produce distinct step indices via a per-session mutex.
+- TypeScript SDK: added missing error classes (``PermissionError``,
+  ``ToolNotRegisteredError``, ``InvalidStateTransitionError``,
+  ``ApprovalNotFoundError``, ``RateLimitError``, ``ServerError``).
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added

@@ -9,9 +9,15 @@ import {
   EffectLogError,
   EffectLogConcurrencyError,
   NotFoundError,
+  PermissionError,
+  RateLimitError,
   SerializationError,
+  ServerError,
   TimeoutError,
+  ToolNotRegisteredError,
   ToolRegistrationError,
+  InvalidStateTransitionError,
+  ApprovalNotFoundError,
   ValidationError,
 } from "../src/errors.js";
 
@@ -182,5 +188,109 @@ describe("ValidationError", () => {
     const err = new ValidationError("generic validation failure");
     expect(err.field).toBeUndefined();
     expect(err.constraint).toBeUndefined();
+  });
+});
+
+describe("PermissionError", () => {
+  it("stores permission and defaults message", () => {
+    const err = new PermissionError("admin:write");
+    expect(err.code).toBe(ErrorCodes.PERMISSION_DENIED);
+    expect(err.permission).toBe("admin:write");
+    expect(err.message).toContain("admin:write");
+    expect(err.name).toBe("PermissionError");
+    expect(err).toBeInstanceOf(UndoLogError);
+  });
+
+  it("accepts custom message", () => {
+    const err = new PermissionError("read", "Custom permission message");
+    expect(err.message).toBe("Custom permission message");
+  });
+});
+
+describe("ToolNotRegisteredError", () => {
+  it("stores tool name and defaults message", () => {
+    const err = new ToolNotRegisteredError("send_email");
+    expect(err.code).toBe(ErrorCodes.TOOL_NOT_REGISTERED);
+    expect(err.toolName).toBe("send_email");
+    expect(err.message).toContain("send_email");
+    expect(err.name).toBe("ToolNotRegisteredError");
+    expect(err).toBeInstanceOf(UndoLogError);
+  });
+
+  it("accepts custom message", () => {
+    const err = new ToolNotRegisteredError("delete_db", "Custom tool message");
+    expect(err.message).toBe("Custom tool message");
+  });
+});
+
+describe("InvalidStateTransitionError", () => {
+  it("stores current and target state", () => {
+    const err = new InvalidStateTransitionError("committed", "pending");
+    expect(err.code).toBe(ErrorCodes.INVALID_STATE_TRANSITION);
+    expect(err.currentState).toBe("committed");
+    expect(err.targetState).toBe("pending");
+    expect(err.message).toContain("committed");
+    expect(err.message).toContain("pending");
+    expect(err.name).toBe("InvalidStateTransitionError");
+    expect(err).toBeInstanceOf(UndoLogError);
+  });
+
+  it("accepts custom message", () => {
+    const err = new InvalidStateTransitionError("failed", "committed", "Custom state message");
+    expect(err.message).toBe("Custom state message");
+  });
+});
+
+describe("ApprovalNotFoundError", () => {
+  it("stores approvalId and defaults message", () => {
+    const err = new ApprovalNotFoundError("apr_456");
+    expect(err.code).toBe(ErrorCodes.APPROVAL_NOT_FOUND);
+    expect(err.approvalId).toBe("apr_456");
+    expect(err.message).toContain("apr_456");
+    expect(err.name).toBe("ApprovalNotFoundError");
+    expect(err).toBeInstanceOf(UndoLogError);
+  });
+
+  it("accepts custom message", () => {
+    const err = new ApprovalNotFoundError("apr_789", "Custom approval message");
+    expect(err.message).toBe("Custom approval message");
+  });
+});
+
+describe("RateLimitError", () => {
+  it("defaults message and stores retryAfterSeconds", () => {
+    const err = new RateLimitError(undefined, 30);
+    expect(err.code).toBe(ErrorCodes.RATE_LIMITED);
+    expect(err.retryAfterSeconds).toBe(30);
+    expect(err.message).toBe("Rate limit exceeded");
+    expect(err.name).toBe("RateLimitError");
+    expect(err).toBeInstanceOf(UndoLogError);
+  });
+
+  it("creates without retryAfterSeconds", () => {
+    const err = new RateLimitError();
+    expect(err.retryAfterSeconds).toBeUndefined();
+  });
+
+  it("accepts custom message", () => {
+    const err = new RateLimitError("Too many requests", 60);
+    expect(err.message).toBe("Too many requests");
+    expect(err.retryAfterSeconds).toBe(60);
+  });
+});
+
+describe("ServerError", () => {
+  it("stores statusCode and defaults message", () => {
+    const err = new ServerError(503);
+    expect(err.code).toBe(ErrorCodes.SERVER_ERROR);
+    expect(err.statusCode).toBe(503);
+    expect(err.message).toContain("503");
+    expect(err.name).toBe("ServerError");
+    expect(err).toBeInstanceOf(UndoLogError);
+  });
+
+  it("accepts custom message", () => {
+    const err = new ServerError(500, "Internal failure");
+    expect(err.message).toBe("Internal failure");
   });
 });
