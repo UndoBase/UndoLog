@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   fuzz testing strategy for Python, Go, TypeScript, and Rust.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
+- TypeScript SDK: 49 cross-language signature parity test vectors with a
+  deterministic Python fixture generator covering unicode keys, float
+  boundaries, nested structures, and realistic tool calls.
 - Python SDK: ``__version__`` exposed via ``importlib.metadata``; async context
   manager on ``UndoLogClient``; ``py.typed`` PEP 561 marker.
 - Python SDK: ``approve`` and ``reject`` methods on ``UndoLogClient`` for the
