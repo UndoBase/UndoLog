@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   UndoLogSession,
   getCurrentSession,
+  requireCurrentSession,
   runWithSession,
 } from "../../src/session.js";
+import { MissingSessionError } from "../../src/errors.js";
 
 // ── Session lifecycle ───────────────────────────────────────────────────────
 
@@ -371,5 +373,22 @@ describe("step counter overflow guard", () => {
     session.nextStep();
     expect(session.stepIndex).toBe(Number.MAX_SAFE_INTEGER);
     expect(() => session.nextStep()).toThrow(RangeError);
+  });
+});
+
+// ── requireCurrentSession ────────────────────────────────────────────────────
+
+describe("requireCurrentSession", () => {
+  it("returns the active session when one exists", () => {
+    const session = new UndoLogSession({
+      sessionId: "00000000-0000-0000-0000-000000000000",
+    });
+    runWithSession(session, () => {
+      expect(requireCurrentSession()).toBe(session);
+    });
+  });
+
+  it("throws MissingSessionError when no session is active", () => {
+    expect(() => requireCurrentSession()).toThrow(MissingSessionError);
   });
 });
