@@ -202,6 +202,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TypeScript SDK: added missing error classes (``PermissionError``,
   ``ToolNotRegisteredError``, ``InvalidStateTransitionError``,
   ``ApprovalNotFoundError``, ``RateLimitError``, ``ServerError``).
+- TypeScript SDK: auth headers are now applied last in the request
+  merge order, preventing per-request headers from overriding the
+  client-level ``X-Api-Key``.
 - Rust engine: ``resolve_tier`` falls back to name-only lookup when
   ``tool_version`` is omitted; mock tool-server auto-creates escalated tickets.
 - CI: removed ``|| true`` that was hiding example-test failures; added
