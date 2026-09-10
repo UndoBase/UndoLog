@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Documentation: added ADR 0008 defining the cross-language canonical JSON
+  fuzz testing strategy for Python, Go, TypeScript, and Rust.
 - Python SDK: ``__version__`` exposed via ``importlib.metadata``; async context
   manager on ``UndoLogClient``; ``py.typed`` PEP 561 marker.
 - Python SDK: ``approve`` and ``reject`` methods on ``UndoLogClient`` for the
