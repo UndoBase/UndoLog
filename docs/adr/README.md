@@ -16,3 +16,4 @@ Every significant design decision in UndoLog is recorded as an ADR.
 | [0005](0005-saga-not-2pc.md) | Saga Pattern for Multi-Step Rollback (Not 2PC) |
 | [0006](0006-mcp-protocol-layer.md) | MCP Protocol Layer for Framework Integration |
 | [0007](0007-pre-registered-compensation.md) | Pre-Registered Compensation for Crash Safety |
+| [0008](0008-cross-language-canonical-json-fuzz-testing.md) | Cross-Language Canonical JSON Fuzz Testing Strategy |
