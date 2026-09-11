@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Documentation: added ADR 0008 defining the cross-language canonical JSON
   fuzz testing strategy for Python, Go, TypeScript, and Rust.
+- Documentation: added ADR 0009 defining the standalone migration CLI
+  design with sqlx embedded migrations and rollback support.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
