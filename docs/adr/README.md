@@ -18,3 +18,4 @@ Every significant design decision in UndoLog is recorded as an ADR.
 | [0007](0007-pre-registered-compensation.md) | Pre-Registered Compensation for Crash Safety |
 | [0008](0008-cross-language-canonical-json-fuzz-testing.md) | Cross-Language Canonical JSON Fuzz Testing Strategy |
 | [0009](0009-migration-cli-design.md) | Standalone Migration CLI |
+| [0010](0010-postgresql-optional-dependency.md) | PostgreSQL Optional Dependency Approach |
