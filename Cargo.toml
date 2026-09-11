@@ -5,6 +5,7 @@ members = [
     "crates/undolog-store",
     "crates/undolog-engine",
     "crates/undolog-saga",
+    "crates/undolog-migrate",
 ]
 
 [workspace.package]
@@ -39,6 +40,7 @@ chrono = { version = "0.4",  features = ["serde"] }
 
 # hashing
 blake3 = "1.8"
+sha2   = "0.10"
 
 # error handling
 thiserror = "2.0"

@@ -1,0 +1,21 @@
+[package]
+name              = "undolog-migrate"
+version.workspace = true
+edition.workspace = true
+description       = "UndoLog standalone migration CLI"
+keywords          = ["undolog", "migration", "cli", "postgres"]
+categories        = ["command-line-utilities", "database"]
+readme            = "../../README.md"
+homepage          = "https://github.com/UndoBase/UndoLog"
+
+[[bin]]
+name = "undolog-migrate"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace          = true
+sha2.workspace            = true
+sqlx.workspace            = true
+tokio.workspace           = true
+tracing.workspace         = true
+tracing-subscriber.workspace = true

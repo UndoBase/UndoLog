@@ -47,16 +47,19 @@ COPY crates/undolog-store/Cargo.toml  crates/undolog-store/
 COPY crates/undolog-engine/Cargo.toml crates/undolog-engine/
 COPY crates/undolog-engine/build.rs   crates/undolog-engine/
 COPY crates/undolog-saga/Cargo.toml   crates/undolog-saga/
+COPY crates/undolog-migrate/Cargo.toml crates/undolog-migrate/
 
 # Dummy source files so Cargo can resolve the dependency graph.
 RUN mkdir -p crates/undolog-types/src  \
              crates/undolog-store/src  \
              crates/undolog-engine/src \
              crates/undolog-saga/src   \
+             crates/undolog-migrate/src \
   && touch crates/undolog-types/src/lib.rs   \
-          crates/undolog-store/src/lib.rs    \
-          crates/undolog-engine/src/lib.rs   \
-          crates/undolog-saga/src/lib.rs     \
+           crates/undolog-store/src/lib.rs    \
+           crates/undolog-engine/src/lib.rs   \
+           crates/undolog-saga/src/lib.rs     \
+           crates/undolog-migrate/src/main.rs \
   && echo "fn main() {}" > crates/undolog-engine/src/main.rs
 
 # Copy proto definitions so the build script (tonic-build) can generate
@@ -74,13 +77,15 @@ COPY crates/undolog-types/src  crates/undolog-types/src/
 COPY crates/undolog-store/src  crates/undolog-store/src/
 COPY crates/undolog-engine/src crates/undolog-engine/src/
 COPY crates/undolog-saga/src   crates/undolog-saga/src/
+COPY crates/undolog-migrate/src crates/undolog-migrate/src/
 
 # Force a rebuild with the real sources (cache hit for deps, only engine changes).
 RUN touch crates/undolog-types/src/lib.rs \
         crates/undolog-store/src/lib.rs \
         crates/undolog-engine/src/lib.rs \
         crates/undolog-engine/src/main.rs \
-        crates/undolog-saga/src/lib.rs && \
+        crates/undolog-saga/src/lib.rs \
+        crates/undolog-migrate/src/main.rs && \
     cargo build --release -p undolog-engine
 
 # Strip debug symbols (~30→5 MB).

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   fuzz testing strategy for Python, Go, TypeScript, and Rust.
 - Documentation: added ADR 0009 defining the standalone migration CLI
   design with sqlx embedded migrations and rollback support.
+- Engine: standalone migration CLI (``undolog-migrate up|down|status``)
+  with idempotent application, hardcoded rollback SQL, advisory lock
+  with timeout, and SHA-384 checksums matching sqlx's internal format.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a

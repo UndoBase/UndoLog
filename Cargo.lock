@@ -2758,6 +2758,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "undolog-migrate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sha2",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "undolog-saga"
 version = "0.1.0"
 dependencies = [
