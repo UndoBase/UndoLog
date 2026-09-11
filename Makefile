@@ -42,7 +42,8 @@ fmt:
 	ruff format --check sdks/undolog-py/.
 
 lint:
-	cargo clippy --all-targets --all-features
+	cargo clippy --all-targets
+	cargo clippy --all-targets --no-default-features --features sqlite
 	cd services/undolog-proxy && go vet ./...
 	ruff check sdks/undolog-py/.
 

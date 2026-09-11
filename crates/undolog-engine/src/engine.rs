@@ -14,6 +14,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, instrument};
 
+#[cfg(all(feature = "sqlite", not(feature = "pg")))]
+use undolog_store::sqlite::{ApprovalStore, EffectStore, SessionStore};
+#[cfg(feature = "pg")]
 use undolog_store::{ApprovalStore, EffectStore, SessionStore};
 use undolog_types::{
     approval::{ApprovalAction, ApprovalRequest, ApprovalState},

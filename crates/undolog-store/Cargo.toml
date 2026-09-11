@@ -2,11 +2,15 @@
 name              = "undolog-store"
 version.workspace = true
 edition.workspace = true
-description       = "UndoLog PostgreSQL repository layer"
-keywords          = ["undolog", "effect-tracking", "postgres", "repository", "storage"]
+description       = "UndoLog storage layer (PostgreSQL + SQLite)"
+keywords          = ["undolog", "effect-tracking", "postgres", "sqlite", "storage"]
 categories        = ["database", "development-tools"]
 readme            = "../../README.md"
 homepage          = "https://github.com/UndoBase/UndoLog"
+
+[features]
+default = []
+sqlite  = []
 
 [dependencies]
 undolog-types.workspace  = true
@@ -18,3 +22,6 @@ uuid.workspace         = true
 chrono.workspace       = true
 thiserror.workspace    = true
 tracing.workspace      = true
+
+[dev-dependencies]
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread"] }

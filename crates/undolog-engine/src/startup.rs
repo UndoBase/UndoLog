@@ -7,47 +7,22 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+#[cfg(all(feature = "sqlite", not(feature = "pg")))]
+use undolog_store::sqlite::ApprovalStore;
+#[cfg(feature = "pg")]
 use undolog_store::{ApprovalStore, EffectStore, SessionStore};
 use undolog_types::errors::UndoLogError;
 
 use crate::{EffectEngine, EngineConfig, TierRegistry};
 
 /// Maximum time to wait for the database schema to be ready.
+#[cfg(feature = "pg")]
 const SCHEMA_WAIT_RETRIES: u32 = 30;
+#[cfg(feature = "pg")]
 const SCHEMA_WAIT_DELAY: Duration = Duration::from_secs(1);
 
-/// Build a complete `EffectEngine` ready for production use.
-///
-/// This function:
-/// 1. Connects to the PostgreSQL database
-/// 2. Waits for core tables to exist (handles `docker-entrypoint-initdb.d`
-///    race: those scripts run after Postgres accepts connections)
-/// 3. Creates and initializes the three stores
-/// 4. Loads the tool tier registry
-/// 5. Spawns the registry refresh background task
-/// 6. Returns the configured engine
-///
-/// # Arguments
-///
-/// - `config`: Engine configuration (advisory lock retries, etc.)
-/// - `database_url`: PostgreSQL connection string
-/// - `registry_refresh_interval`: How often to refresh tool registrations from DB
-///
-/// # Errors
-///
-/// Returns `UndoLogError::Internal` if the core schema tables do not appear
-/// within the retry budget (30 s).  This prevents the engine from starting
-/// with an empty registry, which would silently default every tool to SAFE.
-///
-/// # Example
-///
-/// ```ignore
-/// let engine = build_engine(
-///     EngineConfig::default(),
-///     "postgresql://user:pass@localhost/undolog",
-///     Duration::from_secs(60),
-/// ).await?;
-/// ```
+/// Build a complete `EffectEngine` ready for production use (PostgreSQL).
+#[cfg(feature = "pg")]
 pub async fn build_engine(
     config: EngineConfig,
     database_url: &str,
@@ -139,14 +114,8 @@ pub async fn build_engine(
     Ok(engine)
 }
 
-/// Block until `undolog_tool_registry` exists in the public schema.
-///
-/// Polls `to_regclass` every second for up to 30 s.  The retry loop exists
-/// because Docker Compose's `pg_isready` health check returns success before
-/// `docker-entrypoint-initdb.d` scripts have finished.
-///
-/// Fails loudly on timeout so the operator knows migrations are missing,
-/// rather than silently running with an empty registry.
+/// Block until `undolog_tool_registry` exists in the public schema (PostgreSQL).
+#[cfg(feature = "pg")]
 async fn wait_for_schema(pool: &sqlx::PgPool) -> Result<(), UndoLogError> {
     for attempt in 0u32..SCHEMA_WAIT_RETRIES {
         let ready: bool =
@@ -222,4 +191,32 @@ fn spawn_timeout_processor(approval_store: ApprovalStore, interval: Duration) {
             }
         }
     });
+}
+
+// ── SQLite startup ──────────────────────────────────────────────────────────
+
+/// Build a complete `EffectEngine` backed by SQLite (local development).
+///
+/// Opens (or creates) the SQLite database at the given path, initializes the
+/// schema, and constructs the three stores. No advisory locks, no RLS, no
+/// partitioning. Suitable for local development and testing only.
+#[cfg(all(feature = "sqlite", not(feature = "pg")))]
+pub async fn build_engine_sqlite(
+    config: EngineConfig,
+    database_path: &str,
+) -> Result<EffectEngine, UndoLogError> {
+    info!(path = %database_path, "Initializing SQLite storage adapter");
+
+    let (effect_store, session_store, approval_store) =
+        undolog_store::sqlite::build_stores(database_path).await?;
+
+    let registry = TierRegistry::new();
+    let registry = Arc::new(RwLock::new(registry));
+
+    let timeout_interval = Duration::from_secs(config.timeout_check_interval_secs);
+    spawn_timeout_processor(approval_store.clone(), timeout_interval);
+
+    let engine = EffectEngine::new(effect_store, session_store, approval_store, registry, config);
+    info!("EffectEngine initialized (SQLite backend)");
+    Ok(engine)
 }
