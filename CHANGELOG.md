@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Engine: SQLite storage adapter for local development and testing.
   Uses sqlx with async connection pooling and WAL journal mode.
   Integrated into ``undolog-store`` behind a ``sqlite`` feature flag.
+- Documentation: MySQL adapter assessment with feature comparison table;
+  PostgreSQL high availability guide covering WAL streaming, read
+  replicas, and connection pooling.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
