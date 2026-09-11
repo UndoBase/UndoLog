@@ -3,7 +3,7 @@
 //! These tests require `TEST_DATABASE_URL` environment variable to be set.
 //! They test the full tier routing logic with a real PostgreSQL database.
 
-#![cfg(test)]
+#![cfg(all(test, feature = "pg"))]
 
 use std::sync::Arc;
 use uuid::Uuid;

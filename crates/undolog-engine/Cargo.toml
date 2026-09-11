@@ -8,9 +8,24 @@ categories        = ["development-tools", "network-programming"]
 readme            = "../../README.md"
 homepage          = "https://github.com/UndoBase/UndoLog"
 
+[[bin]]
+name = "undolog-engine"
+path = "src/main.rs"
+required-features = ["pg"]
+
+[[bin]]
+name = "undolog-engine-sqlite"
+path = "src/main_sqlite.rs"
+required-features = ["sqlite"]
+
+[features]
+default = ["pg"]
+pg      = ["dep:undolog-store"]
+sqlite  = ["undolog-store/sqlite"]
+
 [dependencies]
 undolog-types.workspace  = true
-undolog-store.workspace  = true
+undolog-store            = { workspace = true, optional = true }
 tokio.workspace        = true
 serde.workspace        = true
 serde_json.workspace   = true
