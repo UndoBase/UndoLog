@@ -18,3 +18,5 @@ Technical reference for UndoLog APIs, protocols, and configuration.
 | [Effect states](effect-states.md) | State machine: pending, running, compensated, completed, failed |
 | [Error codes](error-codes.md) | gRPC and HTTP error codes, meanings, recovery actions |
 | [Database schema](database-schema.md) | Table definitions, indexes, advisory lock key layout |
+| [Compatibility matrix](compatibility-matrix.md) | SDK and engine version compatibility |
+| [Deprecation policy](deprecation-policy.md) | Semantic versioning, deprecation timeline |
