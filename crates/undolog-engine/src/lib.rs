@@ -12,6 +12,7 @@
 pub mod engine;
 pub mod grpc;
 pub mod startup;
+pub mod telemetry;
 pub mod tier_registry;
 
 pub use engine::{EffectEngine, EngineConfig, InterceptOutcome};

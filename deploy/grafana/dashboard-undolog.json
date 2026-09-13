@@ -1,0 +1,161 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "gRPC Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(undolog_engine_grpc_requests_total[5m])",
+          "legendFormat": "{{method}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "lineWidth": 2 }
+        }
+      }
+    },
+    {
+      "title": "gRPC Request Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(undolog_engine_grpc_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{method}} p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(undolog_engine_grpc_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{method}} p50",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2 }
+        }
+      }
+    },
+    {
+      "title": "Intercept Outcomes",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(undolog_engine_intercept_outcomes_total[5m])",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 80 }
+        }
+      }
+    },
+    {
+      "title": "Error Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(undolog_engine_grpc_errors_total[5m])",
+          "legendFormat": "{{method}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 2 },
+          "color": { "mode": "fixed", "fixedColor": "red" }
+        }
+      }
+    },
+    {
+      "title": "Active Sessions",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "undolog_engine_active_sessions",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Pending Approvals",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 16 },
+      "targets": [
+        {
+          "expr": "undolog_engine_pending_approvals",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Effect Store Operations",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "rate(undolog_engine_effect_store_operations_total[5m])",
+          "legendFormat": "{{operation}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Advisory Lock Wait Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(undolog_engine_advisory_lock_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2 }
+        }
+      }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["undolog", "tracing", "opentelemetry"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UndoLog Engine",
+  "uid": "undolog-engine",
+  "version": 1
+}

@@ -7,6 +7,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
+	"undolog-proxy/internal/telemetry"
 )
 
 // ErrToolExecutorNotConfigured is returned when no upstream tool executor exists.
@@ -247,11 +249,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := engine.WithRequestID(r.Context(), requestIDFrom(r.Context()))
+
+	// Extract and propagate W3C trace context for distributed tracing.
+	sc := telemetry.ExtractFromRequest(r)
+	ctx = telemetry.WithSpanContext(ctx, sc)
+
 	if h.requestTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, h.requestTimeout)
 		defer cancel()
 	}
+
+	h.logger.Info("intercept request",
+		"session_id", req.SessionID,
+		"tool_name", req.ToolName,
+		"step_index", req.StepIndex,
+		"trace_id", hexTraceID(sc.TraceID),
+	)
 
 	outcome, err := h.engineClient.Intercept(ctx, protocol.InterceptRequest{ToolCall: call})
 	if err != nil {
@@ -373,4 +387,9 @@ func (h *Handler) emit(evt sse.Event) {
 	if h.broadcaster != nil {
 		h.broadcaster.Emit(evt)
 	}
+}
+
+// hexTraceID formats a 16-byte trace ID as a hex string for structured logging.
+func hexTraceID(id [16]byte) string {
+	return hex.EncodeToString(id[:])
 }
