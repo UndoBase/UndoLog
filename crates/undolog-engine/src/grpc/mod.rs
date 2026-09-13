@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
-use tracing::instrument;
+use tracing::{info_span, instrument};
 
 use undolog_types::{
     approval::ApprovalRequest,
@@ -57,6 +57,17 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
             req.tool_call.ok_or_else(|| Status::invalid_argument("tool_call is required"))?;
 
         let call = tool_call_from_proto(pb_call)?;
+
+        // Enrich span with tool call attributes for distributed tracing.
+        let span = info_span!(
+            "intercept",
+            session_id = %call.session_id,
+            step_index = call.step_index,
+            tool_name = %call.tool_name,
+            org_id = %call.org_id,
+        );
+        let _enter = span.enter();
+
         let engine = self.engine.read().await;
 
         match engine.intercept(call).await {
@@ -64,11 +75,15 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
                 let response = pb::InterceptResponse {
                     outcome: Some(match outcome {
                         crate::engine::InterceptOutcome::Execute { effect_id } => {
+                            tracing::Span::current()
+                                .record("effect_id", tracing::field::display(&effect_id));
                             pb::intercept_response::Outcome::Execute(pb::ExecuteOutcome {
                                 effect_id: effect_id.to_string(),
                             })
                         }
                         crate::engine::InterceptOutcome::Replay { effect_id, result } => {
+                            tracing::Span::current()
+                                .record("effect_id", tracing::field::display(&effect_id));
                             let cached = result.map(tool_result_to_proto);
                             pb::intercept_response::Outcome::Replay(pb::ReplayOutcome {
                                 effect_id: effect_id.to_string(),
@@ -78,12 +93,16 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
                         crate::engine::InterceptOutcome::AwaitingApproval {
                             effect_id,
                             approval_request_id,
-                        } => pb::intercept_response::Outcome::AwaitingApproval(
-                            pb::AwaitingApprovalOutcome {
-                                effect_id: effect_id.to_string(),
-                                approval_id: approval_request_id.to_string(),
-                            },
-                        ),
+                        } => {
+                            tracing::Span::current()
+                                .record("effect_id", tracing::field::display(&effect_id));
+                            pb::intercept_response::Outcome::AwaitingApproval(
+                                pb::AwaitingApprovalOutcome {
+                                    effect_id: effect_id.to_string(),
+                                    approval_id: approval_request_id.to_string(),
+                                },
+                            )
+                        }
                     }),
                     error: String::new(),
                 };
@@ -105,6 +124,9 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
             req.result.ok_or_else(|| Status::invalid_argument("result is required"))?,
         )?;
 
+        let span = info_span!("commit", effect_id = %effect_id, org_id = %org_id);
+        let _enter = span.enter();
+
         let engine = self.engine.read().await;
         engine
             .commit(&org_id, &effect_id, result)
@@ -122,6 +144,9 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
         let req = request.into_inner();
         let org_id = parse_org_id(&req.org_id)?;
         let effect_id = parse_effect_id(&req.effect_id)?;
+
+        let span = info_span!("fail", effect_id = %effect_id, org_id = %org_id);
+        let _enter = span.enter();
 
         let engine = self.engine.read().await;
         engine
@@ -149,6 +174,9 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
                     .map_err(|e| Status::invalid_argument(format!("invalid approved_args: {e}")))?,
             )
         };
+
+        let span = info_span!("approve", approval_id = %approval_id, org_id = %org_id);
+        let _enter = span.enter();
 
         let engine = self.engine.read().await;
         let result = engine

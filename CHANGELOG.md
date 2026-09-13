@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   PostgreSQL high availability guide covering WAL streaming, read
   replicas, and connection pooling.
 - Infra: Helm chart for Kubernetes deployment.
+- Infra: OpenTelemetry tracing with OTLP export and Grafana dashboard.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a

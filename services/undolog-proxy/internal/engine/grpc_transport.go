@@ -13,6 +13,7 @@ import (
 
 	"undolog-proxy/internal/engine/pb"
 	"undolog-proxy/internal/protocol"
+	"undolog-proxy/internal/telemetry"
 )
 
 // tracingContextKey carries a proxy request ID through the call context so the
@@ -42,15 +43,30 @@ func RequestIDFrom(ctx context.Context) string {
 	return requestIDFromContext(ctx)
 }
 
-// withTracingMetadata appends the outgoing x-request-id metadata pair when the
-// context carries a proxy request ID. Calls without an ID (for example the
-// startup approval reconciliation) are left untouched.
+// withTracingMetadata appends the outgoing x-request-id and W3C trace
+// context metadata pairs when the context carries a proxy request ID.
+// Calls without an ID (for example the startup approval reconciliation)
+// are left untouched.
 func withTracingMetadata(ctx context.Context) context.Context {
 	id := requestIDFromContext(ctx)
-	if id == "" {
+	pairs := []string{}
+
+	if id != "" {
+		pairs = append(pairs, "x-request-id", id)
+	}
+
+	if sc, ok := telemetry.SpanContextFrom(ctx); ok {
+		tp, ts := telemetry.PropagateMetadata(sc)
+		pairs = append(pairs, "traceparent", tp)
+		if ts != "" {
+			pairs = append(pairs, "tracestate", ts)
+		}
+	}
+
+	if len(pairs) == 0 {
 		return ctx
 	}
-	return metadata.AppendToOutgoingContext(ctx, "x-request-id", id)
+	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }
 
 // GRPCTransport adapts the generated `pb.UndoLogEngineClient` to the

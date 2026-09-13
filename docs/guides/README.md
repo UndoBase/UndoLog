@@ -17,4 +17,5 @@ How-to guides for common UndoLog workflows.
 | [Configuring approval gates](configuring-approval-gates.md) | Setting up manual or automated approval steps before high-risk effects |
 | [Deploying with Docker](deploying-with-docker.md) | Running the full stack with Docker Compose |
 | [Helm installation](helm-installation.md) | Deploying on Kubernetes with the Helm chart |
+| [OpenTelemetry setup](opentelemetry-setup.md) | Configuring distributed tracing with OTLP and Grafana |
 | [Running in production](running-in-production.md) | Advisory lock tuning, connection pooling, partition management |

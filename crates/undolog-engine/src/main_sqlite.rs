@@ -19,6 +19,7 @@ use tracing::{info, warn};
 
 use undolog_engine::grpc::pb::undo_log_engine_server::UndoLogEngineServer;
 use undolog_engine::grpc::UndoLogEngineService;
+use undolog_engine::telemetry;
 use undolog_engine::EngineConfig;
 
 // ── Env var defaults ────────────────────────────────────────────────────────
@@ -26,7 +27,6 @@ use undolog_engine::EngineConfig;
 const ENV_SQLITE_PATH: &str = "UNDOLOG_SQLITE_PATH";
 const ENV_GRPC_ADDR: &str = "UNDOLOG_ENGINE_GRPC_ADDR";
 const ENV_HEALTH_ADDR: &str = "UNDOLOG_ENGINE_HEALTH_ADDR";
-const ENV_LOG_LEVEL: &str = "UNDOLOG_LOG_LEVEL";
 const ENV_LOCK_MAX_ATTEMPTS: &str = "UNDOLOG_LOCK_MAX_ATTEMPTS";
 const ENV_LOCK_RETRY_MS: &str = "UNDOLOG_LOCK_RETRY_MS";
 const ENV_APPROVAL_TIMEOUT_SECS: &str = "UNDOLOG_APPROVAL_TIMEOUT_SECS";
@@ -35,7 +35,6 @@ const ENV_TIMEOUT_CHECK_INTERVAL_SECS: &str = "UNDOLOG_TIMEOUT_CHECK_INTERVAL_SE
 
 const DEFAULT_GRPC_ADDR: &str = "0.0.0.0:50051";
 const DEFAULT_HEALTH_ADDR: &str = "0.0.0.0:9090";
-const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_APPROVAL_TIMEOUT_SECS: &str = "86400";
 const DEFAULT_TIMEOUT_CHECK_INTERVAL_SECS: &str = "60";
 
@@ -43,7 +42,6 @@ const DEFAULT_TIMEOUT_CHECK_INTERVAL_SECS: &str = "60";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let log_level = env_or(ENV_LOG_LEVEL, DEFAULT_LOG_LEVEL);
     let sqlite_path = env_or(ENV_SQLITE_PATH, "undolog.db");
     let grpc_addr: SocketAddr = env_or(ENV_GRPC_ADDR, DEFAULT_GRPC_ADDR)
         .parse()
@@ -67,15 +65,7 @@ async fn main() -> Result<()> {
             .parse()
             .context("Invalid UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS")?;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(log_level.parse().unwrap_or(tracing::Level::INFO.into()))
-                .from_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&log_level)),
-        )
-        .json()
-        .init();
+    let _guard = telemetry::init_telemetry();
 
     let engine_config = EngineConfig {
         lock_max_attempts,
