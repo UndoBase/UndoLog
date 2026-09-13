@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: MySQL adapter assessment with feature comparison table;
   PostgreSQL high availability guide covering WAL streaming, read
   replicas, and connection pooling.
+- Infra: Helm chart for Kubernetes deployment.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a

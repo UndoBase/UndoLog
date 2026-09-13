@@ -1,0 +1,17 @@
+apiVersion: v2
+name: undolog
+description: UndoLog - effect tracking and safety kernel for AI agent tool calls
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - undolog
+  - ai-agent
+  - effect-tracking
+  - mcp
+  - safety
+home: https://github.com/UndoBase/UndoLog
+sources:
+  - https://github.com/UndoBase/UndoLog
+maintainers:
+  - name: UndoLog Team
