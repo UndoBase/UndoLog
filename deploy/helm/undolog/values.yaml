@@ -1,0 +1,118 @@
+# Default values for UndoLog.
+# Override these in your values file or via --set flags.
+
+# -- Global settings
+nameOverride: ""
+fullnameOverride: ""
+
+# -- UndoLog Engine (Rust gRPC server)
+engine:
+  image:
+    repository: undolog-engine
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  grpc:
+    port: 50051
+  health:
+    port: 9090
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  env:
+    UNDOLOG_LOG_LEVEL: info
+    UNDOLOG_LOCK_MAX_ATTEMPTS: "3"
+    UNDOLOG_LOCK_RETRY_MS: "100"
+    UNDOLOG_REGISTRY_REFRESH_SECS: "60"
+    UNDOLOG_APPROVAL_TIMEOUT_SECS: "86400"
+    UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS: "60"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -- UndoLog Proxy (Go HTTP server)
+proxy:
+  image:
+    repository: undolog-proxy
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  http:
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  env:
+    UNDOLOG_PROXY_LISTEN_ADDR: ":8080"
+    UNDOLOG_LOG_LEVEL: info
+    UNDOLOG_PROXY_READ_TIMEOUT_SECS: "15"
+    UNDOLOG_PROXY_WRITE_TIMEOUT_SECS: "15"
+    UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS: "30"
+    UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS: "30"
+    UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS: "3"
+    UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS: "100"
+    UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE: "128"
+    UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS: "60"
+    UNDOLOG_PROXY_APPROVAL_RETENTION_SECS: "86400"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -- Database configuration
+database:
+  # -- PostgreSQL connection string (used by engine)
+  url: "postgresql://postgres:postgres@postgres:5432/undolog"
+
+# -- API keys for proxy authentication (key=org pairs)
+apiKeys: ""
+
+# -- Upstream tool server URL
+upstreamToolUrl: ""
+
+# -- Service account
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# -- Pod disruption budget
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# -- Horizontal pod autoscaler
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# -- Ingress
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: undolog.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# -- Pod annotations
+podAnnotations: {}
+
+# -- Pod security context
+podSecurityContext: {}
+
+# -- Container security context
+securityContext: {}

@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "undolog.fullname" . }}-proxy
+  labels:
+    {{- include "undolog.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  replicas: {{ .Values.proxy.replicas }}
+  selector:
+    matchLabels:
+      {{- include "undolog.proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "undolog.proxy.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "undolog.serviceAccountName" . }}
+      terminationGracePeriodSeconds: 15
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: proxy
+          image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag }}"
+          imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.proxy.http.port }}
+              protocol: TCP
+          env:
+            - name: UNDOLOG_PROXY_ENGINE_GRPC_ADDR
+              value: {{ include "undolog.fullname" . }}-engine:{{ .Values.engine.grpc.port }}
+            {{- if .Values.upstreamToolUrl }}
+            - name: UNDOLOG_PROXY_UPSTREAM_TOOL_URL
+              value: {{ .Values.upstreamToolUrl | quote }}
+            {{- end }}
+            {{- if .Values.apiKeys }}
+            - name: UNDOLOG_PROXY_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "undolog.fullname" . }}-api-keys
+                  key: keys
+            {{- end }}
+            {{- range $key, $value := .Values.proxy.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 3"]
+          {{- with .Values.proxy.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.proxy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.proxy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.proxy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

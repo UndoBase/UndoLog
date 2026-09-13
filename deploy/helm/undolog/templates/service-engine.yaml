@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "undolog.fullname" . }}-engine
+  labels:
+    {{- include "undolog.labels" . | nindent 4 }}
+    app.kubernetes.io/component: engine
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: {{ .Values.engine.grpc.port }}
+      targetPort: grpc
+      protocol: TCP
+    - name: health
+      port: {{ .Values.engine.health.port }}
+      targetPort: health
+      protocol: TCP
+  selector:
+    {{- include "undolog.engine.selectorLabels" . | nindent 4 }}
