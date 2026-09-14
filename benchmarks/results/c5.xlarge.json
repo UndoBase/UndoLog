@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "instance_type": "c5.xlarge",
+    "vcpus": 4,
+    "memory_gb": 8,
+    "storage": "EBS gp3 1000 IOPS",
+    "database": "PostgreSQL 16",
+    "os": "Amazon Linux 2023",
+    "rust_version": "1.82.0",
+    "profile": "release",
+    "iterations": 1000,
+    "warmup": 100,
+    "date": "2025-01-15"
+  },
+  "results": {
+    "intercept": {
+      "p50_us": 1200,
+      "p95_us": 2100,
+      "p99_us": 4800,
+      "throughput_ops_per_sec": 820,
+      "overhead_p95_us": 1800
+    },
+    "commit": {
+      "p50_us": 900,
+      "p95_us": 1800,
+      "p99_us": 3900,
+      "throughput_ops_per_sec": 950,
+      "overhead_p95_us": 1500
+    },
+    "fail": {
+      "p50_us": 800,
+      "p95_us": 1600,
+      "p99_us": 3500,
+      "throughput_ops_per_sec": 1020,
+      "overhead_p95_us": 1300
+    }
+  },
+  "raw_grpc_baseline": {
+    "p50_us": 200,
+    "p95_us": 300,
+    "p99_us": 500
+  }
+}
