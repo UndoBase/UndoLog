@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Infra: performance benchmark framework with baseline JSON schema,
   regression detection script, and CI validation on release tags.
 - Documentation: compatibility matrix and deprecation policy.
+- Documentation: failure mode runbook mapping each error code to cause,
+  detection, recovery, and prevention.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
