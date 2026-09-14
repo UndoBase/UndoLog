@@ -42,7 +42,7 @@ The [full docs](docs/) follow the Diátaxis framework: tutorials, how-to guides,
 
 ## Contributing
 
-UndoLog is Apache 2.0 licensed. Contributions are welcome. Read the [contributing guide](docs/contributing/CONTRIBUTING.md) to get started. Found a bug or have an idea? [Open an issue](https://github.com/UndoBase/UndoLog/issues).
+Contributions are welcome. Read the [contributing guide](docs/contributing/CONTRIBUTING.md) to get started. Found a bug or have an idea? [Open an issue](https://github.com/UndoBase/UndoLog/issues).
 
 ## Security
 

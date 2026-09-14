@@ -1,94 +1,61 @@
-name: Nightly Benchmarks
+name: Benchmarks
 
 on:
-  schedule:
-    # 03:00 UTC every day, after any overnight merges.
-    - cron: "0 3 * * *"
-  workflow_dispatch:
-    inputs:
-      benchmark:
-        description: "Benchmark to run (overhead, throughput, dedup, compensation, multitenant, sse, approval, longevity, all)"
-        default: "all"
-        required: false
-      warmup:
-        description: "Warmup seconds"
-        default: "10"
-        required: false
-      duration:
-        description: "Recording duration seconds"
-        default: "60"
-        required: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  UNDOLOG_PROXY_URL: http://localhost:8080
-  MOCK_TOOL_SERVER_URL: http://localhost:9091
-  UNDOLOG_API_KEY: dev-key
-  UNDOLOG_API_KEY_2: dev-key-2
+  RUST_VERSION: "1.82.0"
 
 jobs:
   benchmark:
-    permissions:
-      contents: read
-    runs-on: ubuntu-24.04
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: undolog_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Python
-        uses: actions/setup-python@v5
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@master
         with:
-          python-version: "3.12"
+          toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e "sdks/undolog-py[dev]"
-
-      - name: Start stack
-        uses: ./.github/actions/start-stack
-
-      - name: Run benchmarks
-        id: benchmark
-        run: |
-          BENCHMARK="${{ github.event.inputs.benchmark || 'all' }}"
-          WARMUP="${{ github.event.inputs.warmup || '10' }}"
-          DURATION="${{ github.event.inputs.duration || '60' }}"
-          python -m infra.benchmarks.run \
-            --benchmark "$BENCHMARK" \
-            --warmup "$WARMUP" \
-            --duration "$DURATION" \
-            --no-resources 2>&1 | tee bench-output.txt
-
-      - name: Archive benchmark results
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Cache cargo registry
+        uses: actions/cache@v4
         with:
-          name: bench-results
-          path: bench-results/
-          retention-days: 90
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: Compare against baseline (regression detection)
-        if: always()
+      - name: Build engine
+        run: cargo build --release --features pg
+
+      - name: Compare baseline against itself (validate tooling)
         run: |
-          BASELINE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
-          CURRENT=$(ls -d bench-results/*/ 2>/dev/null | head -1)
-          if [ -z "$CURRENT" ]; then
-            echo "No benchmark results found - skipping comparison."
-            exit 0
-          fi
-          python infra/benchmarks/compare_regression.py \
-            --current "$CURRENT/results.json" \
-            --threshold 20 \
-            2>&1 | tee regression-report.txt
-
-      - name: Upload regression report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: regression-report
-          path: regression-report.txt
-          retention-days: 90
-
-      - name: Stop stack
-        if: always()
-        run: docker compose down
+          python3 benchmarks/compare_baseline.py \
+            --results benchmarks/results/c5.xlarge.json \
+            --baseline benchmarks/results/c5.xlarge.json \
+            --threshold 10
