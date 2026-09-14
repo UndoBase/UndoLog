@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: compatibility matrix and deprecation policy.
 - Documentation: failure mode runbook mapping each error code to cause,
   detection, recovery, and prevention.
+- Documentation: ADR 0011 and design for multi-region active-active
+  architecture with Kafka event log and conflict resolution.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
