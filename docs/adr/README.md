@@ -20,3 +20,4 @@ Every significant design decision in UndoLog is recorded as an ADR.
 | [0009](0009-migration-cli-design.md) | Standalone Migration CLI |
 | [0010](0010-postgresql-optional-dependency.md) | PostgreSQL Optional Dependency Approach |
 | [0011](0011-multi-region-active-active.md) | Multi-Region Active-Active Architecture |
+| [0016](0016-effect-ttl-retention.md) | Effect TTL and Retention Strategy |
