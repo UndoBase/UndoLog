@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   architecture with Kafka event log and conflict resolution.
 - Documentation: TLA+ specification for the effect/session state
   machine with model check results.
+- Documentation: ADR 0016 defining effect log TTL and retention
+  strategy with per-org configurable policies.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
