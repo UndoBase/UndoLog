@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   strategy with per-org configurable policies.
 - Documentation: ADR 0013 defining dead-letter queue for permanently
   failed compensations with admin API.
+- Documentation: ADR 0014 defining saga crash recovery testing
+  approach with process management and CI integration.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
