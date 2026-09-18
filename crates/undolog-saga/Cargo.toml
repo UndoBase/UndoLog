@@ -32,3 +32,4 @@ uuid.workspace = true
 wiremock = "0.6"
 chrono = { version = "0.4", features = ["serde"] }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "uuid", "chrono", "json"] }
+reqwest = { version = "0.12", features = ["json"] }
