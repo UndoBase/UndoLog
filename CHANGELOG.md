@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   failed compensations with admin API.
 - Documentation: ADR 0014 defining saga crash recovery testing
   approach with process management and CI integration.
+- Engine: integration test proving crash recovery is not theoretical.
+  Kills engine mid-compensation and verifies saga resumes on restart.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
