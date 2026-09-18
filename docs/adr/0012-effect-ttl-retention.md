@@ -1,9 +1,9 @@
 ---
-title: "ADR 0016: Effect TTL and Retention Strategy"
+title: "ADR 0012: Effect TTL and Retention Strategy"
 description: "- **Date:** 2026-09-17 - **Status:** Proposed - **Deciders:** UndoLog Core Team"
 section: "adr"
 ---
-# ADR 0016: Effect TTL and Retention Strategy
+# ADR 0012: Effect TTL and Retention Strategy
 
 - **Date:** 2026-09-17
 - **Status:** Proposed
