@@ -69,6 +69,7 @@ prost  = "0.13"
 prost-types = "0.13"
 
 # HTTP
+axum     = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # transitive dep security pin

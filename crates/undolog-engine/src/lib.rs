@@ -9,7 +9,9 @@
 //!   - [`TierRegistry`]   - in-memory tool tier cache
 //!   - [`startup`]        - pool construction + initial bootstrap
 //!   - [`timeout`]        - approval timeout background processor
+//!   - [`admin`]          - HTTP admin API for dead-letter management
 
+pub mod admin;
 pub mod engine;
 pub mod grpc;
 pub mod startup;
