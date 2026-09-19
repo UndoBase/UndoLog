@@ -240,3 +240,99 @@ mod approval_timeout_tests {
         assert_eq!(config, deserialized);
     }
 }
+
+// ── Session Cache Configuration ───────────────────────────────────────────────
+
+/// Configuration for the in-memory session state cache.
+///
+/// The cache avoids a PostgreSQL round-trip on every `intercept` call by
+/// keeping recently accessed session records in memory. Entries expire
+/// after `ttl_secs` seconds of inactivity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CacheConfig {
+    /// Time-to-live for cached entries in seconds.
+    ///
+    /// Entries older than this are evicted on the next access attempt.
+    /// Minimum value is 1 second. Default is 300 seconds (5 minutes).
+    pub ttl_secs: u64,
+
+    /// Maximum number of entries in the cache.
+    ///
+    /// When the capacity is reached the oldest entry is evicted regardless
+    /// of TTL. Zero means unlimited. Default is 10000.
+    pub max_entries: usize,
+}
+
+impl CacheConfig {
+    /// Create a new cache configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `ttl_secs` - Time-to-live in seconds (minimum 1)
+    /// * `max_entries` - Maximum number of cached entries (0 for unlimited)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ttl_secs` is less than 1.
+    pub fn new(ttl_secs: u64, max_entries: usize) -> Self {
+        assert!(ttl_secs >= 1, "ttl_secs must be at least 1");
+        Self { ttl_secs, max_entries }
+    }
+
+    /// Return the TTL as a `std::time::Duration`.
+    pub fn ttl_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.ttl_secs)
+    }
+}
+
+impl Default for CacheConfig {
+    /// Default: 5-minute TTL, 10000 max entries.
+    fn default() -> Self {
+        Self::new(300, 10000)
+    }
+}
+
+#[cfg(test)]
+mod cache_config_tests {
+    use super::*;
+
+    #[test]
+    fn test_cache_config_new() {
+        let config = CacheConfig::new(60, 500);
+        assert_eq!(config.ttl_secs, 60);
+        assert_eq!(config.max_entries, 500);
+    }
+
+    #[test]
+    fn test_cache_config_default() {
+        let config = CacheConfig::default();
+        assert_eq!(config.ttl_secs, 300);
+        assert_eq!(config.max_entries, 10000);
+    }
+
+    #[test]
+    fn test_cache_config_ttl_duration() {
+        let config = CacheConfig::new(120, 0);
+        assert_eq!(config.ttl_duration(), std::time::Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_cache_config_unlimited_entries() {
+        let config = CacheConfig::new(60, 0);
+        assert_eq!(config.max_entries, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "ttl_secs must be at least 1")]
+    fn test_cache_config_zero_ttl_panics() {
+        CacheConfig::new(0, 100);
+    }
+
+    #[test]
+    fn test_cache_config_serialization() {
+        let config = CacheConfig::new(600, 5000);
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: CacheConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, deserialized);
+    }
+}

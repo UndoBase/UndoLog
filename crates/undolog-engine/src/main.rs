@@ -79,6 +79,7 @@ async fn main() -> Result<()> {
         approval_timeout_secs,
         auto_approve_on_timeout,
         timeout_check_interval_secs,
+        cache_config: undolog_types::config::CacheConfig::default(),
     };
 
     info!(
