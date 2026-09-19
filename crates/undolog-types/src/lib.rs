@@ -6,6 +6,7 @@
 //! Zero async. Zero DB dependencies. Safe to use in every SDK.
 
 pub mod approval;
+pub mod config;
 pub mod effect;
 pub mod errors;
 pub mod ids;
