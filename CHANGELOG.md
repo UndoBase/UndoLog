@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Kills engine mid-compensation and verifies saga resumes on restart.
 - Engine: per-org configurable effect TTL retention policy with
   unit and property tests for correctness guarantees.
+- Engine: dead-letter table and CRUD operations for permanently
+  failed compensations with retry and skip support.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
