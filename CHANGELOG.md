@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   creation, archival, and deletion lifecycle.
 - Engine: HTTP admin API for dead-letter inspection, retry, and skip.
 - Engine: in-memory session state cache with TTL and capacity eviction.
+- Engine: chaos tests for crash, concurrency, and DB failure scenarios.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
