@@ -3,12 +3,14 @@
 //! Constructs a fully-initialized `EffectEngine` from configuration and a database URL.
 
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
 
-#[cfg(all(feature = "sqlite", not(feature = "pg")))]
-use undolog_store::sqlite::ApprovalStore;
+#[cfg(feature = "pg")]
+use std::time::Duration;
+#[cfg(feature = "pg")]
+use tracing::warn;
+
 #[cfg(feature = "pg")]
 use undolog_store::{ApprovalStore, EffectStore, SessionStore};
 use undolog_types::errors::UndoLogError;
@@ -99,14 +101,14 @@ pub async fn build_engine(
     );
 
     // Spawn the approval timeout processor (runs in background, processes timed-out approvals).
-    let timeout_interval = Duration::from_secs(config.timeout_check_interval_secs);
+    let timeout_config = config.approval_timeout_config();
     info!(
-        interval_secs = timeout_interval.as_secs(),
-        approval_timeout_secs = config.approval_timeout_secs,
-        auto_approve = config.auto_approve_on_timeout,
+        interval_secs = timeout_config.check_interval_secs,
+        approval_timeout_secs = timeout_config.timeout_secs,
+        auto_approve = timeout_config.auto_approve,
         "Spawning approval timeout processor"
     );
-    spawn_timeout_processor(approval_store.clone(), timeout_interval);
+    crate::timeout::spawn_timeout_processor(approval_store.clone(), &timeout_config);
 
     // Build and return the engine.
     let engine = EffectEngine::new(effect_store, session_store, approval_store, registry, config);
@@ -146,53 +148,6 @@ async fn wait_for_schema(pool: &sqlx::PgPool) -> Result<(), UndoLogError> {
     ))
 }
 
-/// Spawn a background task that periodically processes timed-out approvals.
-///
-/// The task iterates over all organisations with pending approvals and
-/// calls `process_timeouts` to transition expired requests to `timed_out`
-/// or `auto_approved` states. Each processed request gets an audit event
-/// recorded in `undolog_approval_events`.
-fn spawn_timeout_processor(approval_store: ApprovalStore, interval: Duration) {
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-        loop {
-            ticker.tick().await;
-
-            match approval_store.list_orgs_with_pending_approvals().await {
-                Ok(org_ids) => {
-                    for org_id in &org_ids {
-                        match approval_store.process_timeouts(org_id).await {
-                            Ok(count) if count > 0 => {
-                                info!(
-                                    org_id = %org_id,
-                                    processed = count,
-                                    "Approval timeout processor: handled timed-out approvals"
-                                );
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                warn!(
-                                    org_id = %org_id,
-                                    error = %e,
-                                    "Approval timeout processor: failed to process timeouts"
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        "Approval timeout processor: failed to list orgs"
-                    );
-                }
-            }
-        }
-    });
-}
-
 // ── SQLite startup ──────────────────────────────────────────────────────────
 
 /// Build a complete `EffectEngine` backed by SQLite (local development).
@@ -213,8 +168,8 @@ pub async fn build_engine_sqlite(
     let registry = TierRegistry::new();
     let registry = Arc::new(RwLock::new(registry));
 
-    let timeout_interval = Duration::from_secs(config.timeout_check_interval_secs);
-    spawn_timeout_processor(approval_store.clone(), timeout_interval);
+    let timeout_config = config.approval_timeout_config();
+    crate::timeout::spawn_timeout_processor(approval_store.clone(), &timeout_config);
 
     let engine = EffectEngine::new(effect_store, session_store, approval_store, registry, config);
     info!("EffectEngine initialized (SQLite backend)");

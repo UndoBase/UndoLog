@@ -57,6 +57,20 @@ impl Default for EngineConfig {
     }
 }
 
+impl EngineConfig {
+    /// Build an [`ApprovalTimeoutConfig`] from the engine configuration fields.
+    ///
+    /// This provides a typed configuration object for the approval timeout
+    /// processor, separating timeout concerns from the rest of the engine config.
+    pub fn approval_timeout_config(&self) -> undolog_types::config::ApprovalTimeoutConfig {
+        undolog_types::config::ApprovalTimeoutConfig::new(
+            self.approval_timeout_secs,
+            self.auto_approve_on_timeout,
+            self.timeout_check_interval_secs,
+        )
+    }
+}
+
 // ── Intercept Outcome ──────────────────────────────────────────────────────
 
 /// What the Effect Engine instructs the Go MCP proxy to do next.
