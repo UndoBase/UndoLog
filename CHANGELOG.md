@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   unit and property tests for correctness guarantees.
 - Engine: dead-letter table and CRUD operations for permanently
   failed compensations with retry and skip support.
+- Engine: approval timeout processing with configurable interval,
+  timeout duration, and auto-approve policy with audit events.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
