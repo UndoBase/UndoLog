@@ -7,6 +7,7 @@
 pub mod approval_store;
 pub mod dead_letter;
 pub mod effect_store;
+pub mod partition;
 pub mod retention;
 pub mod session_store;
 
@@ -16,6 +17,7 @@ pub mod sqlite;
 pub use approval_store::ApprovalStore;
 pub use dead_letter::DeadLetterStore;
 pub use effect_store::EffectStore;
+pub use partition::PartitionManager;
 pub use retention::RetentionStore;
 pub use session_store::SessionStore;
 
