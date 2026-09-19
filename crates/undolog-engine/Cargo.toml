@@ -40,6 +40,7 @@ sqlx.workspace         = true
 tonic.workspace        = true
 prost.workspace        = true
 prost-types.workspace  = true
+axum.workspace         = true
 opentelemetry.workspace = true
 opentelemetry_sdk.workspace = true
 opentelemetry-otlp.workspace = true
@@ -52,3 +53,5 @@ tonic-build = "0.12"
 [dev-dependencies]
 proptest = "1.6"
 tokio    = { version = "1.52", features = ["full", "test-util"] }
+http-body-util = "0.1"
+tower          = { version = "0.5", features = ["util"] }
