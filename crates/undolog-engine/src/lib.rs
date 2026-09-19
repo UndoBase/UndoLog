@@ -10,8 +10,10 @@
 //!   - [`startup`]        - pool construction + initial bootstrap
 //!   - [`timeout`]        - approval timeout background processor
 //!   - [`admin`]          - HTTP admin API for dead-letter management
+//!   - [`SessionCache`]   - in-memory session state cache
 
 pub mod admin;
+pub mod cache;
 pub mod engine;
 pub mod grpc;
 pub mod startup;
@@ -19,5 +21,6 @@ pub mod telemetry;
 pub mod tier_registry;
 pub mod timeout;
 
+pub use cache::SessionCache;
 pub use engine::{EffectEngine, EngineConfig, InterceptOutcome};
 pub use tier_registry::{TierRegistry, ToolRegistration};

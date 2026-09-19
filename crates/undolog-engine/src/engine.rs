@@ -26,7 +26,7 @@ use undolog_types::{
     tier::ToolTier,
 };
 
-use crate::TierRegistry;
+use crate::{SessionCache, TierRegistry};
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -43,6 +43,8 @@ pub struct EngineConfig {
     pub auto_approve_on_timeout: bool,
     /// How often to check for timed-out approvals in seconds (default: 60).
     pub timeout_check_interval_secs: u64,
+    /// Session cache configuration.
+    pub cache_config: undolog_types::config::CacheConfig,
 }
 
 impl Default for EngineConfig {
@@ -53,6 +55,7 @@ impl Default for EngineConfig {
             approval_timeout_secs: 86400,
             auto_approve_on_timeout: false,
             timeout_check_interval_secs: 60,
+            cache_config: undolog_types::config::CacheConfig::default(),
         }
     }
 }
@@ -111,6 +114,7 @@ pub struct EffectEngine {
     approval_store: ApprovalStore,
     registry: Arc<RwLock<TierRegistry>>,
     config: EngineConfig,
+    cache: SessionCache,
 }
 
 impl EffectEngine {
@@ -122,7 +126,8 @@ impl EffectEngine {
         registry: Arc<RwLock<TierRegistry>>,
         config: EngineConfig,
     ) -> Self {
-        Self { effect_store, session_store, approval_store, registry, config }
+        let cache = SessionCache::new(config.cache_config.clone());
+        Self { effect_store, session_store, approval_store, registry, config, cache }
     }
 
     /// Intercept a tool call before execution.
@@ -139,15 +144,27 @@ impl EffectEngine {
         step = call.step_index,
     ))]
     pub async fn intercept(&self, call: ToolCall) -> Result<InterceptOutcome, UndoLogError> {
-        // Auto-create session on first use if it doesn't exist.
-        let existing = self.session_store.get_session(&call.org_id, &call.session_id).await?;
+        // Check session cache before hitting the database.
+        let existing = self.cache.get(&call.org_id, &call.session_id).await;
         if existing.is_none() {
-            self.session_store.create_session(&call.org_id, &call.session_id).await?;
-            info!(
-                org_id = %call.org_id,
-                session_id = %call.session_id,
-                "Auto-created session on first intercept"
-            );
+            // Cache miss: query Postgres.
+            let db_session = self.session_store.get_session(&call.org_id, &call.session_id).await?;
+            if let Some(record) = &db_session {
+                self.cache.insert(record.clone()).await;
+            }
+            if db_session.is_none() {
+                self.session_store.create_session(&call.org_id, &call.session_id).await?;
+                // Cache the newly created session.
+                let record = self.session_store.get_session(&call.org_id, &call.session_id).await?;
+                if let Some(r) = record {
+                    self.cache.insert(r).await;
+                }
+                info!(
+                    org_id = %call.org_id,
+                    session_id = %call.session_id,
+                    "Auto-created session on first intercept"
+                );
+            }
         }
 
         let signature = call.signature();
@@ -284,6 +301,8 @@ impl EffectEngine {
 
                 // Suspend the session.
                 self.session_store.set_awaiting_approval(&call.org_id, &call.session_id).await?;
+                // Invalidate cache: session state changed to awaiting_approval.
+                self.cache.invalidate(&call.org_id, &call.session_id).await;
 
                 info!(
                     effect_id = %effect_id,
@@ -391,6 +410,9 @@ impl EffectEngine {
 
         tx.commit().await?;
 
+        // Invalidate cache after successful state transition.
+        self.cache.invalidate(org_id, &approval.session_id).await;
+
         info!(
             approval_request_id = %approval_request_id,
             effect_id = %approval.effect_id,
@@ -449,6 +471,9 @@ impl EffectEngine {
 
         tx.commit().await?;
 
+        // Invalidate cache after state transition.
+        self.cache.invalidate(org_id, &approval.session_id).await;
+
         info!(approval_request_id = %approval_request_id, "Approval rejected");
 
         Ok(())
@@ -505,6 +530,8 @@ mod tests {
         assert_eq!(config.approval_timeout_secs, 86400);
         assert!(!config.auto_approve_on_timeout);
         assert_eq!(config.timeout_check_interval_secs, 60);
+        assert_eq!(config.cache_config.ttl_secs, 300);
+        assert_eq!(config.cache_config.max_entries, 10000);
     }
 
     #[test]
@@ -515,11 +542,14 @@ mod tests {
             approval_timeout_secs: 3600,
             auto_approve_on_timeout: true,
             timeout_check_interval_secs: 30,
+            cache_config: undolog_types::config::CacheConfig::new(60, 500),
         };
         assert_eq!(config.lock_max_attempts, 5);
         assert_eq!(config.lock_retry_ms, 200);
         assert_eq!(config.approval_timeout_secs, 3600);
         assert!(config.auto_approve_on_timeout);
         assert_eq!(config.timeout_check_interval_secs, 30);
+        assert_eq!(config.cache_config.ttl_secs, 60);
+        assert_eq!(config.cache_config.max_entries, 500);
     }
 }

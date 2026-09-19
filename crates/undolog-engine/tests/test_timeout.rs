@@ -140,6 +140,7 @@ fn test_engine_config_approval_timeout_config() {
         approval_timeout_secs: 7200,
         auto_approve_on_timeout: true,
         timeout_check_interval_secs: 30,
+        cache_config: undolog_types::config::CacheConfig::default(),
     };
 
     let timeout_config = config.approval_timeout_config();
