@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   design with sqlx embedded migrations and rollback support.
 - Documentation: added ADR 0015 defining context-var session injection
   for the Python SDK, replacing explicit _session parameter threading.
+- SDK: context-var session injection via ``run_with_session`` context
+  manager, eliminating the need to thread ``_session`` through every
+  tool call. Backward compatible with existing _session usage.
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)

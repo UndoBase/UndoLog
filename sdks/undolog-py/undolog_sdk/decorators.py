@@ -30,6 +30,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from undolog_sdk.client import UndoLogClient
+from undolog_sdk.context import get_current_session
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.tier import CompensationDescriptor, ToolTier
 
@@ -64,13 +65,14 @@ def undolog_tool(
         client: An ``UndoLogClient`` instance. If omitted, a module-level
             default client is used (lazily initialised from environment).
         session_param: Name of the keyword argument that receives the
-            ``UndoLogSession`` at call time.
+            ``UndoLogSession`` at call time. If not provided, the
+            decorator falls back to the session set by ``run_with_session``.
 
     Raises:
         ValueError: If ``Compensable`` tier is used without a compensation
             descriptor.
-        RuntimeError: If the required session parameter is missing from the
-            decorated function's keyword arguments.
+        RuntimeError: If no session is found via explicit parameter or
+            context var.
         AwaitingApprovalError: If the intercept outcome requires human
             approval and execution is suspended.
 
@@ -101,9 +103,12 @@ def undolog_tool(
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             session: UndoLogSession | None = kwargs.pop(session_param, None)
             if session is None:
+                session = get_current_session()
+            if session is None:
                 raise RuntimeError(
                     f"Tool '{tool_name}' requires a session. "
-                    f"Pass {session_param}=session to the call."
+                    f"Pass {session_param}=session to the call or wrap "
+                    f"with run_with_session(session)."
                 )
 
             cl = client if client is not None else _get_default_client()
