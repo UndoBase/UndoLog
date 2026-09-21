@@ -45,6 +45,8 @@ pub struct EngineConfig {
     pub timeout_check_interval_secs: u64,
     /// Session cache configuration.
     pub cache_config: undolog_types::config::CacheConfig,
+    /// Rate limiting configuration (circuit breaker and concurrency limiter).
+    pub rate_limit_config: undolog_types::config::RateLimitConfig,
 }
 
 impl Default for EngineConfig {
@@ -56,6 +58,7 @@ impl Default for EngineConfig {
             auto_approve_on_timeout: false,
             timeout_check_interval_secs: 60,
             cache_config: undolog_types::config::CacheConfig::default(),
+            rate_limit_config: undolog_types::config::RateLimitConfig::default(),
         }
     }
 }
@@ -115,6 +118,8 @@ pub struct EffectEngine {
     registry: Arc<RwLock<TierRegistry>>,
     config: EngineConfig,
     cache: SessionCache,
+    circuit_breaker: Arc<crate::CircuitBreaker>,
+    concurrency_limiter: Arc<crate::ConcurrencyLimiter>,
 }
 
 impl EffectEngine {
@@ -127,7 +132,22 @@ impl EffectEngine {
         config: EngineConfig,
     ) -> Self {
         let cache = SessionCache::new(config.cache_config.clone());
-        Self { effect_store, session_store, approval_store, registry, config, cache }
+        let circuit_breaker = Arc::new(crate::CircuitBreaker::new(
+            config.rate_limit_config.error_threshold,
+            config.rate_limit_config.cooldown_duration(),
+        ));
+        let concurrency_limiter =
+            Arc::new(crate::ConcurrencyLimiter::new(config.rate_limit_config.max_concurrency));
+        Self {
+            effect_store,
+            session_store,
+            approval_store,
+            registry,
+            config,
+            cache,
+            circuit_breaker,
+            concurrency_limiter,
+        }
     }
 
     /// Intercept a tool call before execution.
@@ -144,6 +164,24 @@ impl EffectEngine {
         step = call.step_index,
     ))]
     pub async fn intercept(&self, call: ToolCall) -> Result<InterceptOutcome, UndoLogError> {
+        // Rate limiting: check circuit breaker and concurrency before proceeding.
+        self.circuit_breaker.check().await?;
+        // Permit is held until the end of this scope, releasing the slot on drop.
+        let _permit = self.concurrency_limiter.try_acquire()?;
+
+        let result = self.intercept_inner(call).await;
+
+        // Record outcome for circuit breaker tracking.
+        match &result {
+            Ok(_) => self.circuit_breaker.record_success().await,
+            Err(_) => self.circuit_breaker.record_failure().await,
+        }
+
+        result
+    }
+
+    /// Inner intercept logic, separated for circuit breaker success/failure tracking.
+    async fn intercept_inner(&self, call: ToolCall) -> Result<InterceptOutcome, UndoLogError> {
         // Check session cache before hitting the database.
         let existing = self.cache.get(&call.org_id, &call.session_id).await;
         if existing.is_none() {
@@ -543,6 +581,7 @@ mod tests {
             auto_approve_on_timeout: true,
             timeout_check_interval_secs: 30,
             cache_config: undolog_types::config::CacheConfig::new(60, 500),
+            rate_limit_config: undolog_types::config::RateLimitConfig::new(10, 60, 50),
         };
         assert_eq!(config.lock_max_attempts, 5);
         assert_eq!(config.lock_retry_ms, 200);
@@ -551,5 +590,8 @@ mod tests {
         assert_eq!(config.timeout_check_interval_secs, 30);
         assert_eq!(config.cache_config.ttl_secs, 60);
         assert_eq!(config.cache_config.max_entries, 500);
+        assert_eq!(config.rate_limit_config.error_threshold, 10);
+        assert_eq!(config.rate_limit_config.cooldown_secs, 60);
+        assert_eq!(config.rate_limit_config.max_concurrency, 50);
     }
 }
