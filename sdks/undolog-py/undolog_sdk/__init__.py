@@ -9,6 +9,8 @@ Key exports:
         Async HTTP client for the UndoLog MCP proxy.
     ``UndoLogSession``
         Async context manager that tracks org, session, and step state.
+    ``run_with_session``
+        Async context manager that sets the session context var.
     ``ToolTier``
         Enum classifying a tool's execution behaviour (Safe, Compensable, Irreversible).
     ``CompensationTestHarness``
@@ -20,6 +22,11 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 
 from undolog_sdk.client import UndoLogClient
+from undolog_sdk.context import (
+    get_current_session,
+    require_current_session,
+    run_with_session,
+)
 from undolog_sdk.decorators import AwaitingApprovalError, undolog_tool
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.test_harness import CompensationTestHarness
@@ -38,5 +45,8 @@ __all__ = [
     "UndoLogClient",
     "UndoLogSession",
     "__version__",
+    "get_current_session",
+    "require_current_session",
+    "run_with_session",
     "undolog_tool",
 ]
