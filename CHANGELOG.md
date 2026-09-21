@@ -58,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a running engine or database.
 - Engine: circuit breaker and concurrency limiter for backpressure
   under extreme load with configurable thresholds.
+- Documentation: engine saga operational runbook covering effect
+  TTL, dead-letter queue, session cache, and rate limiting.
 - TypeScript SDK: cross-language canonical JSON fuzz test suite with 10,000+
   generated fixtures, CI verification step, and a Python fixture generator.
 - TypeScript SDK: 49 cross-language signature parity test vectors with a
