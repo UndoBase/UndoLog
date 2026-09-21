@@ -80,6 +80,7 @@ async fn main() -> Result<()> {
         auto_approve_on_timeout,
         timeout_check_interval_secs,
         cache_config: undolog_types::config::CacheConfig::default(),
+        rate_limit_config: undolog_types::config::RateLimitConfig::default(),
     };
 
     info!(

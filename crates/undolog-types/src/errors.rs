@@ -53,6 +53,13 @@ pub enum UndoLogError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    // ── Rate limiting ─────────────────────────────────────────────────────
+    #[error("Circuit breaker is open: too many consecutive errors")]
+    CircuitBreakerOpen,
+
+    #[error("Concurrency limit reached: {0} concurrent requests in flight")]
+    ConcurrencyLimitReached(usize),
+
     // ── Generic ───────────────────────────────────────────────────────────
     #[error("Internal error: {0}")]
     Internal(String),

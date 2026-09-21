@@ -336,3 +336,116 @@ mod cache_config_tests {
         assert_eq!(config, deserialized);
     }
 }
+
+// ── Rate Limit Configuration ────────────────────────────────────────────────
+
+/// Configuration for circuit breaker and concurrency limiting.
+///
+/// The circuit breaker tracks error rates and opens (rejects all requests)
+/// when the threshold is exceeded. After a cooldown period it half-opens
+/// and allows a single test request through.
+///
+/// The concurrency limiter caps the number of concurrent intercept calls
+/// using a bounded semaphore. Extra requests are rejected immediately.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RateLimitConfig {
+    /// Number of consecutive errors that trip the circuit breaker.
+    ///
+    /// Must be at least 1. Default is 5.
+    pub error_threshold: u32,
+
+    /// Seconds to wait before transitioning from Open to HalfOpen.
+    ///
+    /// Must be at least 1. Default is 30.
+    pub cooldown_secs: u64,
+
+    /// Maximum number of concurrent intercept calls.
+    ///
+    /// Must be at least 1. Default is 100.
+    pub max_concurrency: usize,
+}
+
+impl RateLimitConfig {
+    /// Create a new rate limit configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `error_threshold` - Consecutive errors before the circuit opens (minimum 1)
+    /// * `cooldown_secs` - Cooldown period in seconds (minimum 1)
+    /// * `max_concurrency` - Maximum concurrent requests (minimum 1)
+    ///
+    /// # Panics
+    ///
+    /// Panics if any parameter is less than its minimum.
+    pub fn new(error_threshold: u32, cooldown_secs: u64, max_concurrency: usize) -> Self {
+        assert!(error_threshold >= 1, "error_threshold must be at least 1");
+        assert!(cooldown_secs >= 1, "cooldown_secs must be at least 1");
+        assert!(max_concurrency >= 1, "max_concurrency must be at least 1");
+        Self { error_threshold, cooldown_secs, max_concurrency }
+    }
+
+    /// Return the cooldown as a `std::time::Duration`.
+    pub fn cooldown_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.cooldown_secs)
+    }
+}
+
+impl Default for RateLimitConfig {
+    /// Default: 5 errors trips breaker, 30s cooldown, 100 max concurrent.
+    fn default() -> Self {
+        Self::new(5, 30, 100)
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_config_tests {
+    use super::*;
+
+    #[test]
+    fn test_rate_limit_config_new() {
+        let config = RateLimitConfig::new(10, 60, 50);
+        assert_eq!(config.error_threshold, 10);
+        assert_eq!(config.cooldown_secs, 60);
+        assert_eq!(config.max_concurrency, 50);
+    }
+
+    #[test]
+    fn test_rate_limit_config_default() {
+        let config = RateLimitConfig::default();
+        assert_eq!(config.error_threshold, 5);
+        assert_eq!(config.cooldown_secs, 30);
+        assert_eq!(config.max_concurrency, 100);
+    }
+
+    #[test]
+    fn test_rate_limit_config_cooldown_duration() {
+        let config = RateLimitConfig::new(3, 45, 10);
+        assert_eq!(config.cooldown_duration(), std::time::Duration::from_secs(45));
+    }
+
+    #[test]
+    #[should_panic(expected = "error_threshold must be at least 1")]
+    fn test_rate_limit_config_zero_threshold_panics() {
+        RateLimitConfig::new(0, 30, 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "cooldown_secs must be at least 1")]
+    fn test_rate_limit_config_zero_cooldown_panics() {
+        RateLimitConfig::new(5, 0, 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_concurrency must be at least 1")]
+    fn test_rate_limit_config_zero_concurrency_panics() {
+        RateLimitConfig::new(5, 30, 0);
+    }
+
+    #[test]
+    fn test_rate_limit_config_serialization() {
+        let config = RateLimitConfig::new(10, 60, 50);
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RateLimitConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, deserialized);
+    }
+}
