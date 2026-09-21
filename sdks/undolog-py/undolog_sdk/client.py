@@ -9,12 +9,15 @@ Environment configuration:
 
 from __future__ import annotations
 
+import logging
 import os
 import types
 from dataclasses import dataclass
 from typing import Any, cast
 
 import httpx
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -140,6 +143,13 @@ class UndoLogClient:
         if status not in outcome_map:
             raise ValueError(f"Unexpected proxy status: {status!r}")
         outcome = outcome_map[status]
+        log.info(
+            "intercept outcome=%s tool=%s step=%d session=%s",
+            outcome,
+            tool_name,
+            step_index,
+            session_id,
+        )
         return InterceptResponse(
             outcome=outcome,
             effect_id=body.get("effect_id"),
@@ -175,6 +185,11 @@ class UndoLogClient:
         if resp.status_code == 404:
             return {}
         resp.raise_for_status()
+        log.info(
+            "tool_committed session=%s effect_id=%s",
+            session_id,
+            effect_id,
+        )
         return cast(dict[str, Any], resp.json())
 
     async def fail(
@@ -205,6 +220,12 @@ class UndoLogClient:
         if resp.status_code == 404:
             return {}
         resp.raise_for_status()
+        log.warning(
+            "tool_failed session=%s effect_id=%s error=%s",
+            session_id,
+            effect_id,
+            error,
+        )
         return cast(dict[str, Any], resp.json())
 
     async def approve(
@@ -234,6 +255,10 @@ class UndoLogClient:
             json={},
         )
         resp.raise_for_status()
+        log.info(
+            "approval_approved approval_id=%s",
+            approval_id,
+        )
         return cast(dict[str, Any], resp.json())
 
     async def reject(
@@ -262,6 +287,10 @@ class UndoLogClient:
             json={},
         )
         resp.raise_for_status()
+        log.info(
+            "approval_rejected approval_id=%s",
+            approval_id,
+        )
         return cast(dict[str, Any], resp.json())
 
     async def aclose(self) -> None:
