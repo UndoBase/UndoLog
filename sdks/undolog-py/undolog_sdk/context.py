@@ -22,6 +22,7 @@ Usage::
 from __future__ import annotations
 
 import contextvars
+import logging
 import sys
 import types
 
@@ -31,6 +32,8 @@ else:
     from typing_extensions import Self
 
 from undolog_sdk.session import UndoLogSession
+
+log = logging.getLogger(__name__)
 
 _session_var: contextvars.ContextVar[UndoLogSession | None] = contextvars.ContextVar(
     "undolog_session", default=None
@@ -79,6 +82,11 @@ class _RunWithSession:
 
     async def __aenter__(self) -> Self:
         self._token = _session_var.set(self._session)
+        log.info(
+            "session_start session=%s org=%s",
+            self._session.session_id,
+            self._session.org_id,
+        )
         return self
 
     async def __aexit__(
@@ -88,8 +96,13 @@ class _RunWithSession:
         exc_tb: types.TracebackType | None,
     ) -> None:
         if self._token is not None:
+            session_id = self._session.session_id
             _session_var.reset(self._token)
             self._token = None
+            log.info(
+                "session_end session=%s",
+                session_id,
+            )
 
 
 def run_with_session(session: UndoLogSession) -> _RunWithSession:

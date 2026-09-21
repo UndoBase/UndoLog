@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -33,6 +34,8 @@ from undolog_sdk.client import UndoLogClient
 from undolog_sdk.context import get_current_session
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.tier import CompensationDescriptor, ToolTier
+
+log = logging.getLogger(__name__)
 
 _DEFAULT_CLIENT: UndoLogClient | None = None
 
@@ -115,6 +118,11 @@ def undolog_tool(
 
             # Safe tier: bypass the proxy entirely - execute freely.
             if tier is ToolTier.SAFE:
+                log.debug(
+                    "tool_execute tool=%s session=%s (safe tier, bypass proxy)",
+                    tool_name,
+                    session.session_id,
+                )
                 return await func(*args, **kwargs)
 
             step_index = session.next_step()
@@ -138,9 +146,21 @@ def undolog_tool(
             )
 
             if response.outcome == "Replay":
+                log.info(
+                    "tool_replay tool=%s step=%d session=%s",
+                    tool_name,
+                    step_index,
+                    session.session_id,
+                )
                 return response.cached_result
 
             if response.outcome == "AwaitingApproval":
+                log.warning(
+                    "approval_required tool=%s approval_id=%s session=%s",
+                    tool_name,
+                    response.approval_id,
+                    session.session_id,
+                )
                 raise AwaitingApprovalError(
                     approval_id=response.approval_id or "",
                     tool_name=tool_name,
@@ -148,10 +168,23 @@ def undolog_tool(
                 )
 
             # outcome == "Execute": run the function body
+            log.debug(
+                "tool_execute tool=%s step=%d session=%s",
+                tool_name,
+                step_index,
+                session.session_id,
+            )
             try:
                 result = await func(*args, **kwargs)
             except Exception as exc:
                 if response.effect_id:
+                    log.warning(
+                        "tool_failed tool=%s session=%s effect_id=%s error=%s",
+                        tool_name,
+                        session.session_id,
+                        response.effect_id,
+                        exc,
+                    )
                     try:
                         await cl.fail(
                             org_id=session.org_id,
@@ -164,6 +197,11 @@ def undolog_tool(
                 raise
 
             if response.effect_id:
+                log.info(
+                    "tool_committed session=%s effect_id=%s",
+                    session.session_id,
+                    response.effect_id,
+                )
                 await cl.commit(
                     org_id=session.org_id,
                     session_id=session.session_id,

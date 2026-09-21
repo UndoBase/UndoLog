@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - SDK: context-var session injection via ``run_with_session`` context
   manager, eliminating the need to thread ``_session`` through every
   tool call. Backward compatible with existing _session usage.
+- SDK: structured logging at lifecycle points using the standard
+  ``logging`` module under the ``undolog_sdk`` namespace.
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)
