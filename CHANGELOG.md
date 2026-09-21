@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   fuzz testing strategy for Python, Go, TypeScript, and Rust.
 - Documentation: added ADR 0009 defining the standalone migration CLI
   design with sqlx embedded migrations and rollback support.
+- Documentation: added ADR 0015 defining context-var session injection
+  for the Python SDK, replacing explicit _session parameter threading.
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)
