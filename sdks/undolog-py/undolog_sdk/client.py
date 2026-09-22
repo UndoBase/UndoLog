@@ -17,7 +17,23 @@ from typing import Any, cast
 
 import httpx
 
+from undolog_sdk.errors import (
+    AuthenticationError,
+    ConnectionError,
+    ServerError,
+    TimeoutError,
+)
+
 log = logging.getLogger(__name__)
+
+
+def _safe_request_url(exc: Exception) -> str:
+    """Extract the request URL from an httpx exception, if available."""
+    try:
+        req = exc.request  # type: ignore[attr-defined]
+    except (RuntimeError, AttributeError):
+        return ""
+    return str(req.url) if req is not None else ""
 
 
 @dataclass
@@ -116,20 +132,49 @@ class UndoLogClient:
             An ``InterceptResponse`` indicating what to do next.
 
         Raises:
-            httpx.HTTPStatusError: On proxy-level HTTP errors (4xx/5xx).
-            httpx.RequestError: On connection or timeout errors.
+            AuthenticationError: On 401/403 responses.
+            ServerError: On 5xx responses.
+            TimeoutError: On request timeouts.
+            ConnectionError: On connection failures.
         """
-        resp = await self._http.post(
-            "/mcp/tool_call",
-            headers=self._headers(org_id, session_id),
-            json={
-                "session_id": session_id,
-                "tool_name": tool_name,
-                "tool_version": "1.0.0",
-                "step_index": step_index,
-                "args": args,
-            },
-        )
+        try:
+            resp = await self._http.post(
+                "/mcp/tool_call",
+                headers=self._headers(org_id, session_id),
+                json={
+                    "session_id": session_id,
+                    "tool_name": tool_name,
+                    "tool_version": "1.0.0",
+                    "step_index": step_index,
+                    "args": args,
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(
+                f"Intercept request timed out: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise ConnectionError(
+                f"Cannot connect to proxy: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ConnectionError(
+                f"HTTP error during intercept: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        if resp.status_code in (401, 403):
+            raise AuthenticationError(
+                f"Authentication failed: {resp.status_code}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 500:
+            raise ServerError(
+                f"Proxy server error: {resp.status_code}",
+                status_code=resp.status_code,
+                url=str(resp.request.url),
+            )
         resp.raise_for_status()
         body = resp.json()
         # Proxy returns {status, effect_id, result} directly.
@@ -174,16 +219,49 @@ class UndoLogClient:
 
         Returns:
             Empty dict (the proxy commits inline via ``POST /mcp/tool_call``).
+
+        Raises:
+            AuthenticationError: On 401/403 responses.
+            ServerError: On 5xx responses.
+            TimeoutError: On request timeouts.
+            ConnectionError: On connection failures.
         """
         url = f"/effects/{effect_id}/commit"
         body = {"session_id": session_id, "result": result}
-        resp = await self._http.put(
-            url,
-            headers=self._headers(org_id, session_id),
-            json=body,
-        )
+        try:
+            resp = await self._http.put(
+                url,
+                headers=self._headers(org_id, session_id),
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(
+                f"Commit request timed out: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise ConnectionError(
+                f"Cannot connect to proxy: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ConnectionError(
+                f"HTTP error during commit: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
         if resp.status_code == 404:
             return {}
+        if resp.status_code in (401, 403):
+            raise AuthenticationError(
+                f"Authentication failed: {resp.status_code}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 500:
+            raise ServerError(
+                f"Proxy server error: {resp.status_code}",
+                status_code=resp.status_code,
+                url=str(resp.request.url),
+            )
         resp.raise_for_status()
         log.info(
             "tool_committed session=%s effect_id=%s",
@@ -209,16 +287,49 @@ class UndoLogClient:
 
         Returns:
             Empty dict (the proxy handles failure inline via ``POST /mcp/tool_call``).
+
+        Raises:
+            AuthenticationError: On 401/403 responses.
+            ServerError: On 5xx responses.
+            TimeoutError: On request timeouts.
+            ConnectionError: On connection failures.
         """
         url = f"/effects/{effect_id}/fail"
         body = {"session_id": session_id, "error": error}
-        resp = await self._http.put(
-            url,
-            headers=self._headers(org_id, session_id),
-            json=body,
-        )
+        try:
+            resp = await self._http.put(
+                url,
+                headers=self._headers(org_id, session_id),
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(
+                f"Fail request timed out: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise ConnectionError(
+                f"Cannot connect to proxy: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ConnectionError(
+                f"HTTP error during fail: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
         if resp.status_code == 404:
             return {}
+        if resp.status_code in (401, 403):
+            raise AuthenticationError(
+                f"Authentication failed: {resp.status_code}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 500:
+            raise ServerError(
+                f"Proxy server error: {resp.status_code}",
+                status_code=resp.status_code,
+                url=str(resp.request.url),
+            )
         resp.raise_for_status()
         log.warning(
             "tool_failed session=%s effect_id=%s error=%s",
@@ -245,15 +356,44 @@ class UndoLogClient:
             ``execution``, and ``result`` fields.
 
         Raises:
-            httpx.HTTPStatusError: On proxy-level HTTP errors (4xx/5xx).
-            httpx.RequestError: On connection or timeout errors.
+            AuthenticationError: On 401/403 responses.
+            ServerError: On 5xx responses.
+            TimeoutError: On request timeouts.
+            ConnectionError: On connection failures.
         """
         url = f"/approvals/{approval_id}/approve"
-        resp = await self._http.post(
-            url,
-            headers=self._headers(org_id, ""),
-            json={},
-        )
+        try:
+            resp = await self._http.post(
+                url,
+                headers=self._headers(org_id, ""),
+                json={},
+            )
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(
+                f"Approve request timed out: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise ConnectionError(
+                f"Cannot connect to proxy: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ConnectionError(
+                f"HTTP error during approve: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        if resp.status_code in (401, 403):
+            raise AuthenticationError(
+                f"Authentication failed: {resp.status_code}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 500:
+            raise ServerError(
+                f"Proxy server error: {resp.status_code}",
+                status_code=resp.status_code,
+                url=str(resp.request.url),
+            )
         resp.raise_for_status()
         log.info(
             "approval_approved approval_id=%s",
@@ -277,15 +417,44 @@ class UndoLogClient:
             Server response with ``status`` and ``approval_id`` fields.
 
         Raises:
-            httpx.HTTPStatusError: On proxy-level HTTP errors (4xx/5xx).
-            httpx.RequestError: On connection or timeout errors.
+            AuthenticationError: On 401/403 responses.
+            ServerError: On 5xx responses.
+            TimeoutError: On request timeouts.
+            ConnectionError: On connection failures.
         """
         url = f"/approvals/{approval_id}/reject"
-        resp = await self._http.post(
-            url,
-            headers=self._headers(org_id, ""),
-            json={},
-        )
+        try:
+            resp = await self._http.post(
+                url,
+                headers=self._headers(org_id, ""),
+                json={},
+            )
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(
+                f"Reject request timed out: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise ConnectionError(
+                f"Cannot connect to proxy: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ConnectionError(
+                f"HTTP error during reject: {exc}",
+                url=_safe_request_url(exc),
+            ) from exc
+        if resp.status_code in (401, 403):
+            raise AuthenticationError(
+                f"Authentication failed: {resp.status_code}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 500:
+            raise ServerError(
+                f"Proxy server error: {resp.status_code}",
+                status_code=resp.status_code,
+                url=str(resp.request.url),
+            )
         resp.raise_for_status()
         log.info(
             "approval_rejected approval_id=%s",

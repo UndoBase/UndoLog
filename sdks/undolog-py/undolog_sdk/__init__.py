@@ -28,6 +28,13 @@ from undolog_sdk.context import (
     run_with_session,
 )
 from undolog_sdk.decorators import AwaitingApprovalError, undolog_tool
+from undolog_sdk.errors import (
+    AuthenticationError,
+    ConnectionError,
+    ServerError,
+    TimeoutError,
+    UndoLogError,
+)
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.test_harness import CompensationTestHarness
 from undolog_sdk.tier import CompensationDescriptor, ToolTier
@@ -38,11 +45,16 @@ except PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "AuthenticationError",
     "AwaitingApprovalError",
     "CompensationDescriptor",
     "CompensationTestHarness",
+    "ConnectionError",
+    "ServerError",
+    "TimeoutError",
     "ToolTier",
     "UndoLogClient",
+    "UndoLogError",
     "UndoLogSession",
     "__version__",
     "get_current_session",
