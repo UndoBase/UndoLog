@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from undolog_sdk.client import UndoLogClient
+from undolog_sdk.errors import ServerError
 
 
 def _client(handler: Any) -> UndoLogClient:
@@ -149,7 +150,7 @@ class TestIntercept:
             return httpx.Response(500, json={"error": "internal"})
 
         client = _client(_handler)
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(ServerError):
             await client.intercept(
                 org_id="org",
                 session_id="11111111-1111-1111-1111-111111111111",

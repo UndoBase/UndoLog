@@ -20,6 +20,12 @@ import pytest
 
 from undolog_sdk import AwaitingApprovalError, ToolTier, undolog_tool
 from undolog_sdk.client import InterceptResponse, UndoLogClient
+from undolog_sdk.errors import (
+    AuthenticationError,
+    ConnectionError,
+    ServerError,
+    TimeoutError,
+)
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.tier import CompensationDescriptor
 
@@ -299,7 +305,7 @@ class TestNetworkErrors:
     """
 
     async def test_intercept_connect_error(self, session: UndoLogSession) -> None:
-        """ConnectError during intercept propagates as-is to the caller."""
+        """ConnectError during intercept wraps as ConnectionError."""
 
         async def _handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("connection refused")
@@ -318,11 +324,11 @@ class TestNetworkErrors:
         async def my_tool() -> str:
             return "ok"
 
-        with pytest.raises(httpx.ConnectError):
+        with pytest.raises(ConnectionError):
             await my_tool(_session=session)
 
     async def test_intercept_read_timeout(self, session: UndoLogSession) -> None:
-        """ReadTimeout during intercept propagates as-is to the caller."""
+        """ReadTimeout during intercept wraps as TimeoutError."""
 
         async def _handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ReadTimeout("request timed out", request=request)
@@ -341,11 +347,11 @@ class TestNetworkErrors:
         async def my_tool() -> str:
             return "ok"
 
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(TimeoutError):
             await my_tool(_session=session)
 
     async def test_intercept_http_500(self, session: UndoLogSession) -> None:
-        """HTTP 500 from the proxy propagates as HTTPStatusError."""
+        """HTTP 500 from the proxy wraps as ServerError."""
 
         async def _handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, json={"error": "internal"})
@@ -364,11 +370,11 @@ class TestNetworkErrors:
         async def my_tool() -> str:
             return "ok"
 
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(ServerError):
             await my_tool(_session=session)
 
     async def test_intercept_http_401(self, session: UndoLogSession) -> None:
-        """HTTP 401 from the proxy propagates as HTTPStatusError."""
+        """HTTP 401 from the proxy wraps as AuthenticationError."""
 
         async def _handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(401, json={"error": "unauthorized"})
@@ -387,11 +393,11 @@ class TestNetworkErrors:
         async def my_tool() -> str:
             return "ok"
 
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(AuthenticationError):
             await my_tool(_session=session)
 
     async def test_commit_connect_error(self, session: UndoLogSession) -> None:
-        """ConnectError during commit after a successful intercept."""
+        """ConnectError during commit wraps as ConnectionError."""
         call_count: int = 0
 
         async def _handler(request: httpx.Request) -> httpx.Response:
@@ -417,7 +423,7 @@ class TestNetworkErrors:
         async def my_tool() -> str:
             return "ok"
 
-        with pytest.raises(httpx.ConnectError):
+        with pytest.raises(ConnectionError):
             await my_tool(_session=session)
 
     async def test_fail_connect_error(self, session: UndoLogSession) -> None:
