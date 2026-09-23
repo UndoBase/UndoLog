@@ -9,6 +9,8 @@ Environment configuration:
 
 from __future__ import annotations
 
+import asyncio
+import atexit
 import logging
 import os
 import types
@@ -25,6 +27,50 @@ from undolog_sdk.errors import (
 )
 
 log = logging.getLogger(__name__)
+
+_DEFAULT_CLIENT: UndoLogClient | None = None
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _get_default_client() -> UndoLogClient:
+    """Return (and lazily initialise) the module-level default ``UndoLogClient``.
+
+    The client is created once and reused so that connection pooling and
+    header defaults are shared across all decorated tools that do not
+    specify an explicit client.
+
+    Returns:
+        The lazily-initialised default client instance.
+    """
+    global _DEFAULT_CLIENT
+    if _DEFAULT_CLIENT is None:
+        _DEFAULT_CLIENT = UndoLogClient()
+    return _DEFAULT_CLIENT
+
+
+def _close_default_client() -> None:
+    """Close the default client if it was created.
+
+    Called on session exit and interpreter shutdown to prevent
+    connection pool leaks in long-running services.
+    """
+    global _DEFAULT_CLIENT
+    if _DEFAULT_CLIENT is not None:
+        client = _DEFAULT_CLIENT
+        _DEFAULT_CLIENT = None
+        if not client._http.is_closed:
+            log.debug("closing default UndoLogClient")
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(client.aclose())
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
+            except RuntimeError:
+                # No running loop (e.g. interpreter shutdown).
+                log.debug("cannot close default client: no running event loop")
+
+
+atexit.register(_close_default_client)
 
 
 def _safe_request_url(exc: Exception) -> str:

@@ -12,8 +12,14 @@ from typing import Any
 import httpx
 import pytest
 
-from undolog_sdk.client import UndoLogClient
+import undolog_sdk.client as client_mod
+from undolog_sdk.context import run_with_session
 from undolog_sdk.errors import ServerError
+from undolog_sdk.session import UndoLogSession
+
+UndoLogClient = client_mod.UndoLogClient
+_close_default_client = client_mod._close_default_client
+_get_default_client = client_mod._get_default_client
 
 
 def _client(handler: Any) -> UndoLogClient:
@@ -297,3 +303,66 @@ class TestAsyncContextManager:
         async with client:
             pass
         assert client._http.is_closed
+
+
+# ── default client lifetime ────────────────────────────────────────────────
+
+
+class TestDefaultClientLifetime:
+    """Default client lifecycle management."""
+
+    def setup_method(self) -> None:
+        """Reset the default client before each test."""
+        _close_default_client()
+
+    def teardown_method(self) -> None:
+        """Reset the default client after each test."""
+        _close_default_client()
+
+    def test_default_client_created_lazily(self) -> None:
+        """Default client is not created until first use."""
+        assert client_mod._DEFAULT_CLIENT is None
+        client = _get_default_client()
+        assert client is not None
+        assert client_mod._DEFAULT_CLIENT is client
+
+    def test_default_client_reused(self) -> None:
+        """Subsequent calls return the same client instance."""
+        client_a = _get_default_client()
+        client_b = _get_default_client()
+        assert client_a is client_b
+
+    def test_close_default_client_resets(self) -> None:
+        """Closing the default client resets the global reference."""
+        client = _get_default_client()
+        assert client_mod._DEFAULT_CLIENT is client
+        _close_default_client()
+        assert client_mod._DEFAULT_CLIENT is None
+
+    def test_close_default_client_is_idempotent(self) -> None:
+        """Closing when no client exists is a no-op."""
+        _close_default_client()
+        _close_default_client()
+
+    async def test_default_client_closed_on_session_exit(self) -> None:
+        """Default client is closed when run_with_session exits."""
+        session = UndoLogSession(org_id="org")
+        async with run_with_session(session):
+            _get_default_client()
+            assert client_mod._DEFAULT_CLIENT is not None
+
+        assert client_mod._DEFAULT_CLIENT is None
+
+    async def test_explicit_client_not_closed_by_session(self) -> None:
+        """An explicit client passed to the decorator is not closed."""
+
+        async def _handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={})
+
+        explicit_client = _client(_handler)
+        session = UndoLogSession(org_id="org")
+        async with run_with_session(session):
+            _get_default_client()
+
+        assert client_mod._DEFAULT_CLIENT is None
+        assert not explicit_client._http.is_closed

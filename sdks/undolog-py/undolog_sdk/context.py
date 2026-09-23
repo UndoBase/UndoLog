@@ -31,6 +31,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
+from undolog_sdk.client import _close_default_client
 from undolog_sdk.session import UndoLogSession
 
 log = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ class _RunWithSession:
                 "session_end session=%s",
                 session_id,
             )
+            _close_default_client()
 
 
 def run_with_session(session: UndoLogSession) -> _RunWithSession:

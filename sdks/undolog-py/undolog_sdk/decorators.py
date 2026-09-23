@@ -30,27 +30,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from undolog_sdk.client import UndoLogClient
+from undolog_sdk.client import UndoLogClient, _get_default_client
 from undolog_sdk.context import get_current_session
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.tier import CompensationDescriptor, ToolTier
 
 log = logging.getLogger(__name__)
-
-_DEFAULT_CLIENT: UndoLogClient | None = None
-
-
-def _get_default_client() -> UndoLogClient:
-    """Return (and lazily initialise) the module-level default ``UndoLogClient``.
-
-    The client is created once and reused so that connection pooling and
-    header defaults are shared across all decorated tools that do not
-    specify an explicit client.
-    """
-    global _DEFAULT_CLIENT
-    if _DEFAULT_CLIENT is None:
-        _DEFAULT_CLIENT = UndoLogClient()
-    return _DEFAULT_CLIENT
 
 
 def undolog_tool(
