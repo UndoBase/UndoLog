@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ``logging`` module under the ``undolog_sdk`` namespace.
 - SDK: typed error hierarchy wrapping httpx exceptions as
   ``UndoLogError`` subclasses.
+- SDK: default HTTP client is closed on session exit, preventing
+  connection pool leaks in long-running services.
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)
