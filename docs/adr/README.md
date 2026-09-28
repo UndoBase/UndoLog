@@ -24,3 +24,4 @@ Every significant design decision in UndoLog is recorded as an ADR.
 | [0013](0013-dead-letter-queue.md) | Dead-Letter Queue for Failed Compensations |
 | [0014](0014-saga-crash-recovery-testing.md) | Saga Crash Recovery Testing Approach |
 | [0015](0015-context-var-session-injection.md) | Context-Var Session Injection for Python SDK |
+| [0016](0016-replay-shape-contract.md) | Replay Shape Contract |
