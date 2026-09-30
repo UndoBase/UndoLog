@@ -110,7 +110,14 @@ class InterceptResponse:
     """Approval request identifier: present only for AwaitingApproval."""
 
     cached_result: dict[str, Any] | None = None
-    """Cached tool result: present only for Replay."""
+    """Cached tool result: present only for Replay.
+
+    The value is the cached ``ToolResult`` envelope
+    (``{"success", "output", "error", "duration_ms"}``). Consumers
+    that surface results to callers should extract the ``output`` key:
+    the ``@undolog_tool`` decorator does this so Execute and Replay
+    return the same shape.
+    """
 
 
 def _default_proxy_url() -> str:

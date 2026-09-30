@@ -1,12 +1,12 @@
 ---
 title: "ADR 0009: Standalone Migration CLI"
-description: "- **Date:** 2026-09-11 - **Status:** Proposed - **Deciders:** UndoLog Core Team"
+description: "- **Date:** 2026-09-11 - **Status:** Accepted - **Deciders:** UndoLog Core Team"
 section: "adr"
 ---
 # ADR 0009: Standalone Migration CLI
 
 - **Date:** 2026-09-11
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** UndoLog Core Team
 
 ## Context

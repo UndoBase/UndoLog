@@ -30,7 +30,7 @@ from typing import Any
 import httpx
 import pytest
 import pytest_asyncio
-import undolog_sdk.decorators
+import undolog_sdk.client
 
 from undolog_sdk import AwaitingApprovalError
 from undolog_sdk.session import UndoLogSession
@@ -127,11 +127,12 @@ def _fresh_undolog_client() -> None:
     """Reset the module-level default client between tests.
 
     pytest-asyncio creates a new event loop for each test.  The SDK's
-    module-level ``UndoLogClient`` singleton holds an ``httpx.AsyncClient``
-    that is tied to the first test's event loop.  Resetting it forces a
-    fresh client per test, avoiding ``Event loop is closed`` errors.
+    module-level default client (``undolog_sdk.client._DEFAULT_CLIENT``)
+    holds an ``httpx.AsyncClient`` that is tied to the first test's event
+    loop.  Resetting it forces a fresh client per test, avoiding
+    ``Event loop is closed`` errors.
     """
-    undolog_sdk.decorators._DEFAULT_CLIENT = None
+    undolog_sdk.client._DEFAULT_CLIENT = None
 
 
 @pytest_asyncio.fixture

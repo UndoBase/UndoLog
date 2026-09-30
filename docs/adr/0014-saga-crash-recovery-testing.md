@@ -1,12 +1,12 @@
 ---
 title: "ADR 0014: Saga Crash Recovery Testing Approach"
-description: "- **Date:** 2026-09-17 - **Status:** Proposed - **Deciders:** UndoLog Core Team"
+description: "- **Date:** 2026-09-17 - **Status:** Accepted - **Deciders:** UndoLog Core Team"
 section: "adr"
 ---
 # ADR 0014: Saga Crash Recovery Testing Approach
 
 - **Date:** 2026-09-17
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** UndoLog Core Team
 
 ## Context

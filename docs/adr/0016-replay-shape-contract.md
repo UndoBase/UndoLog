@@ -1,13 +1,13 @@
 ---
 title: "ADR 0016: Replay Shape Contract"
-description: "- **Date:** 2026-09-24 - **Status:** Proposed - **Deciders:** UndoLog Core Team"
+description: "- **Date:** 2026-09-24 - **Status:** Accepted - **Deciders:** UndoLog Core Team"
 section: "adr"
 ---
 
 # ADR 0016: Replay Shape Contract
 
 - **Date:** 2026-09-24
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** UndoLog Core Team
 
 ## Context
