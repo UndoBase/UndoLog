@@ -73,7 +73,10 @@ def undolog_tool(
         ``Execute``
             Run the wrapped function normally, then call ``commit`` or ``fail``.
         ``Replay``
-            Return the cached value without entering the function body.
+            Return the cached value without entering the function body,
+            unwrapped from the ``ToolResult`` envelope so the caller
+            receives the tool's natural return type: identical to the
+            Execute outcome.
         ``AwaitingApproval``
             Raise ``AwaitingApprovalError`` with the approval identifier -
             the function body is **not** executed.
@@ -137,7 +140,7 @@ def undolog_tool(
                     step_index,
                     session.session_id,
                 )
-                return response.cached_result
+                return _unwrap_replay_result(response.cached_result)
 
             if response.outcome == "AwaitingApproval":
                 log.warning(
@@ -203,6 +206,29 @@ def undolog_tool(
         return wrapper
 
     return decorator
+
+
+def _unwrap_replay_result(cached: dict[str, Any] | None) -> Any:
+    """Extract the tool's natural return value from a Replay cache entry.
+
+    The proxy caches results as a ``ToolResult`` envelope of the form
+    ``{"success": bool, "output": <tool result>, "error": str,
+    "duration_ms": int}``. The envelope is a transport detail: on the
+    Execute path the caller receives the raw function result, so the
+    Replay path must return the same shape.
+
+    Args:
+        cached: The ``cached_result`` field of a Replay ``InterceptResponse``.
+
+    Returns:
+        The unwrapped tool result. If the envelope has an ``output``
+        key, the value under that key is returned. Dicts without an
+        ``output`` key pass through unchanged so results that do not
+        use the envelope format are returned as-is.
+    """
+    if isinstance(cached, dict) and "output" in cached:
+        return cached["output"]
+    return cached
 
 
 class AwaitingApprovalError(RuntimeError):

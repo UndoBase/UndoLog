@@ -111,7 +111,7 @@ class TestEffectTransitions:
             return "fresh"
 
         result = await dedup(_session=session)
-        assert result == {"success": True, "output": "cached"}
+        assert result == "cached"
         assert not called
         mock_client.intercept.assert_awaited_once()
         mock_client.commit.assert_not_awaited()

@@ -3,7 +3,8 @@
 Verifies:
     - Safe tier bypasses the proxy entirely
     - Compensable calls intercept, then commit on success / fail on error
-    - Replay returns the cached result without executing the function body
+    - Replay returns the unwrapped cached result without executing the
+      function body, matching the Execute return shape
     - AwaitingApproval raises ``AwaitingApprovalError`` without execution
     - Step index increments correctly
     - Missing session raises ``RuntimeError``
@@ -20,6 +21,7 @@ import pytest
 
 from undolog_sdk import AwaitingApprovalError, ToolTier, undolog_tool
 from undolog_sdk.client import InterceptResponse, UndoLogClient
+from undolog_sdk.context import run_with_session
 from undolog_sdk.errors import (
     AuthenticationError,
     ConnectionError,
@@ -194,7 +196,7 @@ class TestReplay:
 
         result = await search_tool("test", _session=session)
         assert executed is False
-        assert result == {"success": True, "output": "cached-result"}
+        assert result == "cached-result"
         mock_client.intercept.assert_awaited_once()
 
     async def test_step_increments_on_replay(
@@ -216,6 +218,167 @@ class TestReplay:
 
         await replay_tool(_session=session)
         assert session._step_index == 1
+
+
+class TestReplayUnwrap:
+    """Replay unwraps the ToolResult envelope to the natural return type.
+
+    Both Execute and Replay must return the tool's natural return type:
+    the ``{"success", "output", "error", "duration_ms"}`` envelope is a
+    transport detail and never leaks to the caller.
+    """
+
+    async def test_replay_and_execute_return_same_shape(
+        self, session: UndoLogSession, mock_client: AsyncMock
+    ) -> None:
+        """The same tool returns an identical shape on both paths."""
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=mock_client,
+        )
+        async def lookup(key: str) -> dict[str, int]:
+            return {"count": 1}
+
+        mock_client.intercept.return_value = InterceptResponse(
+            outcome="Execute", effect_id="eff-1"
+        )
+        executed = await lookup("k", _session=session)
+
+        mock_client.intercept.reset_mock()
+        mock_client.intercept.return_value = InterceptResponse(
+            outcome="Replay",
+            effect_id="eff-1",
+            cached_result={"success": True, "output": executed},
+        )
+        replayed = await lookup("k", _session=session)
+
+        assert replayed == executed == {"count": 1}
+
+    async def test_envelope_with_output_key_is_unwrapped(
+        self, session: UndoLogSession, mock_client: AsyncMock
+    ) -> None:
+        """A full envelope: the value under ``output`` is returned."""
+        mock_client.intercept.return_value = InterceptResponse(
+            outcome="Replay",
+            effect_id="eff-2",
+            cached_result={
+                "success": True,
+                "output": {"id": 7, "name": "widget"},
+                "error": None,
+                "duration_ms": 12,
+            },
+        )
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=mock_client,
+        )
+        async def fetch() -> dict[str, Any]:
+            raise AssertionError("function body must not execute on Replay")
+
+        assert await fetch(_session=session) == {"id": 7, "name": "widget"}
+
+    async def test_non_envelope_dict_passes_through(
+        self, session: UndoLogSession, mock_client: AsyncMock
+    ) -> None:
+        """A cached dict without an ``output`` key is returned as-is."""
+        raw = {"custom": True, "nested": {"a": 1}}
+        mock_client.intercept.return_value = InterceptResponse(
+            outcome="Replay", effect_id="eff-3", cached_result=raw
+        )
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=mock_client,
+        )
+        async def legacy_tool() -> dict[str, Any]:
+            raise AssertionError("function body must not execute on Replay")
+
+        assert await legacy_tool(_session=session) is raw
+
+    async def test_none_cached_result_passes_through(
+        self, session: UndoLogSession, mock_client: AsyncMock
+    ) -> None:
+        """A Replay response with no cached value returns ``None``."""
+        mock_client.intercept.return_value = InterceptResponse(
+            outcome="Replay", effect_id="eff-4", cached_result=None
+        )
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=mock_client,
+        )
+        async def ghost() -> str:
+            raise AssertionError("function body must not execute on Replay")
+
+        assert await ghost(_session=session) is None
+
+    async def test_tool_returning_none_is_distinguishable_from_missing_cache(
+        self, session: UndoLogSession, mock_client: AsyncMock
+    ) -> None:
+        """An explicit ``output: None`` envelope still unwraps to ``None``."""
+        mock_client.intercept.return_value = InterceptResponse(
+            outcome="Replay",
+            effect_id="eff-5",
+            cached_result={"success": True, "output": None},
+        )
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=mock_client,
+        )
+        async def nullable() -> None:
+            raise AssertionError("function body must not execute on Replay")
+
+        assert await nullable(_session=session) is None
+
+    async def test_string_result_unwraps_to_string(
+        self, session: UndoLogSession, mock_client: AsyncMock
+    ) -> None:
+        """Non-dict tool results survive the envelope round-trip."""
+        mock_client.intercept.return_value = InterceptResponse(
+            outcome="Replay",
+            effect_id="eff-6",
+            cached_result={"success": True, "output": "plain-text"},
+        )
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=mock_client,
+        )
+        async def echo() -> str:
+            raise AssertionError("function body must not execute on Replay")
+
+        assert await echo(_session=session) == "plain-text"
+
+    async def test_context_var_session_replay_unwraps(
+        self, mock_client: AsyncMock
+    ) -> None:
+        """Unwrapping behaves identically with context-var session injection."""
+        mock_client.intercept.return_value = InterceptResponse(
+            outcome="Replay",
+            effect_id="eff-7",
+            cached_result={"success": True, "output": 42},
+        )
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_test"),
+            client=mock_client,
+        )
+        async def counter() -> int:
+            raise AssertionError("function body must not execute on Replay")
+
+        async with UndoLogSession(org_id="org-abc") as ctx_session:
+            async with run_with_session(ctx_session):
+                assert await counter() == 42
 
 
 # ── AwaitingApproval outcome ──────────────────────────────────────────────

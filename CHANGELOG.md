@@ -218,6 +218,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- SDK: Replay outcome now returns the tool's natural return type instead
+  of the ``ToolResult`` envelope, matching Execute behavior.
+- Examples: live-stack tests reset the SDK default client between tests,
+  fixing ``Event loop is closed`` failures.
 - Security: bumped ``fast-uri`` to 3.1.7 in the TypeScript SDK, fixing 5 High
   severity host confusion and SSRF vulnerabilities.
 - Security: bumped ``ip-address`` to 10.7.0 in the TypeScript SDK, fixing 3

@@ -1,12 +1,12 @@
 ---
 title: "ADR 0012: Effect TTL and Retention Strategy"
-description: "- **Date:** 2026-09-17 - **Status:** Proposed - **Deciders:** UndoLog Core Team"
+description: "- **Date:** 2026-09-17 - **Status:** Accepted - **Deciders:** UndoLog Core Team"
 section: "adr"
 ---
 # ADR 0012: Effect TTL and Retention Strategy
 
 - **Date:** 2026-09-17
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** UndoLog Core Team
 
 ## Context

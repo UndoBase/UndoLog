@@ -1,13 +1,13 @@
 ---
 title: "ADR 0015: Context-Var Session Injection for Python SDK"
-description: "- **Date:** 2026-09-21 - **Status:** Proposed - **Deciders:** UndoLog Core Team"
+description: "- **Date:** 2026-09-21 - **Status:** Accepted - **Deciders:** UndoLog Core Team"
 section: "adr"
 ---
 
 # ADR 0015: Context-Var Session Injection for Python SDK
 
 - **Date:** 2026-09-21
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** UndoLog Core Team
 
 ## Context
