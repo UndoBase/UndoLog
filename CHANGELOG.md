@@ -54,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   approach with process management and CI integration.
 - Documentation: added ADR 0016 defining the replay shape contract:
   Replay returns raw result, matching Execute behavior.
+- Documentation: added ADR 0017 defining the SDK-side compensation
+  test harness design.
 - Engine: integration test proving crash recovery is not theoretical.
   Kills engine mid-compensation and verifies saga resumes on restart.
 - Engine: per-org configurable effect TTL retention policy with

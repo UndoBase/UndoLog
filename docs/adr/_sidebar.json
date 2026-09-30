@@ -18,6 +18,7 @@
     { "slug": "0013-dead-letter-queue", "title": "0013: Dead-Letter Queue" },
     { "slug": "0014-saga-crash-recovery-testing", "title": "0014: Crash Recovery" },
     { "slug": "0015-context-var-session-injection", "title": "0015: Context-Var Session" },
-    { "slug": "0016-replay-shape-contract", "title": "0016: Replay Shape" }
+    { "slug": "0016-replay-shape-contract", "title": "0016: Replay Shape" },
+    { "slug": "0017-compensation-testing-harness", "title": "0017: Compensation Harness" }
   ]
 }
