@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   connection pool leaks in long-running services.
 - SDK: ``test_compensation`` and ``test_saga`` APIs for testing
   compensation functions in CI without a running engine or database.
+- SDK: live-stack integration test suite covering intercept, replay,
+  approval, and compensation lifecycle (requires Docker stack).
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)
