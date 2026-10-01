@@ -44,6 +44,9 @@ undolog_sdk = ["py.typed"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+markers = [
+    "integration: marks tests that require a live UndoLog stack (docker compose up -d)",
+]
 
 [project.optional-dependencies]
 dev = [
