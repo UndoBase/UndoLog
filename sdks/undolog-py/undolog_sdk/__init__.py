@@ -15,6 +15,12 @@ Key exports:
         Enum classifying a tool's execution behaviour (Safe, Compensable, Irreversible).
     ``CompensationTestHarness``
         Test harness for compensation functions without a running engine.
+    ``SagaTestHarness``
+        Test harness simulating a full LIFO compensation rollback.
+    ``test_compensation``
+        Test one compensation function and report the outcome.
+    ``test_saga``
+        Simulate a full compensation chain and report the outcome.
 """
 
 from __future__ import annotations
@@ -36,7 +42,16 @@ from undolog_sdk.errors import (
     UndoLogError,
 )
 from undolog_sdk.session import UndoLogSession
-from undolog_sdk.test_harness import CompensationTestHarness
+from undolog_sdk.test_harness import (
+    CompensationReport,
+    CompensationTestHarness,
+    EffectDescriptor,
+    SagaReport,
+    SagaTestHarness,
+    StepResult,
+    test_compensation,
+    test_saga,
+)
 from undolog_sdk.tier import CompensationDescriptor, ToolTier
 
 try:
@@ -48,9 +63,14 @@ __all__ = [
     "AuthenticationError",
     "AwaitingApprovalError",
     "CompensationDescriptor",
+    "CompensationReport",
     "CompensationTestHarness",
     "ConnectionError",
+    "EffectDescriptor",
+    "SagaReport",
+    "SagaTestHarness",
     "ServerError",
+    "StepResult",
     "TimeoutError",
     "ToolTier",
     "UndoLogClient",
@@ -60,5 +80,7 @@ __all__ = [
     "get_current_session",
     "require_current_session",
     "run_with_session",
+    "test_compensation",
+    "test_saga",
     "undolog_tool",
 ]

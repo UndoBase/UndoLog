@@ -1,4 +1,5 @@
-"""Tests for ``CompensationTestHarness``.
+"""Tests for ``CompensationTestHarness``, ``SagaTestHarness``, and the
+``test_compensation`` / ``test_saga`` top-level APIs.
 
 Covers:
     - Execution counting and argument recording
@@ -8,6 +9,10 @@ Covers:
     - Assertion helpers: ``assert_called_once``, ``assert_called_with``
     - Error recording and re-raise
     - Reset clears all state
+    - LIFO rollback order via ``test_saga`` / ``SagaTestHarness``
+    - Fail-fast halt on permanent compensation failure
+    - Retry budget with the engine's 0-means-default contract
+    - Input validation: duplicate and negative stack positions
     - Works in CI without a running engine or database
 """
 
@@ -17,6 +22,14 @@ from typing import Any
 
 import pytest
 
+from undolog_sdk import (
+    EffectDescriptor,
+    SagaReport,
+    SagaTestHarness,
+    StepResult,
+    test_compensation,
+    test_saga,
+)
 from undolog_sdk.test_harness import CompensationTestHarness
 
 # ── Test compensation functions ─────────────────────────────────────────────
@@ -283,3 +296,285 @@ class TestSendEmailExample:
         result = await harness.execute("alice@example.com")
         assert result == {"status": "undone", "to": "alice@example.com"}
         harness.assert_called_once()
+
+
+# ── SagaTestHarness: LIFO rollback ──────────────────────────────────────────
+
+
+async def undo_charge(tx_id: str) -> dict[str, str]:
+    """Fake compensation: reverse a charge."""
+    return {"undone": tx_id}
+
+
+class TestSagaLifoOrder:
+    """Effects roll back in LIFO stack-position order."""
+
+    async def test_lifo_order_regardless_of_input_order(self) -> None:
+        calls: list[str] = []
+
+        def _tracker(name: str) -> Any:
+            async def comp() -> None:
+                calls.append(name)
+
+            return comp
+
+        report = await test_saga(
+            [
+                EffectDescriptor("first", _tracker("first"), stack_position=1),
+                EffectDescriptor("third", _tracker("third"), stack_position=3),
+                EffectDescriptor("second", _tracker("second"), stack_position=2),
+            ]
+        )
+
+        assert report.session_result == "compensated"
+        assert report.compensation_order == ("third", "second", "first")
+        assert calls == ["third", "second", "first"]
+
+    async def test_report_lists_steps_in_rollback_order(self) -> None:
+        report = await test_saga(
+            [
+                EffectDescriptor("charge", undo_charge, stack_position=1, args=("t1",)),
+                EffectDescriptor(
+                    "email", undo_send_email, stack_position=2, args=("a@x",)
+                ),
+            ]
+        )
+
+        assert [s.tool_name for s in report.steps] == ["email", "charge"]
+        assert [s.stack_position for s in report.steps] == [2, 1]
+        assert all(s.state == "compensated" for s in report.steps)
+
+    async def test_input_order_preserved_in_session_effects(self) -> None:
+        effects = [
+            EffectDescriptor("b", undo_charge, stack_position=2, args=("t",)),
+            EffectDescriptor("a", undo_charge, stack_position=1, args=("t",)),
+        ]
+        harness = SagaTestHarness(effects)
+
+        assert [e.tool_name for e in harness.session_effects] == ["b", "a"]
+
+
+class TestSagaFailFast:
+    """A permanent failure halts the pass; lower entries are untouched."""
+
+    async def test_halt_stops_remaining_entries(self) -> None:
+        bottom_calls: list[str] = []
+        top_calls: list[str] = []
+
+        async def failing() -> None:
+            raise ValueError("endpoint returned 404")
+
+        async def track_bottom() -> None:
+            bottom_calls.append("bottom")
+
+        async def track_top() -> None:
+            top_calls.append("top")
+
+        report = await test_saga(
+            [
+                EffectDescriptor("bottom", track_bottom, stack_position=1),
+                EffectDescriptor("broken", failing, stack_position=2),
+                EffectDescriptor("top", track_top, stack_position=3),
+            ]
+        )
+
+        # LIFO: top rolls back first, broken fails and halts the pass,
+        # and bottom (lower stack position) is never invoked.
+        assert report.session_result == "halted"
+        assert report.compensation_order == ("top",)
+        assert top_calls == ["top"]
+        assert bottom_calls == []
+        assert [(s.tool_name, s.state) for s in report.steps] == [
+            ("top", "compensated"),
+            ("broken", "failed"),
+        ]
+        assert report.steps[1].error == "endpoint returned 404"
+
+    async def test_halt_at_highest_position_rolls_nothing(self) -> None:
+        calls: list[str] = []
+
+        async def failing() -> None:
+            raise RuntimeError("permanent")
+
+        async def never_called() -> None:
+            calls.append("never")
+
+        report = await test_saga(
+            [
+                EffectDescriptor("charge", never_called, stack_position=1),
+                EffectDescriptor("broken", failing, stack_position=2),
+            ]
+        )
+
+        # The failure sits at the top of the stack, so nothing else runs.
+        assert report.session_result == "halted"
+        assert report.compensation_order == ()
+        assert [(s.tool_name, s.state) for s in report.steps] == [("broken", "failed")]
+        assert calls == []
+
+
+class TestSagaRetryBudget:
+    """Per-entry retry budgets with the 0-means-default contract."""
+
+    async def test_transient_failure_recovers_within_budget(self) -> None:
+        count = 0
+
+        async def flaky() -> None:
+            nonlocal count
+            count += 1
+            if count < 3:
+                raise RuntimeError("transient")
+
+        report = await test_saga([EffectDescriptor("flaky", flaky, stack_position=1)])
+
+        assert report.session_result == "compensated"
+        assert report.steps[0].attempts == 3
+
+    async def test_zero_max_retries_means_default_budget(self) -> None:
+        count = 0
+
+        async def fails_twice() -> None:
+            nonlocal count
+            count += 1
+            if count < 3:
+                raise RuntimeError("transient")
+
+        report = await test_saga(
+            [EffectDescriptor("e", fails_twice, stack_position=1, max_retries=0)]
+        )
+
+        assert report.session_result == "compensated"
+        assert report.steps[0].attempts == 3
+
+    async def test_exhausted_budget_records_error(self) -> None:
+        attempts_seen: list[int] = []
+
+        async def always_fails_fn() -> None:
+            attempts_seen.append(1)
+            raise ValueError("nope")
+
+        report = await test_saga(
+            [EffectDescriptor("e", always_fails_fn, stack_position=1, max_retries=2)]
+        )
+
+        assert report.session_result == "halted"
+        assert report.steps[0].attempts == 2
+        assert len(attempts_seen) == 2
+
+
+class TestSagaValidation:
+    """Construction-time input validation."""
+
+    async def test_duplicate_stack_positions_rejected(self) -> None:
+        with pytest.raises(ValueError, match="duplicate stack_position"):
+            SagaTestHarness(
+                [
+                    EffectDescriptor("a", undo_charge, stack_position=1, args=("t",)),
+                    EffectDescriptor("b", undo_charge, stack_position=1, args=("t",)),
+                ]
+            )
+
+    async def test_negative_stack_position_rejected(self) -> None:
+        with pytest.raises(ValueError, match="non-negative"):
+            EffectDescriptor("a", undo_charge, stack_position=-1, args=("t",))
+
+    async def test_empty_effects_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            SagaTestHarness([])
+
+    async def test_report_before_rollback_raises(self) -> None:
+        harness = SagaTestHarness(
+            [EffectDescriptor("a", undo_charge, stack_position=1, args=("t",))]
+        )
+
+        with pytest.raises(RuntimeError, match=r"rollback\(\) has not run"):
+            harness.report()
+
+    async def test_report_after_rollback_returns_report(self) -> None:
+        harness = SagaTestHarness(
+            [EffectDescriptor("a", undo_charge, stack_position=1, args=("t",))]
+        )
+        await harness.rollback()
+
+        assert harness.report().session_result == "compensated"
+
+
+# ── test_compensation top-level API ─────────────────────────────────────────
+
+
+class TestCompensationApi:
+    """``test_compensation`` reports counts, state, and idempotency."""
+
+    async def test_successful_idempotent_compensation(self) -> None:
+        report = await test_compensation(undo_transfer, "tx-123")
+
+        assert report.final_state == "compensated"
+        assert report.execution_count == 2
+        assert report.retry_count == 0
+        assert report.result == {"undone": "tx-123"}
+        assert report.error is None
+
+    async def test_failing_compensation_reports_error(self) -> None:
+        async def bad(tx_id: str) -> dict[str, str]:
+            raise ValueError("downstream down")
+
+        report = await test_compensation(bad, "tx-1")
+
+        assert report.final_state == "failed"
+        assert report.retry_count == 1
+        assert report.execution_count == 0
+        assert "downstream down" in (report.error or "")
+
+    async def test_non_idempotent_compensation_fails(self) -> None:
+        counter = 0
+
+        async def non_idempotent(tx_id: str) -> int:
+            nonlocal counter
+            counter += 1
+            return counter
+
+        report = await test_compensation(non_idempotent, "tx-1")
+
+        assert report.final_state == "failed"
+        assert "idempotency violation" in (report.error or "")
+
+    async def test_kwargs_forwarded(self) -> None:
+        report = await test_compensation(undo_send_email, to="a@x.com", subject="Hi")
+
+        assert report.final_state == "compensated"
+        assert report.result == {"status": "undone", "to": "a@x.com"}
+
+    async def test_fn_name_recorded(self) -> None:
+        report = await test_compensation(undo_transfer, "tx-1")
+
+        assert report.fn_name == "undo_transfer"
+
+
+# ── Report value semantics ──────────────────────────────────────────────────
+
+
+class TestReportSemantics:
+    """Frozen dataclass reports support equality and immutability."""
+
+    async def test_saga_report_equality(self) -> None:
+        left = await test_saga(
+            [EffectDescriptor("a", undo_charge, stack_position=1, args=("t",))]
+        )
+        right = await test_saga(
+            [EffectDescriptor("a", undo_charge, stack_position=1, args=("t",))]
+        )
+
+        assert left == right
+
+    async def test_step_result_frozen(self) -> None:
+        step = StepResult(tool_name="a", stack_position=1, attempts=1, state="ok")
+
+        with pytest.raises(AttributeError):
+            step.tool_name = "b"  # type: ignore[misc]
+
+    async def test_saga_report_type(self) -> None:
+        report = await test_saga(
+            [EffectDescriptor("a", undo_charge, stack_position=1, args=("t",))]
+        )
+
+        assert isinstance(report, SagaReport)

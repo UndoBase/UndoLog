@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ``UndoLogError`` subclasses.
 - SDK: default HTTP client is closed on session exit, preventing
   connection pool leaks in long-running services.
+- SDK: ``test_compensation`` and ``test_saga`` APIs for testing
+  compensation functions in CI without a running engine or database.
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)

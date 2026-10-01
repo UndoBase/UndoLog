@@ -1,13 +1,13 @@
 ---
 title: "ADR 0017: Compensation Testing Harness for the Python SDK"
-description: "- **Date:** 2026-09-30 - **Status:** Proposed - **Deciders:** UndoLog Core Team"
+description: "- **Date:** 2026-09-30 - **Status:** Accepted - **Deciders:** UndoLog Core Team"
 section: "adr"
 ---
 
 # ADR 0017: Compensation Testing Harness for the Python SDK
 
 - **Date:** 2026-09-30
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** UndoLog Core Team
 
 ## Context
@@ -66,14 +66,16 @@ arguments and fails when the results differ.
   and permanent client errors are not retried.
 - `report()` returns per-step outcomes (tool name, stack position,
   attempts made, final state) and an overall session result that
-  mirrors the engine's `SessionState`: completed when every entry
-  compensates, halted when one fails permanently.
+  mirrors the engine's `SessionState`: `compensated` when every entry
+  compensates, `halted` when one fails permanently.
 
 Two module-level convenience functions wrap the classes:
 
 - `test_compensation(fn, args)` runs a single compensation through the
-  Layer 1 harness and returns a result object with the execution count,
-  retry count, final state, and return value.
+  Layer 1 harness, verifies the idempotency contract by invoking it a
+  second time with identical arguments, and returns a result object
+  with the execution count, retry count, final state, and return
+  value.
 - `test_saga(session_effects)` runs a full LIFO chain through the
   Layer 2 harness and returns the same style of report.
 
