@@ -1,12 +1,12 @@
 ---
 title: "Python SDK Reference"
-description: "**Package:** `undolog_sdk` **Module paths:** `undolog_sdk.client`, `undolog_sdk.session`, `undolog_sdk.decorators`, `undolog_sdk.tier`, `undolog_sdk.signature`"
+description: "**Package:** `undolog_sdk` **Module paths:** `undolog_sdk.client`, `undolog_sdk.session`, `undolog_sdk.decorators`, `undolog_sdk.tier`, `undolog_sdk.signature`, `undolog_sdk.integrations`"
 section: "reference"
 ---
 # Python SDK Reference
 
 **Package:** `undolog_sdk`  
-**Module paths:** `undolog_sdk.client`, `undolog_sdk.session`, `undolog_sdk.decorators`, `undolog_sdk.tier`, `undolog_sdk.signature`
+**Module paths:** `undolog_sdk.client`, `undolog_sdk.session`, `undolog_sdk.decorators`, `undolog_sdk.tier`, `undolog_sdk.signature`, `undolog_sdk.integrations`
 
 ---
 
@@ -383,6 +383,93 @@ def __init__(
 | `approval_id` | `str` | Approval request identifier. |
 | `tool_name` | `str` | Logical name of the tool being approved. |
 | `step_index` | `int` | Step index of the tool call. |
+
+---
+
+## `wrap_langgraph`
+
+**Module:** `undolog_sdk.integrations`
+
+Runs a compiled LangGraph graph's `ainvoke` inside an `UndoLogSession`, so the tool calls made through `wrap_tools` reach the proxy.
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `graph` | `Any` | (required) | A compiled LangGraph app: anything exposing `ainvoke`. |
+| `org_id` | `str \| None` | `None` | Organisation for new sessions. Falls back to `UNDOLOG_ORG_ID`, then `org_demo`. |
+
+### Returns
+
+A `WrappedGraph` facade. The original graph is not mutated, and attributes the facade does not define are delegated to it.
+
+### Returned state keys
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `session_id` | `str` | Session identity to pass into the next invocation. |
+| `undolog_step_index` | `int` | Step progress to pass into the next invocation. |
+| `awaiting_approval` | `bool` | `True` while a tool waits for a human decision. |
+| `approval_request` | `dict \| None` | `approval_id`, `tool_name`, and `step_index` of the pending approval, or `None`. |
+
+### Behaviour
+
+- Instrument the tools first with `wrap_tools` and build the graph from the list it returns: a compiled graph already holds its own references to the callables.
+- Only `ainvoke` opens a session. `astream` needs an `UndoLogSession` and `run_with_session` opened around the call.
+- Re-invoking with the returned state resumes the same session, and the engine replays the steps that already completed.
+- `app.org_id` reports the organisation that new sessions use.
+
+### Example
+
+```python
+from undolog_sdk.integrations import wrap_langgraph
+
+app = wrap_langgraph(build_graph(), org_id="org_demo")
+result = await app.ainvoke({"query": "urgent payment needed"})
+if result["awaiting_approval"]:
+    # POST /approvals/{approval_id}/approve, then invoke again.
+    result = await app.ainvoke(result)
+```
+
+---
+
+## `wrap_tools`
+
+**Module:** `undolog_sdk.integrations`
+
+Instruments a list of LangGraph tool objects so the graph built from them journals every call. `wrap_tool` applies the same rules to a single tool.
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tools` | `Sequence[Any]` | (required) | Async callables, or objects exposing an async `coroutine` attribute (pydantic `StructuredTool` style). |
+| `tiers` | `dict[str, ToolTier] \| None` | `None` | Per-tool tier overrides keyed by tool name. Unlisted tools default to `COMPENSABLE`. |
+| `compensations` | `dict[str, str] \| None` | `None` | Compensation registry names keyed by tool name. |
+| `client` | `UndoLogClient \| None` | `None` | Client instance given to every wrapped tool. |
+
+### Returns
+
+A new list. Structured-tool containers are shallow-copied, so the caller's objects are never mutated. Tools already decorated with `@undolog_tool` come back unchanged, keeping their decoration-time tier.
+
+### Raises
+
+| Exception | Condition |
+|-----------|-----------|
+| `ValueError` | A `Compensable` tool has no entry in `compensations`. |
+| `ValueError` | A tool is not a callable that carries a name. |
+
+### Example
+
+```python
+from undolog_sdk.integrations import wrap_tools
+
+tools = wrap_tools(
+    [search_web, create_user, payout],
+    tiers={"search_web": ToolTier.SAFE, "payout": ToolTier.IRREVERSIBLE},
+    compensations={"create_user": "undo_create_user"},
+)
+```
 
 ---
 

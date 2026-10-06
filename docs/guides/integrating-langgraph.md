@@ -1,6 +1,6 @@
 ---
 title: "How to integrate UndoLog with LangGraph"
-description: "## Prerequisites"
+description: "Run a LangGraph agent's tool calls through UndoLog: annotate the tools, thread one session through the graph, and turn pending approvals into state."
 section: "guides"
 ---
 # How to integrate UndoLog with LangGraph
@@ -133,6 +133,57 @@ traversal order: search (1) → payout (2). If payout fails and compensation is
 triggered, the engine undoes in LIFO order: only payout is rolled back because
 search was SAFE (no effect logged).
 
+## Alternative: wrap the compiled graph
+
+Threading `_session` through every node is optional. `wrap_langgraph`
+opens one session for the whole run, as long as the tools the nodes call
+are instrumented: decorate them with `@undolog_tool` as above, or build
+the graph from a list returned by `wrap_tools`.
+
+```python
+from undolog_sdk.integrations import wrap_langgraph
+
+app = wrap_langgraph(graph, org_id="org-demo")
+
+result = await app.ainvoke({"query": "urgent payment needed"})
+if result["awaiting_approval"]:
+    approval_id = result["approval_request"]["approval_id"]
+    print(f"Approve via the dashboard or POST /approvals/{approval_id}/approve")
+    # Once the approval resolves, re-invoke with the returned state.
+    result = await app.ainvoke(result)
+```
+
+`ainvoke` returns the graph state plus `session_id`,
+`undolog_step_index`, `awaiting_approval`, and `approval_request`.
+Feeding that state back in resumes the same session, and the engine
+replays the steps that already completed. Three rules:
+
+- Instrument the tools before compiling the graph: a compiled graph
+  holds its own references to them, so `wrap_langgraph` cannot reach
+  them afterwards.
+- Put `session_id` and `undolog_step_index` in `AgentState` so
+  LangGraph persists them with the rest of the state across checkpoint
+  restores.
+- Only `ainvoke` is instrumented. For `astream`, open your own
+  `UndoLogSession` and `run_with_session` around the call.
+
+To instrument a list of tools that are not decorated yet, pass the tier
+overrides and the compensation registry names explicitly:
+
+```python
+from undolog_sdk.integrations import wrap_tools
+
+tools = wrap_tools(
+    [search_web, create_user, payout],
+    tiers={"search_web": ToolTier.SAFE, "payout": ToolTier.IRREVERSIBLE},
+    compensations={"create_user": "undo_create_user"},
+)
+```
+
+`wrap_tools` raises `ValueError` when a COMPENSABLE tool has no
+compensation name: the tool would then run with no journal, no
+compensation, and no approval gate.
+
 ## Verify it works
 
 Save the complete script as `test_langgraph.py` and run it:
@@ -162,11 +213,11 @@ one effect entry per non-SAFE node with `status: committed`.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `RuntimeError: session_id required` | Session not passed in state | Set `state["session"]` before calling `graph.ainvoke` |
+| `RuntimeError: Tool 'x' requires a session` | No session in state and no session in the context var | Set `state["session"]` before `graph.ainvoke`, or open `run_with_session` around the call |
 | Step indices skip or duplicate | Multiple `UndoLogSession` instances used | Create one session per graph run, share via state |
 | `LangGraphException: node not found` | Route returns wrong name | Check the string returned by `route_after_search` matches an `add_node` name |
 | Compensations not firing on node failure | Exception raised before `next_step()` | Ensure node awaits the tool after session is active |
-| `AwaitingApprovalError` stops the graph | IRREVERSIBLE tool without prior approval | Catch the error in the node, surface the `approval_id`, or route to a human |
+| `AwaitingApprovalError` stops the graph | IRREVERSIBLE tool without prior approval | Catch the error in the node, or wrap the graph with `wrap_langgraph`, which returns it as `awaiting_approval` state |
 
 ## Next steps
 
