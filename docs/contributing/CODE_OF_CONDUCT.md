@@ -1,6 +1,6 @@
 ---
 title: "Contributor Covenant Code of Conduct"
-description: "## Our pledge"
+description: "The behaviour expected from everyone participating in the UndoLog community, and how to report a violation."
 section: "contributing"
 ---
 # Contributor Covenant Code of Conduct

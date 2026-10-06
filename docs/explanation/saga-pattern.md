@@ -1,6 +1,6 @@
 ---
 title: "Saga Pattern: LIFO Compensation Ordering"
-description: "## The Problem"
+description: "How UndoLog rolls back failed runs: LIFO compensation ordering, crash recovery, and partial rollback."
 section: "explanation"
 ---
 # Saga Pattern: LIFO Compensation Ordering

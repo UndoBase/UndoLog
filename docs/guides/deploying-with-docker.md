@@ -1,6 +1,6 @@
 ---
 title: "How to deploy UndoLog with Docker"
-description: "## Prerequisites"
+description: "Deploy the full UndoLog stack with Docker Compose: PostgreSQL 16, the Rust engine, the Go proxy, and the dashboard."
 section: "guides"
 ---
 # How to deploy UndoLog with Docker

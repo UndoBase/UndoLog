@@ -1,6 +1,6 @@
 ---
 title: "How to run UndoLog in production"
-description: "## Prerequisites"
+description: "Prepare UndoLog for production: TLS, connection pooling, monitoring, backup, and failure handling."
 section: "guides"
 ---
 # How to run UndoLog in production

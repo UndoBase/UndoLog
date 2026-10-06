@@ -1,6 +1,6 @@
 ---
 title: "Exactly-Once Semantics"
-description: "## The Problem"
+description: "How UndoLog keeps retries safe: call signatures, cached results, and deduplication of repeated tool calls."
 section: "explanation"
 ---
 # Exactly-Once Semantics

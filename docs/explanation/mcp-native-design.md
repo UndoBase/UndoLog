@@ -1,6 +1,6 @@
 ---
 title: "MCP-Native Design"
-description: "## The Problem"
+description: "Why UndoLog exposes a single MCP interface instead of a separate safety plugin for every agent framework."
 section: "explanation"
 ---
 # MCP-Native Design

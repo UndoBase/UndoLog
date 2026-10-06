@@ -1,6 +1,6 @@
 ---
 title: "Comparison with LangGraph"
-description: "## What this document is"
+description: "A side-by-side comparison of UndoLog and LangGraph safety and recovery mechanisms, and where each approach fits."
 section: "explanation"
 ---
 # Comparison with LangGraph

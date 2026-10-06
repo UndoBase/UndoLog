@@ -1,6 +1,6 @@
 ---
 title: "Safety Model: Three-Tier Tool Classification"
-description: "## The Problem"
+description: "Why every tool call is classified as SAFE, COMPENSABLE, or IRREVERSIBLE, and what each tier guarantees."
 section: "explanation"
 ---
 # Safety Model: Three-Tier Tool Classification
