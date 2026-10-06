@@ -11,4 +11,4 @@ migration instructions for breaking updates.
 
 | Page | Description |
 |---|---|
-| [v0.1 to v0.2 Migration](migration/v0.1-to-v0.2) | Guide for upgrading from v0.1 to v0.2 |
+| [v0.1 to v0.2 Migration](migration/v0.1-to-v0.2.md) | Guide for upgrading from v0.1 to v0.2 |

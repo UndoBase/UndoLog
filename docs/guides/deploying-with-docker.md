@@ -165,5 +165,4 @@ Expected response:
 ## Next steps
 
 - [Run UndoLog in production](running-in-production.md)
-- [Configure PostgreSQL for production workloads](../reference/postgres-config.md)
-- [Tune performance with advisory locks](../reference/performance-tuning.md)
+- [Configure PostgreSQL for production workloads](postgresql-ha.md)

@@ -28,6 +28,10 @@ sequentially with a unique session and effect to avoid caching.
 | OS | Amazon Linux 2023 |
 | Rust | 1.82.0, release profile |
 
+The hardware and toolchain rows describe how the stored numbers were
+measured. Builds from this repository use the channel pinned in
+`rust-toolchain.toml`.
+
 ### How to reproduce
 
 The benchmark runner is not yet implemented. The current infrastructure

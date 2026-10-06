@@ -13,7 +13,7 @@ This guide walks through setting up a local UndoLog development environment from
 |---|---|---|
 | Docker | 24+ | PostgreSQL and full-stack Compose environment |
 | Rust | 1.87+ | Build the engine, store, types, and saga crates |
-| Go | 1.22+ | Build the proxy service |
+| Go | 1.25+ | Build the proxy service |
 | Python | 3.10+ | Install and develop the Python SDK |
 | Node.js | 22+ | Run the Next.js dashboard |
 | protoc | 25+ | Generate protobuf stubs |
@@ -146,7 +146,7 @@ grpcurl -plaintext localhost:50051 list
 
 | Problem | Likely cause | Solution |
 |---|---|---|
-| `cargo build` fails with "package not found" | Rust toolchain too old | Run `rustup update stable` |
+| `cargo build` fails with "package not found" | Rust toolchain too old | Run `rustup update` to refresh the pinned toolchain |
 | `go build` fails with missing module | Go proxy submodule not initialised | Run `cd services/undolog-proxy && go mod download` |
 | Engine can't connect to PostgreSQL | Database not running or wrong URL | Check `docker ps`, verify `DATABASE_URL` in `.env` |
 | `pip install -e .[dev]` fails | Shell expands `[dev]` as glob | Quote the path: `pip install -e ".[dev]"` |

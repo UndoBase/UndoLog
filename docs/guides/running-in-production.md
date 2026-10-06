@@ -267,6 +267,5 @@ docker compose exec pgbouncer psql -h localhost -p 6432 -U postgres -c "SHOW POO
 
 - [PostgreSQL high availability](postgresql-ha.md): WAL streaming, read replicas, failover, and monitoring
 - [Database comparison](../reference/database-comparison.md): feature comparison across PostgreSQL, SQLite, and MySQL
-- [Monitor the SSE dashboard for live effects](../reference/dashboard.md)
-- [Tune PostgreSQL for UndoLog workloads](../reference/postgres-config.md)
-- [Set up alerting on `compensation_failed` events](../reference/monitoring.md)
+- [Monitor the SSE dashboard for live effects](../reference/api/go-proxy-rest.md)
+- [Set up alerting on `compensation_failed` events](opentelemetry-setup.md)
