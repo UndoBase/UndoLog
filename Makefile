@@ -7,7 +7,7 @@
 
 GO_PB_DIR := services/undolog-proxy/internal/engine/pb
 
-.PHONY: proto proto-go proto-rust clean check fmt lint test typecheck test-all demo-multi-tenant bench bench-quick bench-overhead bench-throughput bench-dedup bench-compensation bench-multitenant bench-sse bench-approval bench-longevity
+.PHONY: proto proto-go proto-rust clean check fmt fmt-rust fmt-go fmt-python lint lint-rust lint-go lint-python test test-rust test-go test-python test-www doc-rust typecheck test-all demo-multi-tenant bench bench-quick bench-overhead bench-throughput bench-dedup bench-compensation bench-multitenant bench-sse bench-approval bench-longevity
 
 proto: proto-go proto-rust
 
@@ -31,27 +31,52 @@ proto-rust:
 
 # ── CI checks ─────────────────────────────────────────────────────────────
 # Run `make check` before committing to verify all CI checks pass locally.
+# The per-stack targets are the same commands CI runs when it gives each
+# stack its own job, so a local run and the split CI jobs cannot drift apart.
 # Note: Database-dependent integration tests require TEST_DATABASE_URL.
 # Run those separately: cargo test -p undolog-saga --test saga_integration_tests
 
 check: fmt lint test
 
-fmt:
+fmt: fmt-rust fmt-go fmt-python
+
+lint: lint-rust lint-go lint-python
+
+test: test-rust test-go test-python test-www
+
+fmt-rust:
 	cargo fmt --all --check
+
+fmt-go:
 	cd services/undolog-proxy && test -z "$$(gofmt -l .)"
+
+fmt-python:
 	ruff format --check sdks/undolog-py/.
 
-lint:
+lint-rust:
 	cargo clippy --all-targets
 	cargo clippy --all-targets --no-default-features --features sqlite
+
+lint-go:
 	cd services/undolog-proxy && go vet ./...
+
+lint-python:
 	ruff check sdks/undolog-py/.
 
-test:
+test-rust:
 	cargo test --lib --workspace --exclude undolog-engine
+
+test-go:
 	cd services/undolog-proxy && go test -race ./... -count=1
+
+test-python:
 	cd sdks/undolog-py && python -m pytest -v
+
+test-www:
 	cd apps/www && npm run build
+
+doc-rust:
+	RUSTDOCFLAGS="-D missing_docs" cargo doc --no-deps --workspace --exclude undolog-engine
 
 typecheck:
 	cd sdks/undolog-py && mypy undolog_sdk/ tests/

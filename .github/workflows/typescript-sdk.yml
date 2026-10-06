@@ -1,24 +1,35 @@
-name: TypeScript SDK CI
+name: TypeScript SDK
 
 on:
   push:
     branches: [main]
     paths:
       - "sdks/undolog-ts/**"
+      # Parity fixtures are generated from the Python SDK, so its changes
+      # must run this suite as well.
+      - "sdks/undolog-py/**"
+      - ".github/workflows/typescript-sdk.yml"
   pull_request:
     branches: [main]
     paths:
       - "sdks/undolog-ts/**"
+      - "sdks/undolog-py/**"
+      - ".github/workflows/typescript-sdk.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NODE_VERSION: "24"
   PYTHON_VERSION: "3.12"
 
 jobs:
-  quality:
+  verify:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: sdks/undolog-ts
@@ -29,11 +40,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: sdks/undolog-ts/package-lock.json
 
       - name: Install Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: sdks/undolog-py/pyproject.toml
 
       - name: Install Node dependencies
         run: npm ci
