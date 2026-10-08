@@ -41,7 +41,6 @@ Example::
 
 from __future__ import annotations
 
-import inspect
 import logging
 import os
 from typing import Any
@@ -53,6 +52,7 @@ from undolog_sdk import (
     UndoLogSession,
 )
 from undolog_sdk.context import run_with_session
+from undolog_sdk.integrations._instrument import require_async_tool
 
 # wrap_tools is the shared instrumenter: its container rules (a
 # callable, or an object exposing ``coroutine``) are the surface both
@@ -81,16 +81,7 @@ def _require_async_tool(tool: Any) -> None:
             tool would fail at its first call, and the wrap would have
             promised interception that never happens.
     """
-    inner = getattr(tool, "coroutine", None)
-    target = inner if callable(inner) else tool
-    if not callable(target) or inspect.iscoroutinefunction(target):
-        return
-    name = getattr(tool, "name", None) or getattr(tool, "__name__", None) or tool
-    raise ValueError(
-        f"wrap_crewai cannot instrument {name!r}: UndoLog awaits the wrapped "
-        "callable, so the tool must be async. Use an async function, or a "
-        "StructuredTool exposing an async 'coroutine'."
-    )
+    require_async_tool(tool, "wrap_crewai", "StructuredTool")
 
 
 def _prepare_agents(

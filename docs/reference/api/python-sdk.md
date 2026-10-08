@@ -27,7 +27,7 @@ Async HTTP client for the UndoLog MCP Proxy. Communicates with the Go proxy for 
 
 #### `intercept`
 
-```python
+```text
 async def intercept(
     self,
     org_id: str,
@@ -61,7 +61,7 @@ async def intercept(
 
 #### `commit`
 
-```python
+```text
 async def commit(
     self,
     org_id: str,
@@ -93,7 +93,7 @@ No-op; commit is handled inline by the proxy during the tool call. Kept for API 
 
 #### `fail`
 
-```python
+```text
 async def fail(
     self,
     org_id: str,
@@ -125,7 +125,7 @@ No-op; fail is handled inline by the proxy during the tool call. Kept for API co
 
 #### `aclose`
 
-```python
+```text
 async def aclose(self) -> None
 ```
 
@@ -178,7 +178,7 @@ Async context manager for an UndoLog session. Source of truth for organisation i
 
 #### `__aenter__`
 
-```python
+```text
 async def __aenter__(self) -> UndoLogSession
 ```
 
@@ -190,7 +190,7 @@ async def __aenter__(self) -> UndoLogSession
 
 #### `__aexit__`
 
-```python
+```text
 async def __aexit__(
     self,
     exc_type: type[BaseException] | None,
@@ -213,7 +213,7 @@ async def __aexit__(
 
 #### `next_step`
 
-```python
+```text
 def next_step(self) -> int
 ```
 
@@ -335,7 +335,7 @@ Describes the compensation function to invoke when rolling back a `Compensable` 
 
 #### `new`
 
-```python
+```text
 @classmethod
 def new(cls, fn_name: str, args: dict[str, Any] | None = None) -> CompensationDescriptor
 ```
@@ -361,7 +361,7 @@ Raised when an Irreversible tool call requires human approval.
 
 ### Constructor
 
-```python
+```text
 def __init__(
     self,
     approval_id: str,
@@ -492,6 +492,80 @@ if result["awaiting_approval"]:
 
 ---
 
+## `wrap_semantic_kernel`
+
+**Module:** `undolog_sdk.integrations`
+
+Registers Semantic Kernel plugin functions that reach the proxy and runs each kernel invocation inside an `UndoLogSession`.
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `kernel` | `Any` | (required) | A `Kernel`: anything exposing `add_function`, `invoke`, and `invoke_prompt`. |
+| `org_id` | `str \| None` | `None` | Organisation for new sessions. Falls back to `UNDOLOG_ORG_ID`, then `org_demo`. |
+| `tiers` | `dict[str, ToolTier]` | `None` | Tier overrides keyed by function name. Functions not listed default to `COMPENSABLE`. |
+| `compensations` | `dict[str, str]` | `None` | Compensation registry names keyed by function name. |
+| `client` | `UndoLogClient \| None` | `None` | Explicit client. Falls back to the module-level default. |
+
+### Returns
+
+A `WrappedKernel` facade. The original kernel is not replaced, and attributes the facade does not define are delegated to it.
+
+### Facade properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `org_id` | `str` | Organisation that new sessions use. |
+| `session_id` | `str \| None` | Session id of the most recent invocation, or `None` before the first. |
+| `step_index` | `int` | Step progress reached by the most recent invocation. |
+| `awaiting_approval` | `bool` | `True` while a function waits for a human decision. |
+| `approval_request` | `dict \| None` | `approval_id`, `tool_name`, and `step_index` of the pending approval, or `None`. |
+
+### Facade methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `add_function` | `(plugin_name: str, function_name: str, func: Any, **kwargs) -> Any` | Instruments `func` and registers it. Returns what the kernel's `add_function` returns. |
+| `add_functions` | `(plugin_name: str, functions: Mapping[str, Any], **kwargs) -> None` | Instruments every function, then registers them. One rejected function registers none. |
+| `invoke` | `(*args, **kwargs) -> Any` | Runs a plugin function inside a session. |
+| `invoke_prompt` | `(*args, **kwargs) -> Any` | Runs a prompt function inside a session. Same session, resume-key, and approval behaviour as `invoke`. |
+| `session` | `(session_id: Any = None, start_step: int = 0) -> AsyncIterator[UndoLogSession]` | Context manager opening a session for an entry point the facade does not wrap, such as an agent run. Takes the same resume arguments as `invoke`. |
+
+### Behaviour
+
+- Functions are instrumented at registration rather than at invocation, because a registered function keeps its own reference to the callable it wraps. Register through the facade, not the kernel: a function the kernel already holds cannot be instrumented afterwards.
+- Registration is idempotent, so a function already decorated with `@undolog_tool` is registered unchanged, keeping the tier chosen at decoration time.
+- `add_functions` accepts every function before registering any, so one rejected function leaves the kernel exactly as it was.
+- `invoke` and `invoke_prompt` consume `session_id` and `undolog_step_index` from the arguments mapping and remove them before the kernel reads it, so UndoLog bookkeeping never reaches a function argument.
+- `invoke` and `invoke_prompt` open a session per call. An agent invokes the kernel on its own schedule, so run it inside `session()`, which publishes the same session to the context variable the registered functions read. All three resume a journal the same way, and a fresh session on the next run is what the default gives you.
+- Registration forwards to the kernel's `add_function` as the keyword arguments `plugin_name`, `function_name`, and `func`, plus anything the caller passed. A kernel version that names them differently raises `TypeError` at registration, before it holds the function.
+- Resuming with `session_id` alone restarts the step counter, so a retried run's calls land on the steps they already journaled and the engine replays them. Adding `undolog_step_index` (or `start_step` for `session()`) continues the counter past them instead. A retry only replays if it makes the same calls in the same order.
+- Functions must be named async callables: `undolog_tool` awaits the function it wraps, so a sync function raises `ValueError` at registration instead of failing at its first call. A container exposing its callable as `coroutine` is rejected rather than unwrapped.
+- An Irreversible function raises `AwaitingApprovalError` out of `invoke`, `invoke_prompt`, or a `session()` block, and the facade records the run before it propagates, so the handler can read `session_id` and `approval_request`.
+
+### Example
+
+```python
+from undolog_sdk import AwaitingApprovalError
+from undolog_sdk.integrations import wrap_semantic_kernel
+
+kernel = wrap_semantic_kernel(kernel, org_id="org_demo")
+kernel.add_functions("docs", {"search": search_documents, "archive": archive_project})
+try:
+    result = await kernel.invoke(function=archive_project, arguments={"project_id": "proj_42"})
+except AwaitingApprovalError as exc:
+    print(f"Approve via POST /approvals/{exc.approval_id}/approve")
+    # Resuming with the session id alone repeats the step positions, so
+    # completed calls replay instead of running again.
+    result = await kernel.invoke(
+        function=archive_project,
+        arguments={"project_id": "proj_42", "session_id": kernel.session_id},
+    )
+```
+
+---
+
 ## `wrap_tools`
 
 **Module:** `undolog_sdk.integrations`
@@ -536,7 +610,7 @@ tools = wrap_tools(
 
 **Module:** `undolog_sdk.signature`
 
-```python
+```text
 def call_signature(
     session_id: str,
     step_index: int,
@@ -581,7 +655,7 @@ def call_signature(
 
 **Module:** `undolog_sdk.signature`
 
-```python
+```text
 def canonical_json(value: Any) -> str
 ```
 
