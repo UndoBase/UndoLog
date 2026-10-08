@@ -156,7 +156,10 @@ if result["awaiting_approval"]:
 `ainvoke` returns the graph state plus `session_id`,
 `undolog_step_index`, `awaiting_approval`, and `approval_request`.
 Feeding that state back in resumes the same session, and the engine
-replays the steps that already completed. Three rules:
+replays the steps that already completed, provided the retried run makes
+the same calls in the same order. Replay is keyed on each call's
+position, arguments, and tool, so a retry that branches differently is
+journaled as new work rather than replayed. Three rules:
 
 - Instrument the tools before compiling the graph: a compiled graph
   holds its own references to them, so `wrap_langgraph` cannot reach
