@@ -25,23 +25,34 @@ Semantic Kernel plugins are plain Python functions registered with a kernel. App
 ```python
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
-from undolog_sdk import undolog_tool, ToolTier, CompensationDescriptor, UndoLogSession, AwaitingApprovalError
+from undolog_sdk import (
+    undolog_tool,
+    ToolTier,
+    CompensationDescriptor,
+    UndoLogSession,
+    AwaitingApprovalError,
+    run_with_session,
+)
 
 @undolog_tool(tier=ToolTier.SAFE)
-def search_documents(query: str) -> list[dict]:
+async def search_documents(query: str) -> list[dict]:
     """Vector search over internal docs."""
     return [{"title": "Deployment guide", "score": 0.95}]
 
 @undolog_tool(tier=ToolTier.COMPENSABLE, compensation=CompensationDescriptor.new("revert_document_update"))
-def update_document(doc_id: str, content: str) -> dict:
+async def update_document(doc_id: str, content: str) -> dict:
     """Update a document (compensable: can be reverted)."""
     return {"doc_id": doc_id, "version": 3, "status": "updated"}
 
 @undolog_tool(tier=ToolTier.IRREVERSIBLE)
-def archive_project(project_id: str) -> dict:
+async def archive_project(project_id: str) -> dict:
     """Archive an entire project (irreversible: requires approval)."""
     return {"project_id": project_id, "status": "archived"}
 ```
+
+UndoLog awaits each decorated tool, so these must be `async def`. A sync
+function raises `TypeError` at its first call, because there is no coroutine
+to await.
 
 ### 2. Register plugins with the kernel
 
@@ -58,31 +69,35 @@ kernel.add_function(plugin_name="docs", function_name="archive", func=archive_pr
 
 ### 3. Wrap the execution in an UndoLog session
 
-Semantic Kernel's `ChatCompletionAgent` calls functions through the kernel. Use the session parameter to track calls:
+Semantic Kernel's `ChatCompletionAgent` calls functions through the kernel.
+Opening an `UndoLogSession` is not enough on its own: `run_with_session`
+publishes it to the context the tools read from, so every function the kernel
+calls is tracked.
 
 ```python
-import asyncio
 from semantic_kernel.agents import ChatCompletionAgent
 
 async def run_agent():
-    async with UndoLogSession(org_id="org_prod", session_id="doc-workflow-1") as session:
-        agent = ChatCompletionAgent(
-            service_id="gpt-4",
-            kernel=kernel,
-            name="DocManager",
-            instructions="You manage documents. Search, update, and archive as needed.",
-        )
+    session = UndoLogSession(org_id="org_prod", session_id="doc-workflow-1")
+    agent = ChatCompletionAgent(
+        service_id="gpt-4",
+        kernel=kernel,
+        name="DocManager",
+        instructions="You manage documents. Search, update, and archive as needed.",
+    )
 
-        history = []
-        try:
+    history = []
+    try:
+        async with run_with_session(session):
             async for response in agent.invoke(history):
                 print(f"{response.role}: {response.content}")
-        except AwaitingApprovalError as e:
-            print(f"Approval needed for {e.tool_name}")
-            print(f"POST /approvals/{e.approval_id}/approve to continue")
+    except AwaitingApprovalError as e:
+        print(f"Approval needed for {e.tool_name}")
+        print(f"POST /approvals/{e.approval_id}/approve to continue")
 ```
 
-Semantic Kernel automatically discovers the `_session` parameter if present in the function signature. If your function does not receive a session, pass it explicitly:
+A tool called outside `run_with_session` can still be given the session
+explicitly, as `_session`:
 
 ```python
 result = await kernel.invoke(
@@ -95,32 +110,40 @@ result = await kernel.invoke(
 
 When an irreversible tool triggers `AwaitingApprovalError`, surface the approval
 identifier and pause. The human approves via the dashboard (`GET /events`
-SSE stream) or via `POST /approvals/{id}/approve`. Once the approval is
-resolved, retry the same tool call; the engine replays the cached result
-instead of re-executing.
+SSE stream) or via `POST /approvals/{id}/approve`.
+
+Once the approval is resolved, run the kernel again against the same journal.
+Step positions are part of every call's signature, so the retry has to start
+where the first run started: the same `session_id` with a fresh counter. The
+calls that already completed then replay instead of running twice, provided
+the retry makes the same calls in the same order.
 
 ```python
-from undolog_sdk import AwaitingApprovalError
+from undolog_sdk import AwaitingApprovalError, run_with_session
 
 async def run_with_approval():
-    async with UndoLogSession(org_id="org_prod", session_id="doc-workflow-1") as session:
-        agent = ChatCompletionAgent(
-            service_id="gpt-4",
-            kernel=kernel,
-            name="DocManager",
-            instructions="You manage documents. Search, update, and archive as needed.",
-        )
-        history = []
-        try:
+    session = UndoLogSession(org_id="org_prod", session_id="doc-workflow-1")
+    agent = ChatCompletionAgent(
+        service_id="gpt-4",
+        kernel=kernel,
+        name="DocManager",
+        instructions="You manage documents. Search, update, and archive as needed.",
+    )
+    history = []
+    try:
+        async with run_with_session(session):
             async for response in agent.invoke(history):
                 print(f"{response.role}: {response.content}")
-        except AwaitingApprovalError as e:
-            print(f"Awaiting approval: {e.approval_id}")
-            print("Approve via the dashboard or POST /approvals/" + e.approval_id + "/approve")
-            # After human approval, retry the same tool call.
-            # The engine replays the cached result (no re-execution).
-            async for response in agent.invoke(history):
-                print(f"{response.role}: {response.content}")
+    except AwaitingApprovalError as e:
+        print(f"Awaiting approval: {e.approval_id}")
+        print("Approve via the dashboard or POST /approvals/" + e.approval_id + "/approve")
+
+    # Same session id and a fresh step counter, once the approval has
+    # resolved: the retry reproduces the steps the first run journaled.
+    resumed = UndoLogSession(org_id="org_prod", session_id=session.session_id)
+    async with run_with_session(resumed):
+        async for response in agent.invoke(history):
+            print(f"{response.role}: {response.content}")
 ```
 
 ## Verify it works

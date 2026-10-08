@@ -15,9 +15,11 @@ Design notes:
     *   **Tools are wrapped before the graph is built**, because a
         compiled graph already holds its own references to them.
     *   **State carries identity.** ``session_id`` and
-        ``undolog_step_index`` are echoed back in the output, so the
-        next invocation resumes the same journal, following
-        ``examples/langchain-support-agent/agent_stateful.py``.
+        ``undolog_step_index`` are echoed back in the output, following
+        the agent-state pattern in
+        ``examples/langchain-support-agent/agent_stateful.py``. The step
+        key holds this invocation's starting position, so the next
+        invocation reproduces its steps and the engine replays them.
     *   **Approvals become state.** ``awaiting_approval`` and
         ``approval_request`` replace an escaping
         ``AwaitingApprovalError``, since ``interrupt()`` only works
@@ -197,11 +199,12 @@ class WrappedGraph:
     other attribute resolves on the wrapped graph. ``ainvoke``
     creates or resumes an ``UndoLogSession``, runs the graph inside
     ``run_with_session`` so wrapped tools resolve the session from
-    the context var, and mirrors session identity and step progress
-    into the output state. Only ``ainvoke`` opens a session:
-    delegated async entry points such as ``astream`` run without
-    one, so an instrumented non-SAFE tool raises ``RuntimeError``
-    there unless the caller opened ``run_with_session``.
+    the context var, and mirrors the session identity and the
+    position the run started from into the output state. Only
+    ``ainvoke`` opens a session: delegated async entry points such as
+    ``astream`` run without one, so an instrumented non-SAFE tool
+    raises ``RuntimeError`` there unless the caller opened
+    ``run_with_session``.
     """
 
     def __init__(self, graph: Any, org_id: str) -> None:
@@ -261,8 +264,10 @@ class WrappedGraph:
             ``approval_request``. When approval is pending, the
             returned state also repeats the input, so the caller can
             re-invoke with it unchanged once the approval resolves.
-            Output that is not a dict is returned as it is, without
-            the UndoLog keys.
+            ``undolog_step_index`` holds the position this invocation
+            started from, which is what makes that re-invoke reproduce
+            the same steps and replay them. Output that is not a dict
+            is returned as it is, without the UndoLog keys.
         """
         session_id = input.get(STATE_SESSION_KEY)
         start_step = int(input.get(STATE_STEP_KEY, 0) or 0)
@@ -270,7 +275,7 @@ class WrappedGraph:
             if session_id:
                 # Resume the same journal across checkpoint restores.
                 session.session_id = str(session_id)
-            # Carry the step progress echoed by the previous invocation.
+            # Carry the step origin echoed by the previous invocation.
             session._step_index = start_step
             try:
                 async with run_with_session(session):
@@ -284,10 +289,14 @@ class WrappedGraph:
                     exc.approval_id,
                     session.session_id,
                 )
+                # Echo this run's origin rather than how far it got:
+                # re-invoking with this state has to reproduce the same
+                # step positions, so completed calls replay and this
+                # approval is matched again.
                 return {
                     **input,
                     STATE_SESSION_KEY: session.session_id,
-                    STATE_STEP_KEY: session._step_index,
+                    STATE_STEP_KEY: start_step,
                     STATE_AWAITING_KEY: True,
                     STATE_APPROVAL_KEY: {
                         "approval_id": exc.approval_id,
@@ -304,7 +313,9 @@ class WrappedGraph:
                 return result
             enriched = dict(result)
             enriched[STATE_SESSION_KEY] = session.session_id
-            enriched[STATE_STEP_KEY] = session._step_index
+            # The origin again, so a later re-invoke replays this run
+            # instead of executing its calls a second time.
+            enriched[STATE_STEP_KEY] = start_step
             enriched[STATE_AWAITING_KEY] = False
             enriched[STATE_APPROVAL_KEY] = None
         return enriched

@@ -167,6 +167,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Go proxy: ``golangci-lint`` (repo config) enforced and ``go test -race``
   enabled in CI.
 
+### Fixed
+
+- SDK: ``wrap_langgraph`` echoes the position its run started from, so
+  re-invoking with the returned state replays completed steps.
+- Documentation: CrewAI and Semantic Kernel guides open sessions that
+  reach the tools and replay approval retries from the journal start.
+
 ## [0.2.0] - 2026-08-01
 
 ### Added
