@@ -386,6 +386,65 @@ def __init__(
 
 ---
 
+## `wrap_crewai`
+
+**Module:** `undolog_sdk.integrations`
+
+Runs a CrewAI crew's `kickoff_async` inside an `UndoLogSession`, so the tool calls made through the crew's agents reach the proxy.
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `crew` | `Any` | (required) | A `Crew`: anything exposing `kickoff_async` and `agents`. |
+| `org_id` | `str \| None` | `None` | Organisation for new sessions. Falls back to `UNDOLOG_ORG_ID`, then `org_demo`. |
+| `tiers` | `dict[str, ToolTier]` | `None` | Tier overrides keyed by tool name. Tools not listed default to `COMPENSABLE`. |
+| `compensations` | `dict[str, str]` | `None` | Compensation registry names keyed by tool name. |
+| `client` | `UndoLogClient \| None` | `None` | Explicit client. Falls back to the module-level default. |
+
+### Returns
+
+A `WrappedCrew` facade. The original crew is not replaced, and attributes the facade does not define are delegated to it.
+
+### Facade properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `org_id` | `str` | Organisation that new sessions use. |
+| `session_id` | `str \| None` | Session id of the most recent run, or `None` before the first. |
+| `step_index` | `int` | Step progress reached by the most recent run. |
+| `awaiting_approval` | `bool` | `True` while a tool waits for a human decision. |
+| `approval_request` | `dict \| None` | `approval_id`, `tool_name`, and `step_index` of the pending approval, or `None`. |
+
+### Behaviour
+
+- Every agent's tools are instrumented at kickoff, and no agent is reassigned until every tool on every agent has been accepted: a tool the wrapper rejects leaves the crew untouched.
+- The wrap is idempotent, so a second kickoff neither re-wraps nor journals a call twice.
+- `kickoff_async` consumes `session_id` and `undolog_step_index` from `inputs` and passes the remaining keys to the crew, so UndoLog bookkeeping never reaches a task placeholder.
+- Resuming with `session_id` alone restarts the step counter, so a retried run's calls land on the steps they already journaled and the engine replays them. Adding `undolog_step_index` continues the counter past them instead.
+- Only `kickoff_async` opens a session and wraps the agents' tools. A synchronous `kickoff` gets neither, so a decorated tool raises `RuntimeError` for the missing session.
+- Tools must be async: `undolog_tool` awaits the function it wraps, so a sync tool raises `ValueError` instead of failing at its first call.
+- An Irreversible tool raises `AwaitingApprovalError` out of `kickoff_async`, and the facade records the run before it propagates, so the handler can read `session_id` and `approval_request`.
+- Tools already decorated with `@undolog_tool` come back untouched, so a pre-decorated crew needs no `tiers` or `compensations`.
+
+### Example
+
+```python
+from undolog_sdk import AwaitingApprovalError
+from undolog_sdk.integrations import wrap_crewai
+
+crew = wrap_crewai(build_crew(), org_id="org_demo")
+try:
+    result = await crew.kickoff_async()
+except AwaitingApprovalError as exc:
+    print(f"Approve via POST /approvals/{exc.approval_id}/approve")
+    # Resuming with the session id alone repeats the step positions, so
+    # completed calls replay instead of running again.
+    result = await crew.kickoff_async(inputs={"session_id": crew.session_id})
+```
+
+---
+
 ## `wrap_langgraph`
 
 **Module:** `undolog_sdk.integrations`
@@ -437,7 +496,7 @@ if result["awaiting_approval"]:
 
 **Module:** `undolog_sdk.integrations`
 
-Instruments a list of LangGraph tool objects so the graph built from them journals every call. `wrap_tool` applies the same rules to a single tool.
+Instruments a list of tool objects so every call through them journals. `wrap_tool` applies the same rules to a single tool.
 
 ### Parameters
 

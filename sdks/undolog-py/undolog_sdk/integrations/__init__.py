@@ -9,6 +9,7 @@ it needs.
 
 from __future__ import annotations
 
+from undolog_sdk.integrations.crewai import WrappedCrew, wrap_crewai
 from undolog_sdk.integrations.langgraph import (
     WrappedGraph,
     wrap_langgraph,
@@ -17,7 +18,9 @@ from undolog_sdk.integrations.langgraph import (
 )
 
 __all__ = [
+    "WrappedCrew",
     "WrappedGraph",
+    "wrap_crewai",
     "wrap_langgraph",
     "wrap_tool",
     "wrap_tools",
