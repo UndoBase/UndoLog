@@ -467,7 +467,7 @@ A `WrappedGraph` facade. The original graph is not mutated, and attributes the f
 | Key | Type | Description |
 |-----|------|-------------|
 | `session_id` | `str` | Session identity to pass into the next invocation. |
-| `undolog_step_index` | `int` | Step progress to pass into the next invocation. |
+| `undolog_step_index` | `int` | Position this invocation started from. Passing it back unchanged makes the next invocation reproduce the same steps, so the engine replays them. |
 | `awaiting_approval` | `bool` | `True` while a tool waits for a human decision. |
 | `approval_request` | `dict \| None` | `approval_id`, `tool_name`, and `step_index` of the pending approval, or `None`. |
 
@@ -475,7 +475,7 @@ A `WrappedGraph` facade. The original graph is not mutated, and attributes the f
 
 - Instrument the tools first with `wrap_tools` and build the graph from the list it returns: a compiled graph already holds its own references to the callables.
 - Only `ainvoke` opens a session. `astream` needs an `UndoLogSession` and `run_with_session` opened around the call.
-- Re-invoking with the returned state resumes the same session, and the engine replays the steps that already completed.
+- Re-invoking with the returned state resumes the same session and restarts it at the position it previously started from, so the engine replays the steps that already completed instead of running them again.
 - `app.org_id` reports the organisation that new sessions use.
 
 ### Example

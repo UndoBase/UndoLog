@@ -134,7 +134,31 @@ class TestSessionLifecycle:
         out = await graph.ainvoke({"q": "hi", "undolog_step_index": 5})
 
         assert out["undolog_step_index"] == 5, (
-            "step progress from state must not reset to zero"
+            "the step key from state must carry through the invocation"
+        )
+
+    async def test_success_output_reports_the_run_origin(self) -> None:
+        """Progress is not echoed: a re-invoke has to replay, not re-run."""
+        client = _client(InterceptResponse(outcome="Execute", effect_id="eff-5"))
+
+        @undolog_tool(tier=ToolTier.IRREVERSIBLE, client=client)
+        async def escalate_case(ticket_id: str) -> dict[str, str]:
+            return {"status": "escalated"}
+
+        class NodeGraph:
+            async def ainvoke(
+                self, input: dict[str, Any], config: Any = None, **kwargs: Any
+            ) -> dict[str, Any]:
+                await escalate_case(ticket_id="TKT-5")
+                return {"done": True}
+
+        out = await wrap_langgraph(NodeGraph(), org_id="org_test").ainvoke(
+            {"q": "hi", "undolog_step_index": 5}
+        )
+
+        assert out["undolog_step_index"] == 5, (
+            "the output must report where the run started, or a re-invoke "
+            "begins past the steps this run journaled"
         )
 
     async def test_config_and_kwargs_forwarded_to_graph(self) -> None:
@@ -218,6 +242,43 @@ class TestApprovalTranslation:
         assert resolved["approval_request"] is None
         assert resolved["session_id"] == pending["session_id"]
         assert runs == ["TKT-9"]
+
+    async def test_pending_state_reproduces_the_run_positions(self) -> None:
+        """The returned state restarts the run, so the re-invoke replays."""
+        client = _client(
+            InterceptResponse(outcome="AwaitingApproval", approval_id="approval-8"),
+            InterceptResponse(outcome="Execute", effect_id="eff-8"),
+        )
+
+        @undolog_tool(tier=ToolTier.IRREVERSIBLE, client=client)
+        async def escalate_case(ticket_id: str) -> dict[str, str]:
+            return {"status": "escalated"}
+
+        class NodeGraph:
+            async def ainvoke(
+                self, input: dict[str, Any], config: Any = None, **kwargs: Any
+            ) -> dict[str, Any]:
+                await escalate_case(ticket_id="TKT-8")
+                return {"done": True}
+
+        graph = wrap_langgraph(NodeGraph(), org_id="org_test")
+
+        pending = await graph.ainvoke({"q": "hi"})
+
+        assert pending["undolog_step_index"] == 0, (
+            "the step key must be the run's origin: echoing progress would "
+            "move the re-invoke past the approved step"
+        )
+        assert pending["approval_request"]["step_index"] == 1, (
+            "how far the run got stays readable through the approval request"
+        )
+
+        await graph.ainvoke(pending)
+
+        assert _positions(client) == [1, 1], (
+            "the re-invoke must reuse step 1, or the engine sees a new "
+            "operation instead of the one it approved"
+        )
 
     async def test_approval_error_bubbles_outside_wrapper(self) -> None:
         """Direct calls outside ``ainvoke`` still raise: translation is local."""
@@ -454,3 +515,15 @@ def _client(*outcomes: InterceptResponse) -> AsyncMock:
     client = AsyncMock()
     client.intercept.side_effect = list(outcomes)
     return client
+
+
+def _positions(client: AsyncMock) -> list[int]:
+    """Step index of every ``intercept`` call, in call order.
+
+    Args:
+        client: UndoLog client stub whose calls are recorded.
+
+    Returns:
+        The ``step_index`` each call was made with.
+    """
+    return [call.kwargs["step_index"] for call in client.intercept.call_args_list]

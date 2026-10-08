@@ -21,34 +21,48 @@ A CrewAI crew with three agents: a researcher, a writer, and a publisher, where 
 ### 1. Define your tools with UndoLog
 
 ```python
-from undolog_sdk import undolog_tool, ToolTier, CompensationDescriptor, UndoLogSession, AwaitingApprovalError
+from undolog_sdk import (
+    undolog_tool,
+    ToolTier,
+    CompensationDescriptor,
+    UndoLogSession,
+    AwaitingApprovalError,
+    run_with_session,
+)
 
 @undolog_tool(tier=ToolTier.SAFE)
-def search_articles(query: str) -> list[dict]:
+async def search_articles(query: str) -> list[dict]:
     """Search the knowledge base (safe: read-only)."""
     return [{"title": "UndoLog in production", "url": "..."}]
 
 @undolog_tool(tier=ToolTier.COMPENSABLE, compensation=CompensationDescriptor.new("draft_revision", args={"reason": "content update"}))
-def publish_draft(title: str, content: str) -> dict:
+async def publish_draft(title: str, content: str) -> dict:
     """Publish a draft (compensable: can be reverted)."""
     return {"article_id": "art_123", "status": "published"}
 
 @undolog_tool(tier=ToolTier.IRREVERSIBLE)
-def send_newsletter(article_id: str) -> dict:
+async def send_newsletter(article_id: str) -> dict:
     """Send newsletter to all subscribers (irreversible: requires approval)."""
     return {"sent_to": 15234, "article_id": article_id}
 ```
 
+UndoLog awaits each decorated tool, so these must be `async def`. A sync
+function raises `TypeError` at its first call, because there is no coroutine
+to await.
+
 ### 2. Create the UndoLog session wrapper
 
-CrewAI agents call tools directly. Wrap the agent execution in an UndoLog session to track all tool calls:
+CrewAI agents call tools directly. Opening an `UndoLogSession` is not enough
+on its own: `run_with_session` publishes it to the context the tools read
+from, so every tool call the crew makes is tracked. The crew then runs with
+`kickoff_async`, since the decorated tools are coroutines:
 
 ```python
-import asyncio
 from crewai import Agent, Task, Crew, Process
 
 async def run_crew_with_undolog():
-    async with UndoLogSession(org_id="org_prod", session_id="newsletter-campaign-42") as session:
+    session = UndoLogSession(org_id="org_prod", session_id="newsletter-campaign-42")
+    async with run_with_session(session):
         researcher = Agent(
             role="Researcher",
             goal="Find relevant articles",
@@ -85,11 +99,11 @@ async def run_crew_with_undolog():
         )
 
         try:
-            result = crew.kickoff()
+            result = await crew.kickoff_async()
             print("Crew completed:", result)
         except AwaitingApprovalError as e:
             print(f"Approval required for {e.tool_name} (approval_id: {e.approval_id})")
-            print("Approve via: POST /approvals/{e.approval_id}/approve")
+            print(f"Approve via the dashboard or POST /approvals/{e.approval_id}/approve")
 ```
 
 ### 3. Handle the approval flow
@@ -97,23 +111,32 @@ async def run_crew_with_undolog():
 CrewAI does not natively support mid-execution pauses. When an irreversible
 tool triggers `AwaitingApprovalError`, surface the approval identifier and
 pause. The human approves via the dashboard (`GET /events` SSE stream) or via
-`POST /approvals/{id}/approve`. Once the approval is resolved, retry the same
-tool call; the engine replays the cached result instead of re-executing.
+`POST /approvals/{id}/approve`.
+
+Once the approval is resolved, run the crew again against the same journal.
+Step positions are part of every call's signature, so the retry has to start
+where the first run started: the same `session_id` with a fresh counter. The
+calls that already completed then replay instead of running twice, provided
+the retried run makes the same calls in the same order.
 
 ```python
-from undolog_sdk import AwaitingApprovalError
+from undolog_sdk import AwaitingApprovalError, UndoLogSession, run_with_session
 
-def run_crew_with_approval():
-    with UndoLogSession(org_id="org_prod") as session:
-        crew = Crew(agents=[publisher], tasks=[Task(description="Send newsletter", agent=publisher)], process=Process.sequential)
-        try:
-            return crew.kickoff()
-        except AwaitingApprovalError as e:
-            print(f"Awaiting approval: {e.approval_id}")
-            print("Approve via the dashboard or POST /approvals/" + e.approval_id + "/approve")
-            # After human approval, retry the same tool call.
-            # The engine replays the cached result (no re-execution).
-            return crew.kickoff()
+async def run_crew_with_approval():
+    session = UndoLogSession(org_id="org_prod", session_id="newsletter-campaign-42")
+    crew = Crew(agents=[publisher], tasks=[Task(description="Send newsletter", agent=publisher)], process=Process.sequential)
+    try:
+        async with run_with_session(session):
+            return await crew.kickoff_async()
+    except AwaitingApprovalError as e:
+        print(f"Awaiting approval: {e.approval_id}")
+        print("Approve via the dashboard or POST /approvals/" + e.approval_id + "/approve")
+
+    # Same session id and a fresh step counter, once the approval has
+    # resolved: the retry reproduces the steps the first run journaled.
+    resumed = UndoLogSession(org_id="org_prod", session_id=session.session_id)
+    async with run_with_session(resumed):
+        return await crew.kickoff_async()
 ```
 
 ## Alternative: wrap the crew
@@ -164,6 +187,10 @@ already journaled: the engine replays the ones that completed and lets
 the approved call through, instead of running everything again. Add
 `undolog_step_index` (`crew.step_index`) to continue past those steps
 and start new work in the same journal instead.
+
+That replay holds only if the retried run makes the same tool calls in
+the same order: step positions are part of every call's signature, so a
+different sequence is a different set of operations.
 
 Four rules:
 
