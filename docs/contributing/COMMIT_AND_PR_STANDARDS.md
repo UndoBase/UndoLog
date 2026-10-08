@@ -1,6 +1,6 @@
 ---
 title: "Contribution & Commit Standards"
-description: "## The organization-wide standard for all open source projects"
+description: "The binding commit, branch, and pull request standards that CI enforces across this organization's repositories."
 section: "contributing"
 ---
 # Contribution & Commit Standards
@@ -488,7 +488,7 @@ All of these must pass before any PR can be merged:
 | Check | Tool | What it validates |
 |---|---|---|
 | Commit format | `commitlint` | Every commit in the PR is valid Conventional Commits |
-| PR title format | `commitlint` (via GitHub Action) | PR title matches `type(scope): description` |
+| PR title format | `commitlint` (via CI) | PR title matches `type(scope): description` |
 | Rust formatting | `rustfmt` | All Rust code is formatted |
 | Rust linting | `clippy --deny warnings` | No Clippy warnings |
 | Rust docs | `RUSTDOCFLAGS="-D missing_docs" cargo doc` | All pub items documented |
@@ -499,8 +499,13 @@ All of these must pass before any PR can be merged:
 | Tests. Rust | `cargo test --workspace` | All tests pass |
 | Tests. Go | `go test ./...` | All tests pass |
 | Tests. Python | `pytest` | All tests pass |
-| Broken links | `markdown-link-check` | No broken links in docs/ |
+| Broken links | `lychee` | No broken links in docs/ |
 | CHANGELOG | Custom script | `[Unreleased]` section exists and is non-empty for non-chore PRs |
+
+Checks only run when the change can reach them: a documentation pull request
+does not build Rust, and a Rust pull request does not rebuild the website.
+Commit, title, and CHANGELOG validation run on every pull request, and the
+single `check` status must be green before merging.
 
 ### 8.2 Human review (blocking)
 

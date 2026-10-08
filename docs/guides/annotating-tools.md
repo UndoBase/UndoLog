@@ -1,6 +1,6 @@
 ---
 title: "How to annotate tools with @undolog_tool"
-description: "## Prerequisites"
+description: "Annotate async Python functions with `@undolog_tool`, pick the right tier, and watch each call land in the effect journal."
 section: "guides"
 ---
 # How to annotate tools with `@undolog_tool`

@@ -1,6 +1,6 @@
 ---
 title: "How to configure and manage approval gates"
-description: "## Prerequisites"
+description: "Configure human approval for IRREVERSIBLE tool calls, resolve pending requests, and audit the decisions from the dashboard."
 section: "guides"
 ---
 # How to configure and manage approval gates

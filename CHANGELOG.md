@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Infra: OpenTelemetry tracing with OTLP export and Grafana dashboard.
 - Infra: performance benchmark framework with baseline JSON schema,
   regression detection script, and CI validation on release tags.
+- Infra: CI jobs run per stack behind one ``check`` status, gated by
+  changed paths, with clearer check names and pinned build toolchains.
 - Documentation: compatibility matrix and deprecation policy.
 - Documentation: failure mode runbook mapping each error code to cause,
   detection, recovery, and prevention.

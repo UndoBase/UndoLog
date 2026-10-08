@@ -1,6 +1,6 @@
 ---
 title: "Integrate UndoLog with CrewAI"
-description: "## Prerequisites"
+description: "Wire UndoLog interception, compensations, and approval gates into a CrewAI crew in a few lines."
 section: "guides"
 ---
 # Integrate UndoLog with CrewAI

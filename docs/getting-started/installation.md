@@ -21,8 +21,8 @@ Before you start, make sure you have these installed:
 | Python | 3.10 | `python --version` |
 | pip | 21+ | `pip --version` |
 | PostgreSQL (manual only) | 16 | `psql --version` |
-| Rust toolchain (manual only) | 1.75 | `rustc --version` |
-| Go (manual only) | 1.22 | `go version` |
+| Rust toolchain (manual only) | 1.87+ | `rustc --version` |
+| Go (manual only) | 1.25+ | `go version` |
 
 ---
 

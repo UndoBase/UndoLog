@@ -1,6 +1,6 @@
 ---
 title: "How to write effective compensations"
-description: "## Prerequisites"
+description: "Write an idempotent compensation for a COMPENSABLE tool, register it with the engine, and verify it undoes the effect."
 section: "guides"
 ---
 # How to write effective compensations

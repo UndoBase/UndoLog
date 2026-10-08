@@ -30,7 +30,7 @@ You need these tools installed:
 
 - **Docker**: for PostgreSQL and the full stack
 - **Rust 1.87+**: for the engine, store, types, and saga crates
-- **Go 1.22+**: for the proxy service
+- **Go 1.25+**: for the proxy service
 - **Python 3.10+**: for the SDK
 - **Node.js 22+**: for the dashboard
 

@@ -1,6 +1,6 @@
 ---
 title: "Testing guide"
-description: "## Running tests"
+description: "How to run the Rust, Go, Python, and example test suites, and which tests need a live stack."
 section: "contributing"
 ---
 # Testing guide

@@ -1,8 +1,21 @@
 name: E2E
 
+# Post-merge only: the integration suites run against the full stack on
+# main, and a change that cannot reach the stack skips them.
 on:
   push:
     branches: [main]
+    paths:
+      - "crates/**"
+      - "migrations/**"
+      - "proto/**"
+      - "services/**"
+      - "sdks/**"
+      - "infra/**"
+      - "examples/**"
+      - "docker-compose.yml"
+      - ".github/workflows/e2e.yml"
+      - ".github/actions/**"
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,10 +25,11 @@ env:
   UNDOLOG_API_KEY_2: dev-key-2
 
 jobs:
-  e2e:
+  integration:
     permissions:
       contents: read
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +37,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            sdks/undolog-py/pyproject.toml
+            examples/**/pyproject.toml
 
       - name: Install Python dependencies
         run: |
@@ -40,6 +58,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          cache: npm
+          cache-dependency-path: sdks/undolog-ts/package-lock.json
 
       - name: Install TypeScript SDK dependencies
         run: npm ci

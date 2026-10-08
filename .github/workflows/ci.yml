@@ -10,11 +10,85 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
+# A newer push to a pull request supersedes the runs still in flight. Pushes
+# to main are grouped per commit so no merge waits behind another merge.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  check:
+  # Detects which stacks the change can affect. Every other job below waits
+  # for this one and skips itself when the change cannot reach it, so a pull
+  # request that touches one stack does not pay for the others.
+  changes:
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      rust_docs: ${{ steps.filter.outputs.rust_docs }}
+      go: ${{ steps.filter.outputs.go }}
+      python: ${{ steps.filter.outputs.python }}
+      www: ${{ steps.filter.outputs.www }}
+      docs: ${{ steps.filter.outputs.docs }}
+      examples: ${{ steps.filter.outputs.examples }}
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Editing this workflow re-runs every job it gates.
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'migrations/**'
+              - 'proto/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'rustfmt.toml'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+            rust_docs:
+              - 'crates/**'
+              - '.github/workflows/ci.yml'
+            go:
+              - 'services/undolog-proxy/**'
+              - 'proto/**'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+            python:
+              - 'sdks/undolog-py/**'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+            www:
+              - 'apps/www/**'
+              - 'docs/**'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'docs/**'
+              - '.github/workflows/ci.yml'
+            examples:
+              - 'examples/**'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+            infra:
+              - 'infra/**'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     permissions:
       contents: read
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -25,21 +99,137 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy, rustfmt
+          cache-key: lint
+
+      - name: Format
+        run: make fmt-rust
+
+      - name: Lint
+        run: make lint-rust
+
+  # Split from the lint job so formatting and linting run while the tests do.
+  rust-test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-key: test
+
+      - name: Test
+        run: make test-rust
+
+      - name: Rustdoc completeness
+        if: needs.changes.outputs.rust_docs == 'true'
+        run: make doc-rust
+
+  go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Install Go
         uses: actions/setup-go@v5
         with:
           go-version-file: services/undolog-proxy/go.mod
 
+      - name: Format and vet
+        run: make fmt-go lint-go
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: services/undolog-proxy
+
+      - name: Test
+        run: make test-go
+
+  python:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Install Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sdks/undolog-py/pyproject.toml
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e "sdks/undolog-py[dev]"
+
+      - name: Format and lint
+        run: make fmt-python lint-python
+
+      - name: Type check (mypy)
+        run: make typecheck
+
+      - name: Test
+        run: make test-python
+
+  www:
+    needs: changes
+    if: needs.changes.outputs.www == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Install Node
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/www/package-lock.json
+
+      - name: Install Node dependencies
+        run: npm ci
+        working-directory: apps/www
+
+      - name: Build
+        run: make test-www
+
+  examples:
+    needs: changes
+    if: needs.changes.outputs.examples == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            sdks/undolog-py/pyproject.toml
+            examples/**/pyproject.toml
 
       - name: Install Python dependencies
         run: |
@@ -51,22 +241,6 @@ jobs:
             pip install -e "$dir[dev]" || true
           done
 
-      - name: Install Node dependencies
-        run: npm ci
-        working-directory: apps/www
-
-      - name: Run make check
-        run: make check
-
-      - name: Type check (mypy)
-        run: make typecheck
-
-      - name: lint-go
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.12.2
-          working-directory: services/undolog-proxy
-
       - name: Run example tests (unit only)
         run: |
           for dir in examples/*-support-agent; do
@@ -74,17 +248,57 @@ jobs:
             (cd "$dir" && python -m pytest -v --no-header -m "not integration")
           done
 
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          pip install --upgrade pip
+          pip install httpx "pytest>=8.0"
+
       - name: Run mock-tool-server tests
         run: python -m pytest infra/mock-tool-server/tests/ -v --no-header
 
+  # Pull request metadata is checked on every pull request. The link check
+  # runs only when the documentation itself changed.
+  docs:
+    needs: changes
+    if: github.event_name == 'pull_request' || needs.changes.outputs.docs == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # commitlint lints the whole pull request range, so the history is needed.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The title arrives from the pull request, so it reaches the script
+      # through the environment instead of the command text.
       - name: CHANGELOG validation
         if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           if ! grep -q "^## \[Unreleased\]" CHANGELOG.md; then
             echo "ERROR: CHANGELOG.md is missing the [Unreleased] section."
             exit 1
           fi
-          title="${{ github.event.pull_request.title }}"
+          title="$PR_TITLE"
           case "$title" in
             chore*|docs*) exit 0 ;;
           esac
@@ -123,18 +337,66 @@ jobs:
             END { if (bad) exit 1 }
           ' CHANGELOG.md
 
+      - name: Cache npm downloads
+        if: github.event_name == 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-commitlint
+
       - name: Commit message format
         if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git fetch --unshallow 2>/dev/null || true
           npm install --save-dev @commitlint/cli @commitlint/config-conventional
-          echo "${{ github.event.pull_request.title }}" | npx commitlint
-          npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+          echo "$PR_TITLE" | npx commitlint
+          npx commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
+
+      - name: Restore link check cache
+        if: needs.changes.outputs.docs == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
+          restore-keys: lychee-
 
       - name: Docs - broken link check
-        run: |
-          npm install --save-dev markdown-link-check
-          find docs -name '*.md' -exec npx markdown-link-check {} \;
+        if: needs.changes.outputs.docs == 'true'
+        uses: lycheeverse/lychee-action@v2
+        with:
+          fail: true
+          args: >-
+            --no-progress
+            --cache
+            --max-cache-age 1d
+            --max-concurrency 16
+            --exclude 'https?://localhost.*'
+            --exclude 'https?://127\.0\.0\.1.*'
+            --exclude 'https?://[a-z0-9-]+:[0-9]+.*'
+            --exclude 'https?://[^ ]*\.example\.com.*'
+            --exclude 'https?://<[^>]*>.*'
+            './docs/**/*.md'
 
-      - name: Docs - rustdoc completeness
-        run: RUSTDOCFLAGS="-D missing_docs" cargo doc --no-deps --workspace --exclude undolog-engine
+  # One status for branch protection. Path-filtered jobs report "skipped"
+  # when a change cannot reach them, so this job always runs and fails if
+  # any selected job failed or was cancelled.
+  check:
+    needs: [changes, rust, rust-test, go, python, www, examples, infra, docs]
+    if: always()
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected job to succeed
+        env:
+          NEEDS: ${{ toJson(needs) }}
+        run: |
+          echo "$NEEDS"
+          if echo "$NEEDS" | grep -Eq '"result":[[:space:]]*"(failure|cancelled)"'; then
+            echo "A required job failed or was cancelled."
+            exit 1
+          fi

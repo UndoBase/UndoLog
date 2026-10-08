@@ -1,6 +1,6 @@
 ---
 title: "Integrate UndoLog with Semantic Kernel"
-description: "## Prerequisites"
+description: "Wire UndoLog interception, compensations, and approval gates into a Semantic Kernel agent."
 section: "guides"
 ---
 # Integrate UndoLog with Semantic Kernel
