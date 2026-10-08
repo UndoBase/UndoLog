@@ -116,6 +116,70 @@ def run_crew_with_approval():
             return crew.kickoff()
 ```
 
+## Alternative: wrap the crew
+
+`wrap_crewai` opens one session for the run, instruments every agent's
+tools, and sets the context variable the tools read their session from,
+so no session has to be threaded through the crew by hand:
+
+```python
+from undolog_sdk.integrations import wrap_crewai
+
+crew = wrap_crewai(crew, org_id="org_prod")
+result = await crew.kickoff_async()
+```
+
+Tools already decorated with `@undolog_tool` come back untouched. Raw
+tools need a classification, because `wrap_crewai` assigns one at
+kickoff:
+
+```python
+crew = wrap_crewai(
+    crew,
+    org_id="org_prod",
+    tiers={
+        "search_articles": ToolTier.SAFE,
+        "send_newsletter": ToolTier.IRREVERSIBLE,
+    },
+    compensations={"publish_draft": "draft_revision"},
+)
+```
+
+An Irreversible tool that needs a human raises `AwaitingApprovalError`
+out of `kickoff_async`. The facade records the run before it propagates,
+so the handler already has what it needs to resume:
+
+```python
+try:
+    result = await crew.kickoff_async()
+except AwaitingApprovalError as exc:
+    print(f"Approve via the dashboard or POST /approvals/{exc.approval_id}/approve")
+    result = await crew.kickoff_async(inputs={"session_id": crew.session_id})
+```
+
+`session_id` and `undolog_step_index` are consumed by the wrapper and
+never reach the crew's tasks. Resuming with `session_id` alone restarts
+the step counter, so a retried run's calls land on the steps they
+already journaled: the engine replays the ones that completed and lets
+the approved call through, instead of running everything again. Add
+`undolog_step_index` (`crew.step_index`) to continue past those steps
+and start new work in the same journal instead.
+
+Four rules:
+
+- Only `kickoff_async` is instrumented: it opens the session and wraps
+  the tools. A synchronous `crew.kickoff()` gets neither, so a
+  decorated tool raises `RuntimeError` for the missing session.
+- Tools must be async. `undolog_tool` awaits the function it wraps, so
+  `wrap_crewai` rejects a sync tool with `ValueError` rather than
+  wrapping one that fails at its first call.
+- A raw tool that is not listed in `tiers` defaults to `COMPENSABLE`,
+  and `wrap_crewai` raises `ValueError` when it has no compensation
+  name: it would then run with no journal, no compensation, and no
+  approval gate.
+- The wrap is idempotent, so a second kickoff neither re-wraps nor
+  journals a call twice.
+
 ## Verify it works
 
 ```bash
@@ -143,6 +207,9 @@ Newsletter sent to 15234 subscribers
 | `UndoLogClientError: Connection refused` | Proxy not running | Start the proxy: `docker compose up -d proxy` |
 | Tools execute but no session tracked | Session not passed to crew | Wrap crew execution in `async with UndoLogSession(...)` |
 | `AwaitingApprovalError` never raised | Tool tier not set to IRREVERSIBLE | Check `@undolog_tool(tier=ToolTier.IRREVERSIBLE)` |
+| `ValueError: wrap_crewai cannot instrument ...` | Tool is a sync function | Declare the tool `async def` |
+| `ValueError: Compensable tool ... has no compensation name` | Raw tool with no tier or compensation | List it in `tiers=` or `compensations=` |
+| `kickoff_async` returned while a tool awaits approval | The agent executor caught `AwaitingApprovalError` | Find the `approval_required` warning in the logs; the approval is already in the engine |
 | Crew crashes on approval wait | Approval timeout exceeded | Extend `default_approval_timeout_seconds` in `undolog_orgs` table |
 
 ## Next steps

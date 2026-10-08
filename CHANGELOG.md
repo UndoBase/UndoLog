@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   approval, and compensation lifecycle (requires Docker stack).
 - SDK: ``wrap_langgraph`` runs a compiled LangGraph graph inside an
   UndoLog session and surfaces pending approvals as graph state.
+- SDK: ``wrap_crewai`` creates sessions, wraps tools, and records
+  pending approvals for a crew in a single line.
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)

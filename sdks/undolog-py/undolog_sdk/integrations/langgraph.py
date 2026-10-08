@@ -96,8 +96,9 @@ def wrap_tool(
             tool running with no journal, no compensation, and no
             approval gate.
         AwaitingApprovalError: At call time, when the proxy suspends
-            the tool for human approval. ``wrap_langgraph`` catches
-            this error and returns it as graph state.
+            the tool for human approval. ``wrap_tool`` does not catch
+            it: the integration entry point records the run and
+            reports the pending approval to its caller.
     """
     if getattr(tool, "_undolog_tool_name", None) is not None:
         return tool
@@ -120,13 +121,14 @@ def wrap_tools(
     compensations: dict[str, str] | None = None,
     client: UndoLogClient | None = None,
 ) -> list[Any]:
-    """Wrap a LangGraph tool list with UndoLog instrumentation.
+    """Wrap a tool list with UndoLog instrumentation.
 
-    Build the graph from the returned list: tools baked into an
-    already-compiled graph cannot be instrumented afterwards.
+    Pass the returned list to the framework when you assemble it: a
+    tool the framework already holds a reference to cannot be
+    instrumented afterwards.
 
     Args:
-        tools: LangGraph tool objects. Plain async callables are
+        tools: Tool objects. Plain async callables are
             wrapped directly; objects exposing an async ``coroutine``
             attribute (pydantic ``StructuredTool``-style) have that
             attribute swapped for the wrapped version on a shallow
@@ -148,7 +150,7 @@ def wrap_tools(
         ValueError: If a ``COMPENSABLE`` tool has no entry in
             ``compensations``, or if a tool is not a callable that
             carries a name. Tools default to ``COMPENSABLE``, so an
-            unmapped tool fails the build instead of running with no
+            unmapped tool is rejected instead of running with no
             journal and no approval gate.
     """
     tiers = tiers or {}
