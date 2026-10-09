@@ -492,6 +492,66 @@ if result["awaiting_approval"]:
 
 ---
 
+## `wrap_llamaindex`
+
+**Module:** `undolog_sdk.integrations`
+
+Runs a LlamaIndex query inside an `UndoLogSession`, so the tool calls made through the index reach the proxy.
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `index` | `Any` | (required) | Anything exposing `aquery` and `tools`, such as an agent built from `FunctionTool` objects. |
+| `org_id` | `str \| None` | `None` | Organisation for new sessions. Falls back to `UNDOLOG_ORG_ID`, then `org_demo`. |
+| `tiers` | `dict[str, ToolTier]` | `None` | Tier overrides keyed by tool name. Tools not listed default to `COMPENSABLE`. |
+| `compensations` | `dict[str, str]` | `None` | Compensation registry names keyed by tool name. |
+| `client` | `UndoLogClient \| None` | `None` | Explicit client. Falls back to the module-level default. |
+
+### Returns
+
+A `WrappedIndex` facade. The original index is not replaced, and attributes the facade does not define are delegated to it.
+
+### Facade properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `org_id` | `str` | Organisation that new sessions use. |
+| `session_id` | `str \| None` | Session id of the most recent run, or `None` before the first. |
+| `step_index` | `int` | Step progress reached by the most recent run. |
+| `awaiting_approval` | `bool` | `True` while a tool waits for a human decision. |
+| `approval_request` | `dict \| None` | `approval_id`, `tool_name`, and `step_index` of the pending approval, or `None`. |
+
+### Behaviour
+
+- The index's tools are instrumented before each query, and the list is not reassigned until every tool has been accepted: a tool the wrapper rejects leaves the index untouched.
+- The wrap is idempotent, so a second query neither re-wraps nor journals a call twice.
+- `aquery` consumes `session_id` and `undolog_step_index` from its keyword arguments and forwards the rest to the index, so UndoLog bookkeeping never reaches the index as a query option.
+- Resuming with `session_id` alone restarts the step counter, so a retried run's calls land on the steps they already journaled and the engine replays them. Adding `undolog_step_index` continues the counter past them instead.
+- Only `aquery` opens a session and wraps the tools. The other async entry points (`achat`, `astream`, `arun`) get neither, so a decorated tool raises `RuntimeError` for the missing session.
+- An index that does not expose `tools` raises `AttributeError` before the session opens, rather than querying with tools the wrapper never reached.
+- Tools must be async: `undolog_tool` awaits the function it wraps, so a sync tool raises `ValueError` instead of failing at its first call.
+- An Irreversible tool raises `AwaitingApprovalError` out of `aquery`, and the facade records the run before it propagates, so the handler can read `session_id` and `approval_request`.
+- Tools already decorated with `@undolog_tool` come back untouched, so a pre-decorated index needs no `tiers` or `compensations`.
+
+### Example
+
+```python
+from undolog_sdk import AwaitingApprovalError
+from undolog_sdk.integrations import wrap_llamaindex
+
+index = wrap_llamaindex(build_agent(), org_id="org_demo")
+try:
+    result = await index.aquery("summarize the incident")
+except AwaitingApprovalError as exc:
+    print(f"Approve via POST /approvals/{exc.approval_id}/approve")
+    # Resuming with the session id alone repeats the step positions, so
+    # completed calls replay instead of running again.
+    result = await index.aquery("summarize the incident", session_id=index.session_id)
+```
+
+---
+
 ## `wrap_semantic_kernel`
 
 **Module:** `undolog_sdk.integrations`

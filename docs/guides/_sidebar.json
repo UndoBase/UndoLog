@@ -9,6 +9,7 @@
     { "slug": "integrating-langgraph", "title": "Integrating with LangGraph" },
     { "slug": "integrating-crewai", "title": "Integrating with CrewAI" },
     { "slug": "integrating-semantic-kernel", "title": "Integrating with Semantic Kernel" },
+    { "slug": "integrating-llamaindex", "title": "Integrating with LlamaIndex" },
     { "slug": "deploying-with-docker", "title": "Deploying with Docker" },
     { "slug": "running-in-production", "title": "Running in Production" }
   ]

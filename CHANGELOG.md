@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   pending approvals for a crew in a single line.
 - SDK: ``wrap_semantic_kernel`` registers instrumented plugin
   functions and runs each kernel invocation in an UndoLog session.
+- SDK: ``wrap_llamaindex`` creates sessions, wraps tools, and records
+  pending approvals in a single line.
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)
