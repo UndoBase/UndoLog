@@ -16,6 +16,7 @@ from undolog_sdk.integrations.langgraph import (
     wrap_tool,
     wrap_tools,
 )
+from undolog_sdk.integrations.llamaindex import WrappedIndex, wrap_llamaindex
 from undolog_sdk.integrations.semantic_kernel import (
     WrappedKernel,
     wrap_semantic_kernel,
@@ -24,9 +25,11 @@ from undolog_sdk.integrations.semantic_kernel import (
 __all__ = [
     "WrappedCrew",
     "WrappedGraph",
+    "WrappedIndex",
     "WrappedKernel",
     "wrap_crewai",
     "wrap_langgraph",
+    "wrap_llamaindex",
     "wrap_semantic_kernel",
     "wrap_tool",
     "wrap_tools",
