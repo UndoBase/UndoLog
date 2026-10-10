@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   functions and runs each kernel invocation in an UndoLog session.
 - SDK: ``wrap_llamaindex`` creates sessions, wraps tools, and records
   pending approvals in a single line.
+- SDK: ``undolog dev`` local development server with SQLite storage,
+  zero configuration, and full decorator lifecycle support.
 - Documentation: added ADR 0010 defining the PostgreSQL optional
   dependency approach with SQLite for development.
 - Engine: standalone migration CLI (``undolog-migrate up|down|status``)
