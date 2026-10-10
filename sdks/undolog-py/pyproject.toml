@@ -34,6 +34,9 @@ Homepage = "https://github.com/UndoBase/UndoLog"
 Source = "https://github.com/UndoBase/UndoLog"
 Tracker = "https://github.com/UndoBase/UndoLog/issues"
 
+[project.scripts]
+undolog = "undolog_sdk.dev:main"
+
 [tool.setuptools.packages.find]
 include = ["undolog_sdk*"]
 
