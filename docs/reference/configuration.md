@@ -42,6 +42,18 @@ IP:port for the HTTP health endpoint (`GET /` → `{"status":"ok","service":"und
 
 ---
 
+### `UNDOLOG_ENGINE_AUTH_TOKEN`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Shared secret checked on every gRPC call. When set, a call must present it as
+`Bearer <token>` in the `authorization` metadata or is answered with
+`UNAUTHENTICATED`; an empty or blank value disables the check.
+
+---
+
 ### `UNDOLOG_LOG_LEVEL`
 
 | Type | Default | Valid Values |
@@ -202,6 +214,18 @@ Address of the Rust UndoLog Engine gRPC endpoint. Used by the proxy to forward i
 
 ---
 
+### `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Shared secret presented on every engine gRPC call as `Bearer <token>`. Must
+match the engine's `UNDOLOG_ENGINE_AUTH_TOKEN`; an empty or blank value sends
+no credential.
+
+---
+
 ### `UNDOLOG_PROXY_UPSTREAM_TOOL_URL`
 
 | Type | Default | Required |
@@ -249,6 +273,7 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `DATABASE_URL` | Engine | `string` | `postgresql://postgres:postgres@localhost:5432/undolog_dev` | Yes |
 | `UNDOLOG_ENGINE_GRPC_ADDR` | Engine | `string` | `0.0.0.0:50051` | Yes |
 | `UNDOLOG_ENGINE_HEALTH_ADDR` | Engine | `string` | `0.0.0.0:9090` | Yes |
+| `UNDOLOG_ENGINE_AUTH_TOKEN` | Engine | `string` | `""` | No |
 | `UNDOLOG_LOG_LEVEL` | Engine, Proxy | `string` | `info` | No |
 | `UNDOLOG_REGISTRY_REFRESH_SECS` | Engine | `uint64` | `60` | No |
 | `UNDOLOG_LOCK_MAX_ATTEMPTS` | Engine | `uint32` | `3` | No |
@@ -268,5 +293,6 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS` | Proxy | `int` | `60` | No |
 | `UNDOLOG_PROXY_APPROVAL_RETENTION_SECS` | Proxy | `int` | `86400` | No |
 | `UNDOLOG_PROXY_ENGINE_GRPC_ADDR` | Proxy | `string` | `localhost:50051` | Yes |
+| `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_API_KEYS` | Proxy | `string` | `""` | Yes |

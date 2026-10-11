@@ -17,6 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"undolog-proxy/internal/approval"
 	eng "undolog-proxy/internal/engine"
 	"undolog-proxy/internal/metrics"
@@ -159,6 +162,36 @@ func TestLoadConfigValidatesUpstreamURL(t *testing.T) {
 	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "")
 	if _, err := LoadConfig(); err != nil {
 		t.Fatalf("empty upstream URL should still load, got %v", err)
+	}
+}
+
+// TestLoadConfigEngineAuthToken verifies the engine token is read trimmed, the
+// same way the engine normalizes its own copy, and that unset or blank values
+// leave the credential disabled.
+func TestLoadConfigEngineAuthToken(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "unset", raw: "", want: ""},
+		{name: "blank", raw: "   ", want: ""},
+		{name: "plain", raw: "s3cret", want: "s3cret"},
+		{name: "padded", raw: "  s3cret\n", want: "s3cret"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("UNDOLOG_PROXY_API_KEYS", "k1=o1")
+			t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "")
+			t.Setenv("UNDOLOG_PROXY_ENGINE_AUTH_TOKEN", tc.raw)
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.EngineAuthToken != tc.want {
+				t.Fatalf("expected engine auth token %q, got %q", tc.want, cfg.EngineAuthToken)
+			}
+		})
 	}
 }
 
@@ -780,6 +813,33 @@ func TestHandlerExecuteFailureCallsFailAndReports502(t *testing.T) {
 	}
 	if engine.failReq.EffectID != "eff-1" {
 		t.Fatalf("expected Fail with effect eff-1, got %+v", engine.failReq)
+	}
+}
+
+// TestHandlerInterceptAuthRejectionReports502 verifies a token mismatch stays
+// diagnosable end to end: the engine's UNAUTHENTICATED answer passes through
+// the real engine client, which names the settings that fix it, and the
+// handler surfaces it as a 502 whose body carries that message.
+func TestHandlerInterceptAuthRejectionReports502(t *testing.T) {
+	engineClient := eng.NewClientWithTransport("unused", eng.RetryConfig{MaxAttempts: 1}, &mockEngineClient{
+		interceptErr: status.Error(codes.Unauthenticated, "missing or invalid credentials: expected `authorization` metadata as `Bearer <token>`"),
+	}, nil)
+	h := NewHandler(engineClient, nil, approval.NewStore(), sse.NewBroadcaster(8), time.Second, 1<<20, nil)
+
+	body := `{"session_id":"sess-1","tool_name":"search","args":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))
+	req = req.WithContext(context.WithValue(req.Context(), ctxKeyOrgID, "org-1"))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("engine auth rejection must return 502, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"UNDOLOG_PROXY_ENGINE_AUTH_TOKEN", "authorization"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("502 body %q must mention %s", rec.Body.String(), want)
+		}
 	}
 }
 

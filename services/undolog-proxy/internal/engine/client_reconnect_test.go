@@ -41,9 +41,10 @@ func (s *stubEngine) Intercept(ctx context.Context, _ *pb.InterceptRequest) (*pb
 
 // startEngine runs a stub engine on the given address ("127.0.0.1:0" picks a
 // free port). Rebinding the same port right after a server stopped can briefly
-// collide with TIME_WAIT, so the listen is retried for a short window. It
-// returns the server, the stub, and the actual bound address.
-func startEngine(t *testing.T, address string) (*grpc.Server, *stubEngine, string) {
+// collide with TIME_WAIT, so the listen is retried for a short window. Server
+// options such as interceptors are passed through. It returns the server, the
+// stub, and the actual bound address.
+func startEngine(t *testing.T, address string, opts ...grpc.ServerOption) (*grpc.Server, *stubEngine, string) {
 	t.Helper()
 	var (
 		lis net.Listener
@@ -61,7 +62,7 @@ func startEngine(t *testing.T, address string) (*grpc.Server, *stubEngine, strin
 		t.Fatalf("listen: %v", err)
 	}
 	stub := &stubEngine{}
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(opts...)
 	pb.RegisterUndoLogEngineServer(srv, stub)
 	go func() { _ = srv.Serve(lis) }()
 	return srv, stub, lis.Addr().String()

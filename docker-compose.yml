@@ -37,6 +37,9 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/undolog
       UNDOLOG_LOG_LEVEL: debug
+      # Development token: the proxy reuses this value through the YAML
+      # alias, so the two sides cannot drift. Replace it in production.
+      UNDOLOG_ENGINE_AUTH_TOKEN: &engine-auth-token dev-engine-token
     ports:
       - "50051:50051"
       - "9090:9090"
@@ -51,6 +54,7 @@ services:
     environment:
       UNDOLOG_PROXY_LISTEN_ADDR: :8080
       UNDOLOG_PROXY_ENGINE_GRPC_ADDR: engine:50051
+      UNDOLOG_PROXY_ENGINE_AUTH_TOKEN: *engine-auth-token
       UNDOLOG_PROXY_UPSTREAM_TOOL_URL: http://tool-server:9091/tools
       UNDOLOG_PROXY_API_KEYS: dev-key=00000000-0000-0000-0000-000000000001,dev-key-2=00000000-0000-0000-0000-000000000002
       UNDOLOG_LOG_LEVEL: debug

@@ -45,6 +45,10 @@ type Config struct {
 	ApprovalRetention time.Duration
 	// EngineGRPCAddr is the Rust engine gRPC endpoint.
 	EngineGRPCAddr string
+	// EngineAuthToken is the shared secret presented to the engine on every
+	// gRPC call. Surrounding whitespace is trimmed, as the engine trims its
+	// copy, and an empty value sends no credential. It must never be logged.
+	EngineAuthToken string
 	// UpstreamToolURL is the HTTP endpoint that receives forwarded tool calls.
 	UpstreamToolURL string
 	// LogLevel controls proxy logging verbosity.
@@ -76,6 +80,7 @@ func LoadConfig() (Config, error) {
 		ApprovalReconcileInterval: durationEnv("UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS", 60*time.Second),
 		ApprovalRetention:         durationEnv("UNDOLOG_PROXY_APPROVAL_RETENTION_SECS", 24*time.Hour),
 		EngineGRPCAddr:            getenv("UNDOLOG_PROXY_ENGINE_GRPC_ADDR", "localhost:50051"),
+		EngineAuthToken:           strings.TrimSpace(os.Getenv("UNDOLOG_PROXY_ENGINE_AUTH_TOKEN")),
 		UpstreamToolURL:           getenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", ""),
 		LogLevel:                  getenv("UNDOLOG_LOG_LEVEL", "info"),
 		TrustedAPIKeys:            parseAPIKeys(os.Getenv("UNDOLOG_PROXY_API_KEYS")),
