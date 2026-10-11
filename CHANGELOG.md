@@ -147,6 +147,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ``LogLevel`` accepts ``warn``/``error``; the stale proxy ``Dockerfile`` and
   dead code (``effect_executed`` event, ``store.NewID``, advisory-lock helper)
   are removed.
+- Documentation: added ADR 0018 selecting how the proxy authenticates
+  to the engine gRPC endpoint.
 
 ### Changed
 
