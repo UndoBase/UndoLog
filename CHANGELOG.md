@@ -149,6 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   are removed.
 - Documentation: added ADR 0018 selecting how the proxy authenticates
   to the engine gRPC endpoint.
+- Documentation: added ADR 0019 defining the proxy interceptor plugin
+  chain, its ordering, and its configuration.
 
 ### Changed
 
