@@ -151,6 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   to the engine gRPC endpoint.
 - Documentation: added ADR 0019 defining the proxy interceptor plugin
   chain, its ordering, and its configuration.
+- Documentation: added ADR 0020 defining per-key rate limiting and
+  engine backpressure for the proxy.
 
 ### Changed
 
