@@ -22,6 +22,7 @@
     { "slug": "0017-compensation-testing-harness", "title": "0017: Compensation Harness" },
     { "slug": "0018-proxy-grpc-auth-method", "title": "0018: gRPC Auth Method" },
     { "slug": "0019-proxy-plugin-system", "title": "0019: Plugin System" },
-    { "slug": "0020-proxy-rate-limiting", "title": "0020: Rate Limiting" }
+    { "slug": "0020-proxy-rate-limiting", "title": "0020: Rate Limiting" },
+    { "slug": "0021-single-binary-deployment", "title": "0021: Single Container" }
   ]
 }

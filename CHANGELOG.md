@@ -153,6 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   chain, its ordering, and its configuration.
 - Documentation: added ADR 0020 defining per-key rate limiting and
   engine backpressure for the proxy.
+- Documentation: added ADR 0021 evaluating how to ship the proxy and
+  the engine as one deployable unit.
 
 ### Changed
 

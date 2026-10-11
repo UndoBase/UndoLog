@@ -29,3 +29,4 @@ Every significant design decision in UndoLog is recorded as an ADR.
 | [0018](0018-proxy-grpc-auth-method.md) | gRPC Auth Method Selection |
 | [0019](0019-proxy-plugin-system.md) | Middleware Plugin System |
 | [0020](0020-proxy-rate-limiting.md) | Proxy Rate Limiting and Backpressure |
+| [0021](0021-single-binary-deployment.md) | Single-Container Deployment |
