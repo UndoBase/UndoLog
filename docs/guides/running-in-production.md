@@ -14,9 +14,9 @@ section: "guides"
 
 ## What you'll build
 
-You will configure the UndoLog stack for production: tune PostgreSQL, harden
-the proxy with API keys, set timeouts on the engine, and verify graceful
-shutdown.
+You will configure the UndoLog stack for production: tune PostgreSQL,
+authenticate the engine's gRPC endpoint, harden the proxy with API keys,
+set timeouts on the engine, and verify graceful shutdown.
 
 ## Steps
 
@@ -74,7 +74,17 @@ UNDOLOG_REGISTRY_REFRESH_SECS=120
 
 # Logging
 UNDOLOG_LOG_LEVEL=info
+
+# gRPC authentication: rejects calls that do not present the token
+UNDOLOG_ENGINE_AUTH_TOKEN=replace-with-a-long-random-value
 ```
+
+With `UNDOLOG_ENGINE_AUTH_TOKEN` unset or blank, the engine's gRPC
+endpoint accepts every call, which keeps local development unchanged.
+In production set a long random value: every RPC must then carry it in
+the `authorization` metadata as `Bearer <token>`, and a call without it
+is rejected with `UNAUTHENTICATED`. Rotation is an environment change
+followed by an engine restart.
 
 ### 3. Configure the proxy
 

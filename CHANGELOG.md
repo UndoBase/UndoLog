@@ -155,6 +155,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   engine backpressure for the proxy.
 - Documentation: added ADR 0021 evaluating how to ship the proxy and
   the engine as one deployable unit.
+- Engine: optional gRPC authentication via ``UNDOLOG_ENGINE_AUTH_TOKEN``;
+  calls without the token are rejected with ``UNAUTHENTICATED``.
 
 ### Changed
 

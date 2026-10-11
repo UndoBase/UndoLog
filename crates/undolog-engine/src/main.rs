@@ -13,6 +13,7 @@ use tokio::signal;
 use tonic::transport::Server;
 use tracing::{info, warn};
 
+use undolog_engine::grpc::auth;
 use undolog_engine::grpc::pb::undo_log_engine_server::UndoLogEngineServer;
 use undolog_engine::grpc::UndoLogEngineService;
 use undolog_engine::startup;
@@ -30,6 +31,7 @@ const ENV_LOCK_RETRY_MS: &str = "UNDOLOG_LOCK_RETRY_MS";
 const ENV_APPROVAL_TIMEOUT_SECS: &str = "UNDOLOG_APPROVAL_TIMEOUT_SECS";
 const ENV_AUTO_APPROVE_ON_TIMEOUT: &str = "UNDOLOG_AUTO_APPROVE_ON_TIMEOUT";
 const ENV_TIMEOUT_CHECK_INTERVAL_SECS: &str = "UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS";
+const ENV_AUTH_TOKEN: &str = "UNDOLOG_ENGINE_AUTH_TOKEN";
 
 const DEFAULT_GRPC_ADDR: &str = "0.0.0.0:50051";
 const DEFAULT_HEALTH_ADDR: &str = "0.0.0.0:9090";
@@ -69,6 +71,9 @@ async fn main() -> Result<()> {
         env_or(ENV_TIMEOUT_CHECK_INTERVAL_SECS, DEFAULT_TIMEOUT_CHECK_INTERVAL_SECS)
             .parse()
             .context("Invalid UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS")?;
+    // An unset or blank token keeps enforcement off, so local development
+    // and the compose stack behave exactly as before.
+    let auth_token = auth::enforcing_token(std::env::var(ENV_AUTH_TOKEN).ok());
 
     // Initialize tracing with optional OpenTelemetry export.
     let _guard = telemetry::init_telemetry();
@@ -99,8 +104,13 @@ async fn main() -> Result<()> {
     .await
     .context("Failed to bootstrap EffectEngine")?;
 
-    // Wrap engine in the tonic gRPC service.
+    // Wrap engine in the tonic gRPC service. With no token configured the
+    // interceptor passes every call through unchanged.
     let grpc_service = UndoLogEngineServer::new(UndoLogEngineService::new(engine));
+    if auth_token.is_some() {
+        info!("gRPC authentication enabled: callers must present the bearer token");
+    }
+    let grpc_service = auth::authenticated(grpc_service, auth_token);
 
     // ── Start health HTTP endpoint on a background task ───────────────────
     let health_handle = tokio::spawn(health_server(health_addr));

@@ -14,6 +14,8 @@ pub mod pb {
     tonic::include_proto!("undolog.v1");
 }
 
+pub mod auth;
+
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
