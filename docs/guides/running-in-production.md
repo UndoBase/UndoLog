@@ -100,7 +100,18 @@ UNDOLOG_PROXY_READ_TIMEOUT_SECS=10
 UNDOLOG_PROXY_WRITE_TIMEOUT_SECS=10
 UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS=30
 UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS=20
+
+# Engine authentication: must equal the engine's UNDOLOG_ENGINE_AUTH_TOKEN
+UNDOLOG_PROXY_ENGINE_AUTH_TOKEN=replace-with-a-long-random-value
 ```
+
+The proxy sends `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` on every engine gRPC
+call as `Bearer <token>`, and sends nothing when it is unset or blank.
+Set the same value on both sides and restart both to rotate it. If the
+values differ, the engine rejects every call: tool calls fail with a
+502 whose message names `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN`, and the
+proxy logs the same message for approval decisions, so a mismatch is
+visible from the first failed request.
 
 ### 4. Set up TLS termination
 
@@ -271,6 +282,7 @@ docker compose exec pgbouncer psql -h localhost -p 6432 -U postgres -c "SHOW POO
 | High lock contention | `UNDOLOG_LOCK_RETRY_MS` too low | Increase to 100–200ms; verify BRIN index is in place |
 | SSE dashboard disconnects | Reverse proxy buffers SSE | Set `proxy_buffering off; proxy_cache off;` for `/events` |
 | API key rejected | Key not in `UNDOLOG_PROXY_API_KEYS` | Restart proxy after changing env var; keys are loaded at startup |
+| 502 naming `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` | Proxy token missing or different from the engine's | Set the same value in `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` and `UNDOLOG_ENGINE_AUTH_TOKEN`, then restart both |
 | gRPC connection reset | Engine restart | Proxy reconnects automatically: the engine connection is created lazily and self-healing, so the next RPC reaches the restarted engine. The retry config bounds Commit/Fail retries, not the connection |
 
 ## Next steps

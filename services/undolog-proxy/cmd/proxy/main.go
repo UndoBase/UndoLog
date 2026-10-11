@@ -53,7 +53,7 @@ func run() error {
 	engineClient := engine.NewClient(cfg.EngineGRPCAddr, engine.RetryConfig{
 		MaxAttempts: cfg.EngineRetryMaxAttempts,
 		Backoff:     cfg.EngineRetryBackoff,
-	}, logger)
+	}, logger, engine.WithAuthToken(cfg.EngineAuthToken))
 	engineClient.SetMetrics(registry)
 	defer func() { _ = engineClient.Close() }()
 

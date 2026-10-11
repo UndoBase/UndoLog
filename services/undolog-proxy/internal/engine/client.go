@@ -4,12 +4,14 @@
 // fakes while production connects lazily to the Rust service. The connection is
 // established on the first RPC and reconnected automatically by gRPC whenever
 // the engine restarts or is slow to become ready, so the proxy never has to
-// block on a bootstrap dial.
+// block on a bootstrap dial. When an engine token is configured, every RPC
+// presents it as a bearer credential.
 package engine
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -90,20 +92,70 @@ const (
 	rpcRetriesMetric     = "undolog_proxy_engine_rpc_retries_total"
 )
 
-// defaultDialer builds a non-blocking channel. Dialing does not block or
-// contact the engine; gRPC connects in the background, so an engine that starts
-// after the proxy (or restarts) is picked up without the proxy exiting.
-func defaultDialer(_ context.Context, address string) (*grpc.ClientConn, error) {
-	return grpc.NewClient(address,
+// Metadata contract for engine authentication, fixed by ADR 0018 and checked
+// by the engine's token interceptor.
+const (
+	authorizationKey = "authorization"
+	bearerPrefix     = "Bearer "
+)
+
+// bearerToken presents the shared engine token on every RPC of the channel it
+// is attached to. gRPC asks for the metadata again on each call, including
+// calls made after a reconnect, so the token survives engine restarts.
+type bearerToken string
+
+// GetRequestMetadata returns the `authorization` pair for one outgoing RPC.
+func (b bearerToken) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	return map[string]string{authorizationKey: bearerPrefix + string(b)}, nil
+}
+
+// RequireTransportSecurity reports false because the engine channel uses
+// insecure transport credentials. ADR 0018 leaves encryption of this leg to
+// the deployment network; requiring TLS here would make gRPC refuse every call.
+func (bearerToken) RequireTransportSecurity() bool {
+	return false
+}
+
+// Option customizes a Client built by NewClient.
+type Option func(*clientOptions)
+
+// clientOptions collects the settings Option values apply before the dialer
+// is built.
+type clientOptions struct {
+	authToken string
+}
+
+// WithAuthToken makes every engine RPC carry token in the `authorization`
+// metadata as `Bearer <token>`. An empty token sends no metadata at all, so a
+// proxy without a token behaves exactly as one built without this option.
+func WithAuthToken(token string) Option {
+	return func(o *clientOptions) {
+		o.authToken = token
+	}
+}
+
+// newDialer returns the production dialer. It builds a non-blocking channel:
+// dialing does not block or contact the engine, and gRPC connects in the
+// background, so an engine that starts after the proxy (or restarts) is picked
+// up without the proxy exiting. A non-empty token is attached as per-RPC
+// credentials.
+func newDialer(token string) func(context.Context, string) (*grpc.ClientConn, error) {
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: reconnectBackoff}),
-	)
+	}
+	if token != "" {
+		opts = append(opts, grpc.WithPerRPCCredentials(bearerToken(token)))
+	}
+	return func(_ context.Context, address string) (*grpc.ClientConn, error) {
+		return grpc.NewClient(address, opts...)
+	}
 }
 
 // NewClient constructs a client for the given engine address. It does not
 // connect until the first RPC, so the engine does not need to be ready when the
 // proxy starts.
-func NewClient(address string, retry RetryConfig, logger *slog.Logger) *Client {
+func NewClient(address string, retry RetryConfig, logger *slog.Logger, opts ...Option) *Client {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -113,11 +165,15 @@ func NewClient(address string, retry RetryConfig, logger *slog.Logger) *Client {
 	if retry.Backoff <= 0 {
 		retry.Backoff = 100 * time.Millisecond
 	}
+	var options clientOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	return &Client{
 		address: address,
 		retry:   retry,
 		logger:  logger,
-		dial:    defaultDialer,
+		dial:    newDialer(options.authToken),
 	}
 }
 
@@ -268,7 +324,7 @@ func call[T any](ctx context.Context, c *Client, fn func(Transport) (T, error)) 
 	if isConnectionLoss(err) {
 		c.nudgeReconnect()
 	}
-	return resp, err
+	return resp, explainAuthFailure(err)
 }
 
 func (c *Client) callVoid(ctx context.Context, fn func(Transport) error) error {
@@ -280,7 +336,7 @@ func (c *Client) callVoid(ctx context.Context, fn func(Transport) error) error {
 	if isConnectionLoss(rpcErr) {
 		c.nudgeReconnect()
 	}
-	return rpcErr
+	return explainAuthFailure(rpcErr)
 }
 
 // retryVoid invokes fn and retries transient transport failures with bounded
@@ -304,7 +360,7 @@ func (c *Client) retryVoid(ctx context.Context, method string, fn func(Transport
 			c.nudgeReconnect()
 		}
 		if !isRetryableRPCError(last) || attempt == c.retry.MaxAttempts {
-			return last
+			return explainAuthFailure(last)
 		}
 		c.observeRetry(method)
 		c.logger.Warn("engine RPC transient failure, retrying", "method", method, "attempt", attempt, "max", c.retry.MaxAttempts, "error", last)
@@ -335,6 +391,18 @@ func (c *Client) observeRetry(method string) {
 		return
 	}
 	c.metrics.Counter(rpcRetriesMetric, "Engine RPC calls that were retried after a transient failure", "method").Add(1, method)
+}
+
+// explainAuthFailure wraps an UNAUTHENTICATED engine answer with the proxy
+// setting that fixes it, so a token mismatch is diagnosable from the client
+// response rather than only from engine logs. The wrap keeps the gRPC status,
+// so status.Code still reports Unauthenticated, and it never includes the
+// token. Every other error passes through unchanged.
+func explainAuthFailure(err error) error {
+	if status.Code(err) != codes.Unauthenticated {
+		return err
+	}
+	return fmt.Errorf("engine rejected the proxy credentials: set UNDOLOG_PROXY_ENGINE_AUTH_TOKEN to the engine's UNDOLOG_ENGINE_AUTH_TOKEN: %w", err)
 }
 
 // isConnectionLoss reports whether the error came from the transport rather than

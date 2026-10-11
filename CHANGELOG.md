@@ -157,6 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the engine as one deployable unit.
 - Engine: optional gRPC authentication via ``UNDOLOG_ENGINE_AUTH_TOKEN``;
   calls without the token are rejected with ``UNAUTHENTICATED``.
+- Proxy: ``UNDOLOG_PROXY_ENGINE_AUTH_TOKEN`` is sent on every engine gRPC
+  call, and the compose stack wires one token on both sides.
 
 ### Changed
 

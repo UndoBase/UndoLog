@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -209,6 +210,7 @@ func TestIsConnectionLossClassifiesCodes(t *testing.T) {
 		{code: codes.DeadlineExceeded, want: false},
 		{code: codes.Internal, want: false},
 		{code: codes.InvalidArgument, want: false},
+		{code: codes.Unauthenticated, want: false},
 		{code: codes.OK, want: false},
 	}
 	for _, tc := range cases {
@@ -400,5 +402,230 @@ func TestWithTracingMetadataAttachesRequestID(t *testing.T) {
 	ids := md.Get("x-request-id")
 	if len(ids) != 1 || ids[0] != "req-abc" {
 		t.Fatalf("expected x-request-id metadata req-abc, got %v", ids)
+	}
+}
+
+// engineAuthToken is the shared secret the token-checking stub engine expects.
+const engineAuthToken = "s3cret-engine-token"
+
+// recordedCall is one RPC as the token-checking stub engine saw it.
+type recordedCall struct {
+	method string
+	auth   []string
+}
+
+// authRecorder stands in for the engine's token interceptor. It records the
+// `authorization` metadata of every unary RPC and, when expected is set,
+// rejects a call without the matching bearer with UNAUTHENTICATED and the
+// engine's message, before the handler runs.
+type authRecorder struct {
+	expected string
+	mu       sync.Mutex
+	calls    []recordedCall
+}
+
+// intercept is the unary server interceptor installed on the stub engine.
+func (a *authRecorder) intercept(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	var auth []string
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		auth = md.Get(authorizationKey)
+	}
+	a.mu.Lock()
+	a.calls = append(a.calls, recordedCall{method: info.FullMethod, auth: auth})
+	a.mu.Unlock()
+	if a.expected != "" && (len(auth) != 1 || auth[0] != bearerPrefix+a.expected) {
+		return nil, status.Error(codes.Unauthenticated, "missing or invalid credentials: expected `authorization` metadata as `Bearer <token>`")
+	}
+	return handler(ctx, req)
+}
+
+// recorded returns a snapshot of the calls seen so far.
+func (a *authRecorder) recorded() []recordedCall {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]recordedCall(nil), a.calls...)
+}
+
+// startAuthEngine runs the stub engine behind an authRecorder on address.
+func startAuthEngine(t *testing.T, address, expected string) (*grpc.Server, *authRecorder, string) {
+	t.Helper()
+	rec := &authRecorder{expected: expected}
+	srv, _, addr := startEngine(t, address, grpc.UnaryInterceptor(rec.intercept))
+	t.Cleanup(srv.Stop)
+	return srv, rec, addr
+}
+
+// rpcContext bounds one test RPC so a broken channel fails instead of hanging.
+func rpcContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// callEveryRPC issues each of the six engine RPCs once. Only Intercept is
+// implemented by the stub, so the others answer Unimplemented; the errors are
+// returned per method so callers can tell an auth rejection from that.
+func callEveryRPC(ctx context.Context, client *Client) map[string]error {
+	errs := map[string]error{}
+	_, errs[rpcMethodIntercept] = client.Intercept(ctx, interceptRequest())
+	errs[rpcMethodCommit] = client.Commit(ctx, protocol.CommitRequest{EffectID: "effect-1"})
+	errs[rpcMethodFail] = client.Fail(ctx, protocol.FailRequest{EffectID: "effect-1"})
+	_, errs[rpcMethodApprove] = client.Approve(ctx, protocol.ApproveRequest{ApprovalID: "approval-1"})
+	errs[rpcMethodReject] = client.Reject(ctx, protocol.RejectRequest{ApprovalID: "approval-1"})
+	_, errs[rpcMethodListPending] = client.ListPendingApprovals(ctx, protocol.ListPendingApprovalsRequest{OrgID: "org-1"})
+	return errs
+}
+
+// TestClientPresentsTokenOnEveryRPC verifies a configured token reaches the
+// engine as `Bearer <token>` on all six RPCs, and that the enforcing engine
+// lets each of them through to its handler.
+func TestClientPresentsTokenOnEveryRPC(t *testing.T) {
+	_, rec, addr := startAuthEngine(t, "127.0.0.1:0", engineAuthToken)
+	client := NewClient(addr, RetryConfig{MaxAttempts: 1}, nil, WithAuthToken(engineAuthToken))
+	defer func() { _ = client.Close() }()
+
+	for method, err := range callEveryRPC(rpcContext(t), client) {
+		if method == rpcMethodIntercept && err != nil {
+			t.Fatalf("authenticated intercept failed: %v", err)
+		}
+		if code := status.Code(err); code == codes.Unauthenticated {
+			t.Fatalf("%s was rejected despite carrying the token: %v", method, err)
+		}
+	}
+
+	calls := rec.recorded()
+	if len(calls) != 6 {
+		t.Fatalf("expected the engine to see 6 RPCs, got %d", len(calls))
+	}
+	for _, call := range calls {
+		if len(call.auth) != 1 || call.auth[0] != "Bearer "+engineAuthToken {
+			t.Errorf("%s carried authorization %q, want one bearer value", call.method, call.auth)
+		}
+	}
+}
+
+// TestClientWithoutTokenSendsNoAuthorization verifies that no option and an
+// explicitly empty token both leave the outgoing metadata without an
+// `authorization` key, which is the behaviour before this setting existed.
+func TestClientWithoutTokenSendsNoAuthorization(t *testing.T) {
+	cases := []struct {
+		name string
+		opts []Option
+	}{
+		{name: "no option"},
+		{name: "empty token", opts: []Option{WithAuthToken("")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, rec, addr := startAuthEngine(t, "127.0.0.1:0", "")
+			client := NewClient(addr, RetryConfig{MaxAttempts: 1}, nil, tc.opts...)
+			defer func() { _ = client.Close() }()
+
+			if _, err := client.Intercept(rpcContext(t), interceptRequest()); err != nil {
+				t.Fatalf("intercept against an open engine: %v", err)
+			}
+			calls := rec.recorded()
+			if len(calls) != 1 {
+				t.Fatalf("expected one RPC, got %d", len(calls))
+			}
+			if calls[0].auth != nil {
+				t.Fatalf("expected no authorization metadata, got %q", calls[0].auth)
+			}
+		})
+	}
+}
+
+// TestClientExplainsEngineAuthRejection verifies an UNAUTHENTICATED answer
+// keeps its gRPC code, names the proxy setting to fix, keeps the engine's
+// explanation, echoes no token, and is never retried.
+func TestClientExplainsEngineAuthRejection(t *testing.T) {
+	const wrongToken = "hunter2-wrong-token"
+	cases := []struct {
+		name string
+		opts []Option
+	}{
+		{name: "missing token"},
+		{name: "wrong token", opts: []Option{WithAuthToken(wrongToken)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, rec, addr := startAuthEngine(t, "127.0.0.1:0", engineAuthToken)
+			client := NewClient(addr, RetryConfig{MaxAttempts: 3, Backoff: time.Millisecond}, nil, tc.opts...)
+			defer func() { _ = client.Close() }()
+
+			for method, err := range callEveryRPC(rpcContext(t), client) {
+				if status.Code(err) != codes.Unauthenticated {
+					t.Fatalf("%s: expected Unauthenticated, got %v", method, err)
+				}
+				msg := err.Error()
+				for _, want := range []string{"UNDOLOG_PROXY_ENGINE_AUTH_TOKEN", "UNDOLOG_ENGINE_AUTH_TOKEN", "authorization"} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("%s: error %q must mention %s", method, msg, want)
+					}
+				}
+				for _, secret := range []string{engineAuthToken, wrongToken} {
+					if strings.Contains(msg, secret) {
+						t.Errorf("%s: error %q must not echo a token", method, msg)
+					}
+				}
+			}
+			if calls := rec.recorded(); len(calls) != 6 {
+				t.Fatalf("auth rejections must not be retried: expected 6 RPCs, got %d", len(calls))
+			}
+		})
+	}
+}
+
+// TestClientPresentsTokenAfterEngineRestart verifies the credential is
+// attached per RPC rather than per connection: after the engine goes away and
+// comes back on the same address, the reconnected channel still authenticates.
+func TestClientPresentsTokenAfterEngineRestart(t *testing.T) {
+	srv, _, addr := startAuthEngine(t, "127.0.0.1:0", engineAuthToken)
+	client := NewClient(addr, RetryConfig{MaxAttempts: 1}, nil, WithAuthToken(engineAuthToken))
+	defer func() { _ = client.Close() }()
+
+	intercept := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, err := client.Intercept(ctx, interceptRequest())
+		return err
+	}
+	if err := intercept(); err != nil {
+		t.Fatalf("intercept before the restart: %v", err)
+	}
+
+	srv.Stop()
+	eventually(t, 5*time.Second, "engine outage surfaced", func() error {
+		if intercept() == nil {
+			return errors.New("expected the RPC to fail while the engine is down")
+		}
+		return nil
+	})
+
+	_, rec, _ := startAuthEngine(t, addr, engineAuthToken)
+	eventually(t, 15*time.Second, "authenticated recovery", intercept)
+	for _, call := range rec.recorded() {
+		if len(call.auth) != 1 || call.auth[0] != "Bearer "+engineAuthToken {
+			t.Fatalf("restarted engine saw authorization %q, want the bearer token", call.auth)
+		}
+	}
+}
+
+// TestExplainAuthFailurePassesOtherErrorsThrough verifies only
+// UNAUTHENTICATED is rewritten: nil and every other error come back as the
+// identical value, so existing status mapping is untouched.
+func TestExplainAuthFailurePassesOtherErrorsThrough(t *testing.T) {
+	if err := explainAuthFailure(nil); err != nil {
+		t.Fatalf("nil must stay nil, got %v", err)
+	}
+	for _, original := range []error{
+		status.Error(codes.Unavailable, "engine restarting"),
+		status.Error(codes.PermissionDenied, "org mismatch"),
+		protocol.ErrEngineClientClosed,
+	} {
+		if got := explainAuthFailure(original); got != original {
+			t.Errorf("expected %v to pass through unchanged, got %v", original, got)
+		}
 	}
 }
