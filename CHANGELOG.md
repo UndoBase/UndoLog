@@ -165,6 +165,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   counts rejections on /metrics.
 - Proxy: engine bounded queue, concurrency limit, and circuit breaker
   answer 503 with Retry-After instead of overwhelming the connection pool.
+- Proxy: optional ``undolog.toml`` config file, with environment
+  variables overriding file values.
 
 ### Changed
 

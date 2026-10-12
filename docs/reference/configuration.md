@@ -1,11 +1,12 @@
 ---
 title: "Configuration Reference"
-description: "All configuration is through environment variables. Organised by service."
+description: "All configuration is through environment variables, with an optional proxy configuration file. Organised by service."
 section: "reference"
 ---
 # Configuration Reference
 
-All configuration is through environment variables. Organised by service.
+All configuration is through environment variables, with an optional proxy
+configuration file. Organised by service.
 
 ---
 
@@ -89,6 +90,44 @@ Log level for the Rust engine. Used as the default directive for `tracing_subscr
 ---
 
 ## Go Proxy
+
+### Configuration file
+
+The proxy reads an optional TOML file selected by `UNDOLOG_PROXY_CONFIG`.
+Environment variables override file values, and settings neither source
+defines keep their built-in defaults.
+
+| Source | Precedence |
+|--------|------------|
+| Environment variable | 1 |
+| File named by `UNDOLOG_PROXY_CONFIG` | 2 |
+| Built-in default | 3 |
+
+File keys mirror the environment variable names with the `UNDOLOG_PROXY_`
+prefix removed and lowercased, with the same units and value ranges:
+`UNDOLOG_PROXY_READ_TIMEOUT_SECS` becomes `read_timeout_secs`, and
+`UNDOLOG_LOG_LEVEL` becomes `log_level`. An unknown key, a value of the
+wrong kind, a malformed file, or a path that does not exist all fail
+startup naming the offending key or path, so a typo is never ignored.
+
+```toml
+listen_addr = ":9000"
+engine_grpc_addr = "localhost:50051"
+rate_limit_rps = 50
+rate_limit_burst = 100
+plugins = ["header"]
+
+[api_keys]
+"key-1" = "org-1"
+```
+
+`UNDOLOG_PROXY_API_KEYS` becomes the `[api_keys]` table instead of a
+comma-joined value, and setting the variable replaces the file table as a
+whole. TOML wins over YAML because implicit typing has no place in a
+security tool's configuration, and over JSON because operators annotate
+config files and JSON has no comments.
+
+---
 
 ### `UNDOLOG_PROXY_LISTEN_ADDR`
 
