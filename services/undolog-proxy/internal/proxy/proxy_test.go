@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -285,6 +286,116 @@ func TestLoadConfigRateLimitPair(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("UNDOLOG_PROXY_RATE_LIMIT_RPS", tc.rps)
 			t.Setenv("UNDOLOG_PROXY_RATE_LIMIT_BURST", tc.burst)
+
+			_, err := LoadConfig()
+			if err == nil {
+				t.Fatal("expected a startup error")
+			}
+			if !strings.Contains(err.Error(), tc.wantVar) {
+				t.Fatalf("error %v must name %s", err, tc.wantVar)
+			}
+		})
+	}
+}
+
+// TestLoadConfigEngineBackpressure verifies the engine backpressure settings
+// default to disabled, parse a complete configuration, accept a lone gate,
+// and fail startup on malformed, negative, or half-configured mechanisms
+// instead of silently dropping a configured limit.
+func TestLoadConfigEngineBackpressure(t *testing.T) {
+	t.Setenv("UNDOLOG_PROXY_API_KEYS", "k1=o1")
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "")
+	for _, key := range backpressureKeys {
+		t.Setenv(key, "")
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.MaxEngineRPCs != 0 || cfg.EngineQueueMax != 0 || cfg.EngineQueueWait != 0 ||
+		cfg.EngineBreakerThreshold != 0 || cfg.EngineBreakerReset != 0 {
+		t.Fatalf("backpressure must be disabled by default, got %+v", cfg)
+	}
+
+	t.Setenv("UNDOLOG_PROXY_MAX_ENGINE_RPCS", "8")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_QUEUE_MAX", "16")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS", "250")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD", "5")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS", "30")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.MaxEngineRPCs != 8 || cfg.EngineQueueMax != 16 || cfg.EngineQueueWait != 250*time.Millisecond ||
+		cfg.EngineBreakerThreshold != 5 || cfg.EngineBreakerReset != 30*time.Second {
+		t.Fatalf("backpressure settings = %+v, want the configured values", cfg)
+	}
+
+	// A gate without a queue or breaker is a valid standalone mechanism.
+	t.Setenv("UNDOLOG_PROXY_ENGINE_QUEUE_MAX", "")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS", "")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD", "")
+	t.Setenv("UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS", "")
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("a lone gate must load: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		entries map[string]string
+		wantVar string
+	}{
+		{
+			name:    "queue depth without wait budget",
+			entries: map[string]string{"UNDOLOG_PROXY_ENGINE_QUEUE_MAX": "4"},
+			wantVar: "UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS",
+		},
+		{
+			name:    "wait budget without queue depth",
+			entries: map[string]string{"UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS": "100"},
+			wantVar: "UNDOLOG_PROXY_ENGINE_QUEUE_MAX",
+		},
+		{
+			name: "queue without a gate",
+			entries: map[string]string{
+				"UNDOLOG_PROXY_MAX_ENGINE_RPCS":      "",
+				"UNDOLOG_PROXY_ENGINE_QUEUE_MAX":     "4",
+				"UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS": "100",
+			},
+			wantVar: "UNDOLOG_PROXY_MAX_ENGINE_RPCS",
+		},
+		{
+			name:    "breaker threshold without reset",
+			entries: map[string]string{"UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD": "3"},
+			wantVar: "UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS",
+		},
+		{
+			name:    "breaker reset without threshold",
+			entries: map[string]string{"UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS": "30"},
+			wantVar: "UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD",
+		},
+		{
+			name:    "malformed gate cap",
+			entries: map[string]string{"UNDOLOG_PROXY_MAX_ENGINE_RPCS": "many"},
+			wantVar: "UNDOLOG_PROXY_MAX_ENGINE_RPCS",
+		},
+		{
+			name:    "negative wait budget",
+			entries: map[string]string{"UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS": "-5"},
+			wantVar: "UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS",
+		},
+		{
+			name:    "negative breaker reset",
+			entries: map[string]string{"UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS": "-1"},
+			wantVar: "UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range tc.entries {
+				t.Setenv(key, value)
+			}
 
 			_, err := LoadConfig()
 			if err == nil {
@@ -1234,5 +1345,299 @@ func TestHTTPToolExecutorPublishesMetrics(t *testing.T) {
 	rendered := registry.Render()
 	if want := `undolog_proxy_executor_duration_seconds_bucket{result="success",le="+Inf"} 1`; !strings.Contains(rendered, want) {
 		t.Errorf("expected %q, got:\n%s", want, rendered)
+	}
+}
+
+// trackingEngine is an engine client that records how many Intercept calls
+// are in flight at once, optionally holds each call until the test releases
+// it, and adds artificial latency so a burst overlaps. It keeps no shared
+// state beyond atomics, so concurrent tool calls cannot race in the harness.
+type trackingEngine struct {
+	release  chan struct{}
+	entered  chan struct{}
+	delay    time.Duration
+	failure  error
+	inFlight atomic.Int32
+	maxSeen  atomic.Int32
+	calls    atomic.Int32
+}
+
+func (e *trackingEngine) Intercept(ctx context.Context, req protocol.InterceptRequest) (protocol.InterceptResponse, error) {
+	cur := e.inFlight.Add(1)
+	defer e.inFlight.Add(-1)
+	for {
+		best := e.maxSeen.Load()
+		if cur <= best || e.maxSeen.CompareAndSwap(best, cur) {
+			break
+		}
+	}
+	e.calls.Add(1)
+	select {
+	case e.entered <- struct{}{}:
+	default:
+	}
+	if e.release != nil {
+		<-e.release
+	} else if e.delay > 0 {
+		time.Sleep(e.delay)
+	}
+	if e.failure != nil {
+		return protocol.InterceptResponse{}, e.failure
+	}
+	return protocol.InterceptResponse{Outcome: protocol.InterceptExecute, EffectID: "effect-1"}, nil
+}
+
+func (e *trackingEngine) Commit(ctx context.Context, req protocol.CommitRequest) error { return nil }
+
+func (e *trackingEngine) Fail(ctx context.Context, req protocol.FailRequest) error { return nil }
+
+func (e *trackingEngine) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
+	return protocol.ApproveResponse{}, nil
+}
+
+func (e *trackingEngine) Reject(ctx context.Context, req protocol.RejectRequest) error { return nil }
+
+func (e *trackingEngine) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
+	return protocol.ListPendingApprovalsResponse{}, nil
+}
+
+func (e *trackingEngine) Close() error { return nil }
+
+// backpressureKeys are the five engine backpressure settings, all optional.
+var backpressureKeys = []string{
+	"UNDOLOG_PROXY_MAX_ENGINE_RPCS",
+	"UNDOLOG_PROXY_ENGINE_QUEUE_MAX",
+	"UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS",
+	"UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD",
+	"UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS",
+}
+
+// newBackpressureServer builds a server around the given engine client the
+// way cmd/proxy/main.go wires production, except the engine client is
+// injected.
+func newBackpressureServer(t *testing.T, engineClient protocol.EngineClient, registry *metrics.Registry) *Server {
+	t.Helper()
+	cfg := Config{
+		ListenAddr:            ":0",
+		RequestTimeout:        30 * time.Second,
+		DashboardEventBufSize: 8,
+		EngineGRPCAddr:        "engine:50051",
+		UpstreamToolURL:       "http://upstream",
+		TrustedAPIKeys:        map[string]string{"key-1": "org-1"},
+	}
+	server, err := NewServer(cfg, engineClient, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), registry, nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	return server
+}
+
+// newToolCallRequest builds an authenticated tool-call request.
+func newToolCallRequest() *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(`{"session_id":"s1","tool_name":"search","args":{}}`))
+	req.Header.Set("X-Api-Key", "key-1")
+	return req
+}
+
+// TestEngineBackpressureGateAnswers503WithoutEngine verifies the N+1st
+// in-flight tool call is answered 503 with Retry-After and never reaches
+// the engine while the gate is full.
+func TestEngineBackpressureGateAnswers503WithoutEngine(t *testing.T) {
+	te := &trackingEngine{release: make(chan struct{}), entered: make(chan struct{}, 8)}
+	engineClient := eng.NewClientWithTransport("unused", eng.RetryConfig{MaxAttempts: 1}, te, nil, eng.WithBackpressure(eng.BackpressureConfig{
+		MaxInFlight: 1,
+	}))
+	server := newBackpressureServer(t, engineClient, metrics.NewRegistry())
+
+	firstDone := make(chan int, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
+		firstDone <- rec.Code
+	}()
+	select {
+	case <-te.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first call never reached the engine")
+	}
+
+	overRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(overRec, newToolCallRequest())
+	if overRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("call at the cap: status = %d, want 503 (%s)", overRec.Code, overRec.Body.String())
+	}
+	if got := overRec.Header().Get("Retry-After"); got != protocol.BusyRetryAfter {
+		t.Fatalf("Retry-After = %q, want %q", got, protocol.BusyRetryAfter)
+	}
+	if got := te.calls.Load(); got != 1 {
+		t.Fatalf("rejected call must not touch the engine, calls = %d", got)
+	}
+
+	close(te.release)
+	select {
+	case code := <-firstDone:
+		if code != http.StatusOK {
+			t.Fatalf("held call must complete once the slot frees, status = %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the held call never completed")
+	}
+}
+
+// TestEngineBackpressureBurstProducesOnly200And503 verifies a burst against
+// a low gate produces only 200s and 503s with Retry-After, never a
+// transport error, and the observed in-flight count never exceeds the cap,
+// which is the structural reason the engine pool cannot exhaust.
+func TestEngineBackpressureBurstProducesOnly200And503(t *testing.T) {
+	te := &trackingEngine{delay: 100 * time.Millisecond}
+	engineClient := eng.NewClientWithTransport("unused", eng.RetryConfig{MaxAttempts: 1}, te, nil, eng.WithBackpressure(eng.BackpressureConfig{
+		MaxInFlight: 1,
+	}))
+	server := newBackpressureServer(t, engineClient, metrics.NewRegistry())
+
+	const callers = 8
+	var statuses [callers]int
+	var retryAfters [callers]string
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			<-start
+			server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
+			statuses[i] = rec.Code
+			retryAfters[i] = rec.Header().Get("Retry-After")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	if observed := int(te.maxSeen.Load()); observed > 1 {
+		t.Fatalf("observed in-flight engine RPCs = %d, cap is 1", observed)
+	}
+	var ok, busy int
+	for i, code := range statuses {
+		switch code {
+		case http.StatusOK:
+			ok++
+		case http.StatusServiceUnavailable:
+			busy++
+			if retryAfters[i] != protocol.BusyRetryAfter {
+				t.Errorf("call %d: 503 without Retry-After %q", i, retryAfters[i])
+			}
+		default:
+			t.Errorf("call %d: status = %d, want only 200 or 503", i, code)
+		}
+	}
+	if ok == 0 {
+		t.Fatal("the first call must win a slot and complete")
+	}
+	if busy == 0 {
+		t.Fatal("a burst against a full gate must reject at least one call with 503")
+	}
+}
+
+// TestEngineOverloadAnswers503Not502 verifies the engine's own
+// RESOURCE_EXHAUSTED answer reaches clients as retryable capacity instead
+// of the generic bad gateway error.
+func TestEngineOverloadAnswers503Not502(t *testing.T) {
+	engineClient := eng.NewClientWithTransport("unused", eng.RetryConfig{MaxAttempts: 1}, &mockEngineClient{
+		interceptErr: status.Error(codes.ResourceExhausted, "engine saturated"),
+	}, nil)
+	server := newBackpressureServer(t, engineClient, metrics.NewRegistry())
+
+	rec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("engine overload: status = %d, want 503 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != protocol.BusyRetryAfter {
+		t.Fatalf("Retry-After = %q, want %q", got, protocol.BusyRetryAfter)
+	}
+}
+
+// TestEngineBreakerOpenAnswers503OnToolPath verifies the engine's own
+// failure stays a 502, and once it opens the breaker the next tool call is
+// answered 503 with Retry-After without touching the engine.
+func TestEngineBreakerOpenAnswers503OnToolPath(t *testing.T) {
+	te := &trackingEngine{failure: status.Error(codes.Unavailable, "engine down")}
+	engineClient := eng.NewClientWithTransport("unused", eng.RetryConfig{MaxAttempts: 1}, te, nil, eng.WithBackpressure(eng.BackpressureConfig{
+		BreakerThreshold: 1,
+		BreakerReset:     30 * time.Second,
+	}))
+	server := newBackpressureServer(t, engineClient, metrics.NewRegistry())
+
+	firstRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(firstRec, newToolCallRequest())
+	if firstRec.Code != http.StatusBadGateway {
+		t.Fatalf("engine failure before the breaker opens: status = %d, want 502", firstRec.Code)
+	}
+
+	secondRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(secondRec, newToolCallRequest())
+	if secondRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("call against an open breaker: status = %d, want 503 (%s)", secondRec.Code, secondRec.Body.String())
+	}
+	if got := secondRec.Header().Get("Retry-After"); got != protocol.BusyRetryAfter {
+		t.Fatalf("Retry-After = %q, want %q", got, protocol.BusyRetryAfter)
+	}
+	if got := te.calls.Load(); got != 1 {
+		t.Fatalf("rejected call must not touch the engine, calls = %d", got)
+	}
+}
+
+// TestEngineBackpressureDisabledByDefault verifies the shipped defaults run
+// no queue, no gate, and no breaker: with every setting unset the tool path
+// behaves exactly as it did before backpressure existed and no guard metric
+// appears on /metrics.
+func TestEngineBackpressureDisabledByDefault(t *testing.T) {
+	t.Setenv("UNDOLOG_PROXY_API_KEYS", "key-1=org-1")
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "http://upstream")
+	for _, key := range backpressureKeys {
+		t.Setenv(key, "")
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.MaxEngineRPCs != 0 || cfg.EngineQueueMax != 0 || cfg.EngineQueueWait != 0 ||
+		cfg.EngineBreakerThreshold != 0 || cfg.EngineBreakerReset != 0 {
+		t.Fatalf("backpressure must be disabled by default, got %+v", cfg)
+	}
+
+	te := &trackingEngine{delay: time.Millisecond}
+	engineClient := eng.NewClientWithTransport(cfg.EngineGRPCAddr, eng.RetryConfig{MaxAttempts: 1}, te, nil, eng.WithBackpressure(eng.BackpressureConfig{
+		MaxInFlight:      cfg.MaxEngineRPCs,
+		QueueMax:         cfg.EngineQueueMax,
+		QueueWait:        cfg.EngineQueueWait,
+		BreakerThreshold: cfg.EngineBreakerThreshold,
+		BreakerReset:     cfg.EngineBreakerReset,
+	}))
+	registry := metrics.NewRegistry()
+	engineClient.SetMetrics(registry)
+	server, err := NewServer(cfg, engineClient, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), registry, nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	for i := 1; i <= 3; i++ {
+		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
+		if rec.Code != http.StatusOK {
+			t.Fatalf("call %d with the guard disabled: status = %d (%s)", i, rec.Code, rec.Body.String())
+		}
+	}
+	if got := te.calls.Load(); got != 3 {
+		t.Fatalf("engine calls = %d, want 3", got)
+	}
+	if out := registry.Render(); strings.Contains(out, "undolog_proxy_engine_inflight") {
+		t.Fatalf("disabled backpressure must register no guard metrics:\n%s", out)
 	}
 }

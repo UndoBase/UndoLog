@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -626,6 +627,288 @@ func TestExplainAuthFailurePassesOtherErrorsThrough(t *testing.T) {
 	} {
 		if got := explainAuthFailure(original); got != original {
 			t.Errorf("expected %v to pass through unchanged, got %v", original, got)
+		}
+	}
+}
+
+// blockingTransport holds every Intercept call until its release channel is
+// closed, counts the calls that reach it, and answers with the configured
+// failure. The counts prove rejected calls never touch the engine.
+type blockingTransport struct {
+	release chan struct{}
+	failure error
+	calls   atomic.Int32
+}
+
+func (b *blockingTransport) Intercept(ctx context.Context, req protocol.InterceptRequest) (protocol.InterceptResponse, error) {
+	b.calls.Add(1)
+	<-b.release
+	return protocol.InterceptResponse{}, b.failure
+}
+
+func (b *blockingTransport) Commit(ctx context.Context, req protocol.CommitRequest) error {
+	return b.failure
+}
+
+func (b *blockingTransport) Fail(ctx context.Context, req protocol.FailRequest) error {
+	return b.failure
+}
+
+func (b *blockingTransport) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
+	return protocol.ApproveResponse{}, b.failure
+}
+
+func (b *blockingTransport) Reject(ctx context.Context, req protocol.RejectRequest) error {
+	return b.failure
+}
+
+// ListPendingApprovals passes through unblocked: background reconciliation
+// is exempt from the guard by design.
+func (b *blockingTransport) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
+	return protocol.ListPendingApprovalsResponse{}, nil
+}
+
+func (b *blockingTransport) Close() error { return nil }
+
+// newPassingTransport returns a transport whose calls are never held.
+func newPassingTransport() *blockingTransport {
+	mt := &blockingTransport{release: make(chan struct{})}
+	close(mt.release)
+	return mt
+}
+
+// TestGuardRejectsWhenBreakerOpen verifies a threshold run of transport
+// failures opens the breaker, later calls are rejected with the busy
+// sentinel before the engine, the rejection is labelled on the metrics,
+// and reconciliation calls stay exempt.
+func TestGuardRejectsWhenBreakerOpen(t *testing.T) {
+	mt := &blockingTransport{release: make(chan struct{})}
+	close(mt.release)
+	mt.failure = status.Error(codes.Unavailable, "engine down")
+
+	registry := metrics.NewRegistry()
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 1, Backoff: time.Millisecond}, mt, nil, WithBackpressure(BackpressureConfig{
+		BreakerThreshold: 1,
+		BreakerReset:     30 * time.Second,
+	}))
+	client.SetMetrics(registry)
+
+	if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); err == nil || errors.Is(err, protocol.ErrEngineBusy) {
+		t.Fatalf("first call must reach the engine and fail, got %v", err)
+	}
+	if got := mt.calls.Load(); got != 1 {
+		t.Fatalf("engine calls = %d, want 1", got)
+	}
+
+	_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+	if !errors.Is(err, protocol.ErrEngineBusy) {
+		t.Fatalf("call against an open breaker = %v, want the busy sentinel", err)
+	}
+	if got := mt.calls.Load(); got != 1 {
+		t.Fatalf("rejected call must not touch the engine, calls = %d", got)
+	}
+
+	if _, err := client.ListPendingApprovals(context.Background(), protocol.ListPendingApprovalsRequest{}); err != nil {
+		t.Fatalf("ListPendingApprovals must stay exempt from the breaker: %v", err)
+	}
+
+	out := registry.Render()
+	for _, want := range []string{
+		`undolog_proxy_engine_rejections_total{reason="breaker"} 1`,
+		"undolog_proxy_engine_breaker_state 2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("metrics missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestGuardGateBoundsConcurrentCalls verifies the N+1st in-flight call is
+// rejected before the engine while the gate is full, and the freed slot is
+// reusable afterwards.
+func TestGuardGateBoundsConcurrentCalls(t *testing.T) {
+	mt := &blockingTransport{release: make(chan struct{})}
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 1, Backoff: time.Millisecond}, mt, nil, WithBackpressure(BackpressureConfig{
+		MaxInFlight: 1,
+	}))
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+		firstDone <- err
+	}()
+	waitUntil(t, func() bool { return mt.calls.Load() == 1 })
+
+	_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+	if !errors.Is(err, protocol.ErrEngineBusy) {
+		t.Fatalf("call at the cap = %v, want the busy sentinel", err)
+	}
+	if got := mt.calls.Load(); got != 1 {
+		t.Fatalf("rejected call must not touch the engine, calls = %d", got)
+	}
+
+	close(mt.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("held call must complete once the slot frees: %v", err)
+	}
+	if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); err != nil {
+		t.Fatalf("call after the release must be admitted: %v", err)
+	}
+}
+
+// TestGuardQueueAdmitsWaiterWhenSlotFrees verifies a queued call completes
+// once a slot frees inside the wait budget.
+func TestGuardQueueAdmitsWaiterWhenSlotFrees(t *testing.T) {
+	mt := &blockingTransport{release: make(chan struct{})}
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 1, Backoff: time.Millisecond}, mt, nil, WithBackpressure(BackpressureConfig{
+		MaxInFlight: 1,
+		QueueMax:    1,
+		QueueWait:   2 * time.Second,
+	}))
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+		firstDone <- err
+	}()
+	waitUntil(t, func() bool { return mt.calls.Load() == 1 })
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+		secondDone <- err
+	}()
+	waitUntil(t, func() bool { return client.guard.queue.depth() == 1 })
+
+	close(mt.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("held call must complete once the slot frees: %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("queued call must be admitted after the release: %v", err)
+	}
+	if got := mt.calls.Load(); got != 2 {
+		t.Fatalf("engine calls = %d, want 2", got)
+	}
+}
+
+// TestGuardQueueRejectsWhenFull verifies a call over the queue depth is
+// rejected with the busy sentinel and the reason names the queue.
+func TestGuardQueueRejectsWhenFull(t *testing.T) {
+	mt := &blockingTransport{release: make(chan struct{})}
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 1, Backoff: time.Millisecond}, mt, nil, WithBackpressure(BackpressureConfig{
+		MaxInFlight: 1,
+		QueueMax:    1,
+		QueueWait:   2 * time.Second,
+	}))
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+		firstDone <- err
+	}()
+	waitUntil(t, func() bool { return mt.calls.Load() == 1 })
+
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+		waiterDone <- err
+	}()
+	waitUntil(t, func() bool { return client.guard.queue.depth() == 1 })
+
+	_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+	if !errors.Is(err, protocol.ErrEngineBusy) {
+		t.Fatalf("call over the queue depth = %v, want the busy sentinel", err)
+	}
+	if got := mt.calls.Load(); got != 1 {
+		t.Fatalf("rejected call must not touch the engine, calls = %d", got)
+	}
+
+	close(mt.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("held call must complete once the slot frees: %v", err)
+	}
+	if err := <-waiterDone; err != nil {
+		t.Fatalf("queued call must be admitted after the release: %v", err)
+	}
+}
+
+// TestGuardQueueWaitExpires verifies a call that cannot get a slot inside
+// the wait budget is rejected with the busy sentinel instead of waiting
+// behind a stalled engine.
+func TestGuardQueueWaitExpires(t *testing.T) {
+	mt := &blockingTransport{release: make(chan struct{})}
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 1, Backoff: time.Millisecond}, mt, nil, WithBackpressure(BackpressureConfig{
+		MaxInFlight: 1,
+		QueueMax:    2,
+		QueueWait:   50 * time.Millisecond,
+	}))
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := client.Intercept(context.Background(), protocol.InterceptRequest{})
+		firstDone <- err
+	}()
+	waitUntil(t, func() bool { return mt.calls.Load() == 1 })
+
+	if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); !errors.Is(err, protocol.ErrEngineBusy) {
+		t.Fatalf("call after the wait budget = %v, want the busy sentinel", err)
+	}
+	if got := mt.calls.Load(); got != 1 {
+		t.Fatalf("rejected call must not touch the engine, calls = %d", got)
+	}
+
+	close(mt.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("held call must complete once the slot frees: %v", err)
+	}
+}
+
+// TestGuardDisabledMatchesUnconfigured verifies an all-zero backpressure
+// config runs no queue, no gate, and no breaker: every call reaches the
+// engine and no guard metric is registered.
+func TestGuardDisabledMatchesUnconfigured(t *testing.T) {
+	mt := newPassingTransport()
+	registry := metrics.NewRegistry()
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 1, Backoff: time.Millisecond}, mt, nil, WithBackpressure(BackpressureConfig{}))
+	client.SetMetrics(registry)
+
+	for i := 0; i < 5; i++ {
+		if _, err := client.Intercept(context.Background(), protocol.InterceptRequest{}); err != nil {
+			t.Fatalf("call %d with the guard disabled: %v", i, err)
+		}
+	}
+	if got := mt.calls.Load(); got != 5 {
+		t.Fatalf("engine calls = %d, want 5", got)
+	}
+	if out := registry.Render(); strings.Contains(out, "undolog_proxy_engine_inflight") {
+		t.Fatalf("disabled guard must register no metrics:\n%s", out)
+	}
+}
+
+// TestGuardPublishesGaugesAtStartup verifies the gauges appear on the
+// registry the moment metrics are attached, before any traffic, so
+// dashboards see zeroed series instead of absent ones.
+func TestGuardPublishesGaugesAtStartup(t *testing.T) {
+	mt := newPassingTransport()
+	client := NewClientWithTransport("ignored", RetryConfig{MaxAttempts: 1, Backoff: time.Millisecond}, mt, nil, WithBackpressure(BackpressureConfig{
+		MaxInFlight:      4,
+		QueueMax:         8,
+		QueueWait:        100 * time.Millisecond,
+		BreakerThreshold: 3,
+		BreakerReset:     30 * time.Second,
+	}))
+	registry := metrics.NewRegistry()
+	client.SetMetrics(registry)
+
+	out := registry.Render()
+	for _, want := range []string{
+		"undolog_proxy_engine_inflight 0",
+		"undolog_proxy_engine_queue_depth 0",
+		"undolog_proxy_engine_breaker_state 0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("metrics missing %q:\n%s", want, out)
 		}
 	}
 }

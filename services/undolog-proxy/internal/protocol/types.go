@@ -148,6 +148,17 @@ type EngineClient interface {
 	Close() error
 }
 
+// ErrEngineBusy marks a rejection by the proxy's own queue, concurrency gate,
+// or circuit breaker, so the HTTP layer can tell server capacity apart from a
+// real engine failure and answer 503 with Retry-After instead of 502.
+var ErrEngineBusy = errors.New("engine busy")
+
+// BusyRetryAfter is the Retry-After header value in seconds the HTTP handlers
+// advertise when the engine is at capacity. It tells clients the answer is
+// retryable; it is not a guarantee of recovery, since an open breaker may
+// still be cooling down when the client retries.
+const BusyRetryAfter = "1"
+
 // ErrEngineTransportNotConfigured is returned when the engine client has no transport.
 var ErrEngineTransportNotConfigured = errors.New("engine transport not configured")
 

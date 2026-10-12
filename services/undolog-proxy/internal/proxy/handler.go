@@ -276,7 +276,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			SessionID: req.SessionID,
 			Payload:   json.RawMessage(`{"stage":"intercept","error":"failed"}`),
 		})
-		writeError(w, h.logger, http.StatusBadGateway, "intercept_failed", err.Error(), requestIDFrom(r.Context()))
+		status := http.StatusBadGateway
+		if engine.IsOverload(err) {
+			// Server capacity, not engine failure: mark the answer
+			// retryable so SDKs back off instead of reporting a broken
+			// proxy. The envelope code still names the failed stage.
+			w.Header().Set("Retry-After", protocol.BusyRetryAfter)
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, h.logger, status, "intercept_failed", err.Error(), requestIDFrom(r.Context()))
 		return
 	}
 
@@ -323,7 +331,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				EffectID:  outcome.EffectID,
 				Payload:   json.RawMessage(`{"stage":"commit","error":"failed"}`),
 			})
-			writeError(w, h.logger, http.StatusBadGateway, "commit_failed", err.Error(), requestIDFrom(r.Context()))
+			status := http.StatusBadGateway
+			if engine.IsOverload(err) {
+				// Server capacity, not engine failure: answer retryable.
+				w.Header().Set("Retry-After", protocol.BusyRetryAfter)
+				status = http.StatusServiceUnavailable
+			}
+			writeError(w, h.logger, status, "commit_failed", err.Error(), requestIDFrom(r.Context()))
 			return
 		}
 		h.emit(sse.Event{

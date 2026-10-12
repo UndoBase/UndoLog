@@ -71,12 +71,18 @@ type Client struct {
 	conn      *grpc.ClientConn
 	transport Transport
 	closed    bool
+	guard     *guard
 }
 
 // SetMetrics wires the registry so engine RPC latency, error counts, and retry
 // counts are exposed on /metrics. A nil registry disables instrumentation.
+// When a backpressure guard is configured its gauges are published here so
+// they appear from startup, not from the first RPC.
 func (c *Client) SetMetrics(reg *metrics.Registry) {
 	c.metrics = reg
+	if c.guard != nil {
+		c.guard.publish()
+	}
 }
 
 // RPC method labels used in engine RPC metrics.
@@ -90,6 +96,19 @@ const (
 	rpcDurationMetric    = "undolog_proxy_engine_rpc_duration_seconds"
 	rpcErrorsMetric      = "undolog_proxy_engine_rpc_errors_total"
 	rpcRetriesMetric     = "undolog_proxy_engine_rpc_retries_total"
+)
+
+// Metric names and rejection reasons used by the backpressure guard. The
+// reason labels mirror the three mechanisms of ADR 0020: queue, gate, and
+// breaker.
+const (
+	inflightMetric     = "undolog_proxy_engine_inflight"
+	queueDepthMetric   = "undolog_proxy_engine_queue_depth"
+	breakerStateMetric = "undolog_proxy_engine_breaker_state"
+	rejectionsMetric   = "undolog_proxy_engine_rejections_total"
+	reasonQueue        = "queue"
+	reasonGate         = "gate"
+	reasonBreaker      = "breaker"
 )
 
 // Metadata contract for engine authentication, fixed by ADR 0018 and checked
@@ -122,7 +141,8 @@ type Option func(*clientOptions)
 // clientOptions collects the settings Option values apply before the dialer
 // is built.
 type clientOptions struct {
-	authToken string
+	authToken    string
+	backpressure *BackpressureConfig
 }
 
 // WithAuthToken makes every engine RPC carry token in the `authorization`
@@ -131,6 +151,95 @@ type clientOptions struct {
 func WithAuthToken(token string) Option {
 	return func(o *clientOptions) {
 		o.authToken = token
+	}
+}
+
+// BackpressureConfig bounds how the client uses the engine connection. Each
+// mechanism is optional and its zero value disables it: a zero MaxInFlight
+// runs no gate, a zero QueueWait runs no queue, and a zero BreakerThreshold
+// runs no breaker, so an all-zero config matches the behavior of a client
+// built without the option. The queue requires both a depth and a budget,
+// and it exists only to wait for gate slots, so it also requires MaxInFlight;
+// LoadConfig validates those pairs before the client is built.
+type BackpressureConfig struct {
+	// MaxInFlight caps engine RPCs running at once. Zero disables the gate.
+	MaxInFlight int
+	// QueueMax bounds how many engine RPCs may wait for a slot.
+	QueueMax int
+	// QueueWait is the budget one engine RPC may wait for a slot.
+	QueueWait time.Duration
+	// BreakerThreshold is the run of consecutive transport failures that
+	// opens the breaker.
+	BreakerThreshold int
+	// BreakerReset is how long an open breaker waits before probing again.
+	BreakerReset time.Duration
+}
+
+// WithBackpressure wraps the five client-facing RPCs in the configured
+// queue, gate, and breaker. ListPendingApprovals stays exempt so background
+// approval reconciliation is never blocked behind a busy tool path.
+func WithBackpressure(cfg BackpressureConfig) Option {
+	return func(o *clientOptions) {
+		o.backpressure = &cfg
+	}
+}
+
+// guard holds the optional queue, gate, and breaker protecting the engine
+// connection. Mechanisms that are not configured are nil and their slots in
+// the pipeline are skipped.
+type guard struct {
+	gate    *gate
+	queue   *queue
+	breaker *breaker
+}
+
+// newGuard builds the configured mechanisms and wires each one's gauge to
+// the client's registry. The queue is nested under the gate because a queue
+// only ever waits for gate slots; without a cap there is nothing to wait for.
+func newGuard(c *Client, cfg BackpressureConfig) *guard {
+	g := &guard{}
+	if cfg.MaxInFlight > 0 {
+		g.gate = newGate(cfg.MaxInFlight)
+		g.gate.onChanged = func(n int) {
+			c.setGuardGauge(inflightMetric, "Engine RPCs currently in flight", float64(n))
+		}
+		if cfg.QueueMax > 0 && cfg.QueueWait > 0 {
+			g.queue = newQueue(cfg.QueueMax, cfg.QueueWait)
+			g.queue.onChanged = func(n int) {
+				c.setGuardGauge(queueDepthMetric, "Engine RPCs currently waiting for a slot", float64(n))
+			}
+		}
+	}
+	if cfg.BreakerThreshold > 0 && cfg.BreakerReset > 0 {
+		g.breaker = newBreaker(cfg.BreakerThreshold, cfg.BreakerReset)
+		g.breaker.onChanged = func(state breakerState) {
+			c.setGuardGauge(breakerStateMetric, "Engine breaker state: 0 closed, 1 half-open, 2 open", float64(state))
+		}
+	}
+	return g
+}
+
+// setGuardGauge publishes one value to one guard gauge. The registry is read
+// at call time, so a registry attached by SetMetrics after the client was
+// built receives the values.
+func (c *Client) setGuardGauge(name, help string, v float64) {
+	if c.metrics == nil {
+		return
+	}
+	c.metrics.Gauge(name, help).Set(v)
+}
+
+// publish sets every configured gauge to its current value, so the metrics
+// exist from startup rather than from the first admission decision.
+func (g *guard) publish() {
+	if g.gate != nil {
+		g.gate.notify()
+	}
+	if g.queue != nil {
+		g.queue.notify()
+	}
+	if g.breaker != nil {
+		g.breaker.notify()
 	}
 }
 
@@ -169,19 +278,23 @@ func NewClient(address string, retry RetryConfig, logger *slog.Logger, opts ...O
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return &Client{
+	c := &Client{
 		address: address,
 		retry:   retry,
 		logger:  logger,
 		dial:    newDialer(options.authToken),
 	}
+	if options.backpressure != nil {
+		c.guard = newGuard(c, *options.backpressure)
+	}
+	return c
 }
 
 // NewClientWithTransport constructs a client with an injected transport. It
 // disables lazy dialing so the provided transport is used unmodified; the
 // missing-transport path then yields ErrEngineTransportNotConfigured on RPCs.
-func NewClientWithTransport(address string, retry RetryConfig, transport Transport, logger *slog.Logger) *Client {
-	c := NewClient(address, retry, logger)
+func NewClientWithTransport(address string, retry RetryConfig, transport Transport, logger *slog.Logger, opts ...Option) *Client {
+	c := NewClient(address, retry, logger, opts...)
 	c.transport = transport
 	c.dial = nil
 	return c
@@ -245,12 +358,14 @@ func (c *Client) nudgeReconnect() {
 
 // Intercept asks the engine how the proxy should route one tool call.
 func (c *Client) Intercept(ctx context.Context, req protocol.InterceptRequest) (protocol.InterceptResponse, error) {
-	start := time.Now()
-	resp, err := call(ctx, c, func(t Transport) (protocol.InterceptResponse, error) {
-		return t.Intercept(ctx, req)
+	return guarded(ctx, c, func() (protocol.InterceptResponse, error) {
+		start := time.Now()
+		resp, err := call(ctx, c, func(t Transport) (protocol.InterceptResponse, error) {
+			return t.Intercept(ctx, req)
+		})
+		c.observeRPC(rpcMethodIntercept, start, err)
+		return resp, err
 	})
-	c.observeRPC(rpcMethodIntercept, start, err)
-	return resp, err
 }
 
 // Commit reports a successful execution to the engine.
@@ -260,12 +375,14 @@ func (c *Client) Intercept(ctx context.Context, req protocol.InterceptRequest) (
 // effect is a no-op, never a double-apply. A retry cannot duplicate the tool
 // call, which already ran before this RPC.
 func (c *Client) Commit(ctx context.Context, req protocol.CommitRequest) error {
-	start := time.Now()
-	err := c.retryVoid(ctx, rpcMethodCommit, func(t Transport) error {
-		return t.Commit(ctx, req)
+	return guardedVoid(ctx, c, func() error {
+		start := time.Now()
+		err := c.retryVoid(ctx, rpcMethodCommit, func(t Transport) error {
+			return t.Commit(ctx, req)
+		})
+		c.observeRPC(rpcMethodCommit, start, err)
+		return err
 	})
-	c.observeRPC(rpcMethodCommit, start, err)
-	return err
 }
 
 // Fail reports a failed execution to the engine.
@@ -274,35 +391,45 @@ func (c *Client) Commit(ctx context.Context, req protocol.CommitRequest) error {
 // engine's executing|approved -> pending transition is idempotent, and the
 // effect is already in the state the proxy reports.
 func (c *Client) Fail(ctx context.Context, req protocol.FailRequest) error {
-	start := time.Now()
-	err := c.retryVoid(ctx, rpcMethodFail, func(t Transport) error {
-		return t.Fail(ctx, req)
+	return guardedVoid(ctx, c, func() error {
+		start := time.Now()
+		err := c.retryVoid(ctx, rpcMethodFail, func(t Transport) error {
+			return t.Fail(ctx, req)
+		})
+		c.observeRPC(rpcMethodFail, start, err)
+		return err
 	})
-	c.observeRPC(rpcMethodFail, start, err)
-	return err
 }
 
 // Approve resumes an approval request in the engine and returns execution data.
 func (c *Client) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
-	start := time.Now()
-	resp, err := call(ctx, c, func(t Transport) (protocol.ApproveResponse, error) {
-		return t.Approve(ctx, req)
+	return guarded(ctx, c, func() (protocol.ApproveResponse, error) {
+		start := time.Now()
+		resp, err := call(ctx, c, func(t Transport) (protocol.ApproveResponse, error) {
+			return t.Approve(ctx, req)
+		})
+		c.observeRPC(rpcMethodApprove, start, err)
+		return resp, err
 	})
-	c.observeRPC(rpcMethodApprove, start, err)
-	return resp, err
 }
 
 // Reject rejects an approval request in the engine.
 func (c *Client) Reject(ctx context.Context, req protocol.RejectRequest) error {
-	start := time.Now()
-	err := c.callVoid(ctx, func(t Transport) error {
-		return t.Reject(ctx, req)
+	return guardedVoid(ctx, c, func() error {
+		start := time.Now()
+		err := c.callVoid(ctx, func(t Transport) error {
+			return t.Reject(ctx, req)
+		})
+		c.observeRPC(rpcMethodReject, start, err)
+		return err
 	})
-	c.observeRPC(rpcMethodReject, start, err)
-	return err
 }
 
 // ListPendingApprovals returns the engine's unresolved approvals for one organization.
+//
+// ListPendingApprovals is deliberately not guarded: background approval
+// reconciliation must keep running while the tool path is busy, or a
+// saturation episode would also stop approvals from being refreshed.
 func (c *Client) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
 	start := time.Now()
 	resp, err := call(ctx, c, func(t Transport) (protocol.ListPendingApprovalsResponse, error) {
@@ -310,6 +437,114 @@ func (c *Client) ListPendingApprovals(ctx context.Context, req protocol.ListPend
 	})
 	c.observeRPC(rpcMethodListPending, start, err)
 	return resp, err
+}
+
+// guarded runs one engine RPC under the guard: admission before the call,
+// slot release and breaker accounting after it. An admission failure
+// returns a sentinel wrapped around protocol.ErrEngineBusy and the call
+// never reaches the transport. The release runs even if the call panics,
+// so a slot cannot leak.
+func guarded[T any](ctx context.Context, c *Client, fn func() (T, error)) (resp T, err error) {
+	release, err := c.enter(ctx)
+	if err != nil {
+		return resp, err
+	}
+	defer func() { release(err) }()
+	return fn()
+}
+
+// guardedVoid is guarded for RPCs that return only an error.
+func guardedVoid(ctx context.Context, c *Client, fn func() error) (err error) {
+	release, err := c.enter(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { release(err) }()
+	return fn()
+}
+
+// enter admits one engine call through the breaker first, so a failing
+// engine is never queued for, and then through the queue and gate. It
+// returns a release function that must be called with the call's error to
+// free the slot and feed the breaker. With no guard configured it is a
+// pass-through.
+func (c *Client) enter(ctx context.Context) (func(error), error) {
+	g := c.guard
+	if g == nil {
+		return func(error) {}, nil
+	}
+	if g.breaker != nil && !g.breaker.allow() {
+		return nil, c.reject("engine breaker is open", reasonBreaker)
+	}
+	if err := g.acquire(ctx); err != nil {
+		if g.breaker != nil {
+			g.breaker.releaseProbe()
+		}
+		return nil, c.queueRejection(err)
+	}
+	return func(rpcErr error) {
+		if g.gate != nil {
+			g.gate.release()
+		}
+		if g.breaker != nil {
+			g.breaker.record(rpcErr)
+		}
+	}, nil
+}
+
+// acquire takes a gate slot: through the bounded queue when one is
+// configured, directly when only the gate is, and not at all when the
+// breaker runs alone.
+func (g *guard) acquire(ctx context.Context) error {
+	switch {
+	case g.queue != nil:
+		return g.queue.admit(ctx, g.gate)
+	case g.gate != nil:
+		if g.gate.tryAcquire() {
+			return nil
+		}
+		return errGateFull
+	default:
+		return nil
+	}
+}
+
+// Errors returned by direct gate admission when no queue is configured.
+var errGateFull = errors.New("engine gate is full")
+
+// queueRejection turns a failed admission into the busy sentinel with the
+// rejection detail in the message and the queue or gate reason on the
+// metric. A caller deadline that expires while queued counts as a queue
+// rejection: the wait never completed, so the honest answer is the same
+// capacity signal.
+func (c *Client) queueRejection(err error) error {
+	switch {
+	case errors.Is(err, errGateFull):
+		return c.reject(errGateFull.Error(), reasonGate)
+	case errors.Is(err, errQueueFull):
+		return c.reject(errQueueFull.Error(), reasonQueue)
+	case errors.Is(err, errWaitExpired):
+		return c.reject(errWaitExpired.Error(), reasonQueue)
+	default:
+		return c.reject(fmt.Sprintf("engine queue wait interrupted: %v", err), reasonQueue)
+	}
+}
+
+// reject counts one backpressure rejection and wraps the busy sentinel the
+// HTTP layer maps to 503 with Retry-After.
+func (c *Client) reject(detail, reason string) error {
+	if c.metrics != nil {
+		c.metrics.Counter(rejectionsMetric, "Engine RPCs rejected by the queue, gate, or breaker", "reason").Add(1, reason)
+	}
+	return fmt.Errorf("%s: %w", detail, protocol.ErrEngineBusy)
+}
+
+// IsOverload reports whether err signals server capacity: a queue, gate, or
+// breaker rejection from this client, or the engine's own
+// RESOURCE_EXHAUSTED answer. Handlers map these to 503 with Retry-After and
+// keep 502 for genuine engine failures.
+func IsOverload(err error) bool {
+	return errors.Is(err, protocol.ErrEngineBusy) || status.Code(err) == codes.ResourceExhausted
 }
 
 // call obtains the transport lazily, then delegates to fn. Generic over any
