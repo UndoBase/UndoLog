@@ -254,6 +254,92 @@ Log level for the proxy server. Shared env var name across both engine and proxy
 
 ---
 
+### `UNDOLOG_PROXY_PLUGINS`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Comma-separated interceptor plugin names in execution order, for example
+`header,block-range`. The chain runs after authentication, so request hooks
+see the resolved organization; `/health` and `/metrics` are never proxied
+and stay outside it. An empty value runs no plugins, and an unknown name
+stops the proxy at startup with the valid options. Built-in: `header` adds
+`X-Custom-Header: undolog` to every proxied request.
+
+---
+
+### Custom plugin examples
+
+Plugins compile into the proxy image: implement the interface in
+`services/undolog-proxy/internal/plugin`, register the constructor under a
+name in `builtins` in `plugin.go`, and rebuild. Both examples below are
+complete implementations of `Name`, `Before`, and `After`.
+
+Add a header to every request:
+
+```go
+// upstreamAuth adds a shared header the upstream tool server can require.
+type upstreamAuth struct{ token string }
+
+// Name returns the configuration name of the plugin.
+func (upstreamAuth) Name() string { return "upstream-auth" }
+
+// Before adds the header to the outbound request.
+func (p upstreamAuth) Before(r *http.Request) Decision {
+	r.Header.Set("X-Upstream-Auth", p.token)
+	return Decision{}
+}
+
+// After leaves responses unchanged.
+func (upstreamAuth) After(http.ResponseWriter, *http.Request) {}
+```
+
+Register it as
+`"upstream-auth": func(*slog.Logger) Plugin { return upstreamAuth{token: "shared-secret"} }`,
+then set `UNDOLOG_PROXY_PLUGINS=upstream-auth`.
+
+Reject requests from an IP range:
+
+```go
+// blockRange rejects requests whose source address falls inside one CIDR.
+type blockRange struct{ network *net.IPNet }
+
+// newBlockRange builds the plugin at startup and rejects an invalid CIDR
+// there instead of at request time.
+func newBlockRange(cidr string) Plugin {
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic("block-range: invalid CIDR " + cidr)
+	}
+	return blockRange{network: network}
+}
+
+// Name returns the configuration name of the plugin.
+func (blockRange) Name() string { return "block-range" }
+
+// Before rejects an address inside the configured network.
+func (p blockRange) Before(r *http.Request) Decision {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return Decision{}
+	}
+	if ip := net.ParseIP(host); ip != nil && p.network.Contains(ip) {
+		return Decision{Status: http.StatusForbidden, Reason: "source address not allowed"}
+	}
+	return Decision{}
+}
+
+// After leaves responses unchanged.
+func (blockRange) After(http.ResponseWriter, *http.Request) {}
+```
+
+Register it as
+`"block-range": func(*slog.Logger) Plugin { return newBlockRange("203.0.113.0/24") }`,
+then set `UNDOLOG_PROXY_PLUGINS=header,block-range`.
+
+---
+
 ## Shared
 
 ### `UNDOLOG_LOG_LEVEL`
@@ -296,3 +382,4 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_API_KEYS` | Proxy | `string` | `""` | Yes |
+| `UNDOLOG_PROXY_PLUGINS` | Proxy | `string` | `""` | No |
