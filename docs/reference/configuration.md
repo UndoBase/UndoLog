@@ -265,7 +265,40 @@ Comma-separated interceptor plugin names in execution order, for example
 see the resolved organization; `/health` and `/metrics` are never proxied
 and stay outside it. An empty value runs no plugins, and an unknown name
 stops the proxy at startup with the valid options. Built-in: `header` adds
-`X-Custom-Header: undolog` to every proxied request.
+`X-Custom-Header: undolog` to every proxied request. Rate limiting is not
+selected here; it has its own settings below.
+
+---
+
+### `UNDOLOG_PROXY_RATE_LIMIT_RPS`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `float` | `0` | No |
+
+Sustained requests per second allowed per API key, for example `50`. The
+proxy meters each key by its constant-time-matched digest, never the raw
+key, and mounts the limiter whenever this value is positive, independently
+of `UNDOLOG_PROXY_PLUGINS`; `0` disables it. Must be set together with
+`UNDOLOG_PROXY_RATE_LIMIT_BURST`, and a malformed or negative value stops
+the proxy at startup instead of silently dropping the limit. A request
+over its bucket is answered with `429`, a `Retry-After` header holding the
+wait in whole seconds, and the standard error envelope with code
+`plugin_rejected` and message `rate limit exceeded`. Rejections are
+counted on `/metrics` as `undolog_proxy_rate_limit_rejections_total`.
+This limiter is the proxy's only source of `429`.
+
+---
+
+### `UNDOLOG_PROXY_RATE_LIMIT_BURST`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `int` | `0` | No |
+
+Token bucket size per API key: how many requests one key may send at once
+after an idle period, for example `100`. Must be set together with
+`UNDOLOG_PROXY_RATE_LIMIT_RPS`; `0` disables the limiter.
 
 ---
 
@@ -383,3 +416,5 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_API_KEYS` | Proxy | `string` | `""` | Yes |
 | `UNDOLOG_PROXY_PLUGINS` | Proxy | `string` | `""` | No |
+| `UNDOLOG_PROXY_RATE_LIMIT_RPS` | Proxy | `float` | `0` | No |
+| `UNDOLOG_PROXY_RATE_LIMIT_BURST` | Proxy | `int` | `0` | No |

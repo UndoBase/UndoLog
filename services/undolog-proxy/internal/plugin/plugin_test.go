@@ -198,6 +198,39 @@ func TestChainRejectionStatusFallback(t *testing.T) {
 	}
 }
 
+// TestChainRejectionWritesDecisionHeaders verifies a rejection carries the
+// plugin's response headers, such as Retry-After, on the writer before the
+// error envelope commits the status line.
+func TestChainRejectionWritesDecisionHeaders(t *testing.T) {
+	events := []string{}
+	chain := NewChain([]Plugin{
+		&stubPlugin{
+			name:   "limited",
+			events: &events,
+			decision: Decision{
+				Status:  http.StatusTooManyRequests,
+				Reason:  "rate limit exceeded",
+				Headers: map[string]string{"Retry-After": "7"},
+			},
+		},
+	}, captureLogger(&bytes.Buffer{}), func(w http.ResponseWriter, _ *http.Request, status int, _ string) {
+		w.WriteHeader(status)
+	})
+	handler := chain.Then(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("handler must not run after a rejection")
+	}))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/approvals", nil))
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "7" {
+		t.Fatalf("Retry-After = %q, want 7", got)
+	}
+}
+
 // TestChainPassesModifiedRequestToHandler verifies a Before hook's
 // modification of the request is visible to the handler.
 func TestChainPassesModifiedRequestToHandler(t *testing.T) {

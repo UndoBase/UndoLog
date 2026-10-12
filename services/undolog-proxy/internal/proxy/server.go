@@ -109,6 +109,14 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 	if err != nil {
 		return nil, err
 	}
+	if cfg.RateLimitRPS > 0 {
+		// The limiter mounts whenever it is configured, independently of
+		// UNDOLOG_PROXY_PLUGINS, and first so an exhausted bucket costs
+		// nothing beyond the bucket check.
+		chainPlugins = append([]plugin.Plugin{
+			plugin.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, registry),
+		}, chainPlugins...)
+	}
 	pluginChain := plugin.NewChain(chainPlugins, logger, pluginRejectionWriter(logger))
 	protectedChain := mw.PanicRecovery(mw.RequestID(mw.StructuredLogging(mw.Auth(
 		pluginChain.Then(protected)))))
