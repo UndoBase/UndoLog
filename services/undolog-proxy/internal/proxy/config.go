@@ -55,6 +55,9 @@ type Config struct {
 	LogLevel string
 	// TrustedAPIKeys maps API keys to organization identifiers.
 	TrustedAPIKeys map[string]string
+	// Plugins is the ordered interceptor plugin names from
+	// UNDOLOG_PROXY_PLUGINS. An empty list runs no plugins.
+	Plugins []string
 	// MaxBodyBytes is the maximum size of a request body the proxy decodes.
 	MaxBodyBytes int64
 	// ReadHeaderTimeout limits how long the server waits to read request headers.
@@ -84,6 +87,7 @@ func LoadConfig() (Config, error) {
 		UpstreamToolURL:           getenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", ""),
 		LogLevel:                  getenv("UNDOLOG_LOG_LEVEL", "info"),
 		TrustedAPIKeys:            parseAPIKeys(os.Getenv("UNDOLOG_PROXY_API_KEYS")),
+		Plugins:                   parsePlugins(os.Getenv("UNDOLOG_PROXY_PLUGINS")),
 		MaxBodyBytes:              int64Env("UNDOLOG_PROXY_MAX_BODY_BYTES", 1<<20),
 		ReadHeaderTimeout:         durationEnv("UNDOLOG_PROXY_READ_HEADER_TIMEOUT_SECS", 15*time.Second),
 		IdleTimeout:               durationEnv("UNDOLOG_PROXY_IDLE_TIMEOUT_SECS", 60*time.Second),
@@ -177,6 +181,22 @@ func parseAPIKeys(raw string) map[string]string {
 		org := strings.TrimSpace(kv[1])
 		if key != "" && org != "" {
 			out[key] = org
+		}
+	}
+	return out
+}
+
+// parsePlugins splits the comma-separated plugin order, trimming each name
+// and dropping blanks so "header,, second" and " header " both configure
+// cleanly. The order is preserved: it is the execution order.
+func parsePlugins(raw string) []string {
+	var out []string
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	for _, name := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			out = append(out, trimmed)
 		}
 	}
 	return out

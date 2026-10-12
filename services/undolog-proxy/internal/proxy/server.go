@@ -15,6 +15,7 @@ import (
 
 	"undolog-proxy/internal/approval"
 	"undolog-proxy/internal/metrics"
+	"undolog-proxy/internal/plugin"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
 )
@@ -104,7 +105,13 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		_, _ = io.WriteString(w, registry.Render())
 	})
-	protectedChain := mw.PanicRecovery(mw.RequestID(mw.StructuredLogging(mw.Auth(protected))))
+	chainPlugins, err := plugin.New(cfg.Plugins, logger)
+	if err != nil {
+		return nil, err
+	}
+	pluginChain := plugin.NewChain(chainPlugins, logger, pluginRejectionWriter(logger))
+	protectedChain := mw.PanicRecovery(mw.RequestID(mw.StructuredLogging(mw.Auth(
+		pluginChain.Then(protected)))))
 	mux.Handle("/mcp/tool_call", protectedChain)
 	mux.Handle("/events", protectedChain)
 	mux.Handle("/approvals", protectedChain)
@@ -149,6 +156,15 @@ func orgsFromKeys(keys map[string]string) []string {
 		out = append(out, org)
 	}
 	return out
+}
+
+// pluginRejectionWriter answers a plugin rejection with the proxy's standard
+// JSON error envelope, correlated through the request ID already on the
+// context.
+func pluginRejectionWriter(logger *slog.Logger) plugin.RejectFunc {
+	return func(w http.ResponseWriter, r *http.Request, status int, reason string) {
+		writeError(w, logger, status, "plugin_rejected", reason, requestIDFrom(r.Context()))
+	}
 }
 
 // Start runs the HTTP server until the context is canceled or the listener exits.

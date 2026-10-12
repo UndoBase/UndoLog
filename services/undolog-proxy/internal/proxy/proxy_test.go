@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -195,6 +196,37 @@ func TestLoadConfigEngineAuthToken(t *testing.T) {
 	}
 }
 
+// TestLoadConfigParsesPluginList verifies UNDOLOG_PROXY_PLUGINS arrives as
+// an ordered list with surrounding space trimmed and blank entries dropped,
+// and that an unset variable runs no plugins.
+func TestLoadConfigParsesPluginList(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{name: "unset", raw: "", want: nil},
+		{name: "blank", raw: "   ", want: nil},
+		{name: "single", raw: "header", want: []string{"header"}},
+		{name: "order and padding", raw: " second , first ", want: []string{"second", "first"}},
+		{name: "empty entries dropped", raw: "header,,", want: []string{"header"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("UNDOLOG_PROXY_API_KEYS", "k1=o1")
+			t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "")
+			t.Setenv("UNDOLOG_PROXY_PLUGINS", tc.raw)
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if !slices.Equal(cfg.Plugins, tc.want) {
+				t.Fatalf("plugins = %v, want %v", cfg.Plugins, tc.want)
+			}
+		})
+	}
+}
+
 // TestMaxBodyBytesEnvParses verifies the body cap env var overrides the default.
 func TestMaxBodyBytesEnvParses(t *testing.T) {
 	t.Setenv("UNDOLOG_PROXY_API_KEYS", "k1=o1")
@@ -236,6 +268,57 @@ func TestServerHardeningValues(t *testing.T) {
 	}
 	if server.httpSrv.MaxHeaderBytes != 8192 {
 		t.Fatalf("max header bytes: %d", server.httpSrv.MaxHeaderBytes)
+	}
+}
+
+// TestNewServerRejectsUnknownPlugin verifies an unknown plugin name stops
+// server construction, so a misconfigured UNDOLOG_PROXY_PLUGINS fails at
+// startup with the valid options instead of surprising the first request.
+func TestNewServerRejectsUnknownPlugin(t *testing.T) {
+	cfg := Config{
+		ListenAddr:      ":0",
+		EngineGRPCAddr:  "engine:50051",
+		UpstreamToolURL: "http://upstream",
+		TrustedAPIKeys:  map[string]string{"key-1": "org-1"},
+		Plugins:         []string{"mystery"},
+	}
+	_, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), metrics.NewRegistry(), nil)
+	if err == nil {
+		t.Fatal("an unknown plugin name must fail server construction")
+	}
+	for _, want := range []string{"mystery", "header"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v must contain %q", err, want)
+		}
+	}
+}
+
+// TestPluginRejectionWriterEnvelope verifies a plugin rejection answers with
+// the proxy's standard JSON error shape, correlated to the request ID on the
+// context.
+func TestPluginRejectionWriterEnvelope(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", nil)
+	r = r.WithContext(context.WithValue(r.Context(), ctxKeyRequestID, "req-1"))
+
+	pluginRejectionWriter(nil)(rec, r, http.StatusForbidden, "source not allowed")
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	var body struct {
+		RequestID string    `json:"request_id"`
+		Code      string    `json:"code"`
+		Message   string    `json:"message"`
+		Timestamp time.Time `json:"timestamp"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if body.Code != "plugin_rejected" || body.Message != "source not allowed" || body.RequestID != "req-1" || body.Timestamp.IsZero() {
+		t.Fatalf("envelope = %+v, want plugin_rejected with reason and request id", body)
 	}
 }
 

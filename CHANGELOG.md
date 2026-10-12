@@ -159,6 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   calls without the token are rejected with ``UNAUTHENTICATED``.
 - Proxy: ``UNDOLOG_PROXY_ENGINE_AUTH_TOKEN`` is sent on every engine gRPC
   call, and the compose stack wires one token on both sides.
+- Proxy: interceptor plugin chain with configurable order, request
+  rejection, and a built-in header plugin.
 
 ### Changed
 
