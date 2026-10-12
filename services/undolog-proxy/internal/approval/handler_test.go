@@ -16,6 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	eng "undolog-proxy/internal/engine"
 	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
@@ -30,6 +34,8 @@ type mockEngine struct {
 	failCalls       []protocol.FailRequest
 	pending         []protocol.ApprovalRecord
 	listErr         map[string]error
+	approveErr      error
+	rejectErr       error
 }
 
 // Intercept is a no-op stub used to satisfy the engine interface.
@@ -53,10 +59,14 @@ func (m *mockEngine) Fail(ctx context.Context, req protocol.FailRequest) error {
 	return nil
 }
 
-// Approve records that the approval was resumed and returns a valid response.
+// Approve records that the approval was resumed and returns a valid response,
+// or the configured engine error.
 func (m *mockEngine) Approve(ctx context.Context, req protocol.ApproveRequest) (protocol.ApproveResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.approveErr != nil {
+		return protocol.ApproveResponse{}, m.approveErr
+	}
 	m.approved = append(m.approved, req.ApprovalID)
 	return protocol.ApproveResponse{
 		EffectID:  "eff-1",
@@ -66,10 +76,14 @@ func (m *mockEngine) Approve(ctx context.Context, req protocol.ApproveRequest) (
 	}, nil
 }
 
-// Reject records that the approval was denied by the handler.
+// Reject records that the approval was denied by the handler, or returns the
+// configured engine error.
 func (m *mockEngine) Reject(ctx context.Context, req protocol.RejectRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.rejectErr != nil {
+		return m.rejectErr
+	}
 	m.rejected = append(m.rejected, req.ApprovalID)
 	m.lastRejectActor = req.Actor
 	return nil
@@ -400,5 +414,80 @@ func TestDecisionBodySizeLimit(t *testing.T) {
 	}
 	if got, ok := store.Get(rec.ID); !ok || got.Status != StatusPending {
 		t.Fatalf("an oversized body must not mutate the record, got %+v", got)
+	}
+}
+
+// TestEngineOverloadAnswers503OnDecisionPath verifies the engine's own
+// RESOURCE_EXHAUSTED answer reaches the operator as 503 with Retry-After
+// instead of the generic 502, on both decision endpoints.
+func TestEngineOverloadAnswers503OnDecisionPath(t *testing.T) {
+	for _, target := range []string{"approve", "reject"} {
+		t.Run(target, func(t *testing.T) {
+			store := NewStore()
+			engine := &mockEngine{
+				approveErr: status.Error(codes.ResourceExhausted, "engine saturated"),
+				rejectErr:  status.Error(codes.ResourceExhausted, "engine saturated"),
+			}
+			handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
+			rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
+
+			req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/"+target, nil)
+			req.Header.Set("X-Org-Id", "org-1")
+			w := httptest.NewRecorder()
+			if target == "approve" {
+				handler.ApproveApproval(w, req)
+			} else {
+				handler.RejectApproval(w, req)
+			}
+
+			if w.Code != http.StatusServiceUnavailable {
+				t.Fatalf("engine overload: status = %d, want 503", w.Code)
+			}
+			if got := w.Header().Get("Retry-After"); got != protocol.BusyRetryAfter {
+				t.Fatalf("Retry-After = %q, want %q", got, protocol.BusyRetryAfter)
+			}
+		})
+	}
+}
+
+// TestOpenBreakerAnswers503OnDecisionPath verifies a threshold run of
+// engine failures first answers 502 with the failure, then answers both
+// decision endpoints 503 with Retry-After without touching the engine.
+func TestOpenBreakerAnswers503OnDecisionPath(t *testing.T) {
+	store := NewStore()
+	inner := &mockEngine{
+		approveErr: status.Error(codes.Unavailable, "engine down"),
+		rejectErr:  status.Error(codes.Unavailable, "engine down"),
+	}
+	engineClient := eng.NewClientWithTransport("unused", eng.RetryConfig{MaxAttempts: 1}, inner, nil, eng.WithBackpressure(eng.BackpressureConfig{
+		BreakerThreshold: 1,
+		BreakerReset:     30 * time.Second,
+	}))
+	handler := NewHandler(store, engineClient, nil, nil, 0, 1<<20, nil)
+	rec := handler.CreatePending("ap-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/approve", nil)
+	firstReq.Header.Set("X-Org-Id", "org-1")
+	first := httptest.NewRecorder()
+	handler.ApproveApproval(first, firstReq)
+	if first.Code != http.StatusBadGateway {
+		t.Fatalf("engine failure before the breaker opens: status = %d, want 502", first.Code)
+	}
+
+	for _, target := range []string{"approve", "reject"} {
+		req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/"+target, nil)
+		req.Header.Set("X-Org-Id", "org-1")
+		w := httptest.NewRecorder()
+		if target == "approve" {
+			handler.ApproveApproval(w, req)
+		} else {
+			handler.RejectApproval(w, req)
+		}
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s against an open breaker: status = %d, want 503", target, w.Code)
+		}
+		if got := w.Header().Get("Retry-After"); got != protocol.BusyRetryAfter {
+			t.Fatalf("%s: Retry-After = %q, want %q", target, got, protocol.BusyRetryAfter)
+		}
 	}
 }

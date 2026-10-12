@@ -50,6 +50,20 @@ type Config struct {
 	// gRPC call. Surrounding whitespace is trimmed, as the engine trims its
 	// copy, and an empty value sends no credential. It must never be logged.
 	EngineAuthToken string
+	// MaxEngineRPCs caps engine RPCs in flight. Zero disables the gate.
+	MaxEngineRPCs int
+	// EngineQueueMax bounds how many engine RPCs may wait for a gate slot.
+	// It must be set together with EngineQueueWait and requires MaxEngineRPCs.
+	EngineQueueMax int
+	// EngineQueueWait is the budget one engine RPC may wait for a slot.
+	EngineQueueWait time.Duration
+	// EngineBreakerThreshold is the run of consecutive engine transport
+	// failures that opens the breaker. It must be set together with
+	// EngineBreakerReset.
+	EngineBreakerThreshold int
+	// EngineBreakerReset is how long an open breaker waits before probing
+	// the engine again.
+	EngineBreakerReset time.Duration
 	// UpstreamToolURL is the HTTP endpoint that receives forwarded tool calls.
 	UpstreamToolURL string
 	// LogLevel controls proxy logging verbosity.
@@ -78,6 +92,10 @@ type Config struct {
 
 // LoadConfig reads proxy settings from environment variables and applies sane defaults.
 func LoadConfig() (Config, error) {
+	bp, err := backpressureEnv()
+	if err != nil {
+		return Config{}, err
+	}
 	rateRPS, rateBurst, err := rateLimitEnv()
 	if err != nil {
 		return Config{}, err
@@ -95,6 +113,11 @@ func LoadConfig() (Config, error) {
 		ApprovalRetention:         durationEnv("UNDOLOG_PROXY_APPROVAL_RETENTION_SECS", 24*time.Hour),
 		EngineGRPCAddr:            getenv("UNDOLOG_PROXY_ENGINE_GRPC_ADDR", "localhost:50051"),
 		EngineAuthToken:           strings.TrimSpace(os.Getenv("UNDOLOG_PROXY_ENGINE_AUTH_TOKEN")),
+		MaxEngineRPCs:             bp.maxRPCs,
+		EngineQueueMax:            bp.queueMax,
+		EngineQueueWait:           bp.queueWait,
+		EngineBreakerThreshold:    bp.breakerThreshold,
+		EngineBreakerReset:        bp.breakerReset,
 		UpstreamToolURL:           getenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", ""),
 		LogLevel:                  getenv("UNDOLOG_LOG_LEVEL", "info"),
 		TrustedAPIKeys:            parseAPIKeys(os.Getenv("UNDOLOG_PROXY_API_KEYS")),
@@ -125,7 +148,83 @@ func LoadConfig() (Config, error) {
 	if (cfg.RateLimitRPS > 0) != (cfg.RateLimitBurst > 0) {
 		return Config{}, fmt.Errorf("UNDOLOG_PROXY_RATE_LIMIT_RPS and UNDOLOG_PROXY_RATE_LIMIT_BURST must be set together")
 	}
+	if (cfg.EngineQueueMax > 0) != (cfg.EngineQueueWait > 0) {
+		return Config{}, fmt.Errorf("UNDOLOG_PROXY_ENGINE_QUEUE_MAX and UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS must be set together")
+	}
+	if cfg.EngineQueueMax > 0 && cfg.MaxEngineRPCs == 0 {
+		return Config{}, fmt.Errorf("UNDOLOG_PROXY_ENGINE_QUEUE_MAX requires UNDOLOG_PROXY_MAX_ENGINE_RPCS")
+	}
+	if (cfg.EngineBreakerThreshold > 0) != (cfg.EngineBreakerReset > 0) {
+		return Config{}, fmt.Errorf("UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD and UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS must be set together")
+	}
 	return cfg, nil
+}
+
+// backpressureSettings holds the raw engine backpressure values.
+type backpressureSettings struct {
+	maxRPCs          int
+	queueMax         int
+	queueWait        time.Duration
+	breakerThreshold int
+	breakerReset     time.Duration
+}
+
+// backpressureEnv reads the engine backpressure settings. Each mechanism is
+// optional and zero disables it, but a malformed or negative value fails
+// startup instead of silently dropping a configured limit, because a typo in
+// a safety setting must not disable it. LoadConfig validates which settings
+// must be set together.
+func backpressureEnv() (backpressureSettings, error) {
+	var s backpressureSettings
+	var err error
+	if s.maxRPCs, err = strictIntEnv("UNDOLOG_PROXY_MAX_ENGINE_RPCS"); err != nil {
+		return s, err
+	}
+	if s.queueMax, err = strictIntEnv("UNDOLOG_PROXY_ENGINE_QUEUE_MAX"); err != nil {
+		return s, err
+	}
+	if s.queueWait, err = strictMsEnv("UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS"); err != nil {
+		return s, err
+	}
+	if s.breakerThreshold, err = strictIntEnv("UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD"); err != nil {
+		return s, err
+	}
+	if s.breakerReset, err = strictSecsEnv("UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS"); err != nil {
+		return s, err
+	}
+	return s, nil
+}
+
+// strictIntEnv reads a non-negative integer setting, treating an unset value
+// as zero and failing on anything else a safety setting cannot use.
+func strictIntEnv(key string) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer, got %q", key, raw)
+	}
+	return v, nil
+}
+
+// strictMsEnv reads a non-negative millisecond setting as a duration.
+func strictMsEnv(key string) (time.Duration, error) {
+	v, err := strictIntEnv(key)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(v) * time.Millisecond, nil
+}
+
+// strictSecsEnv reads a non-negative seconds setting as a duration.
+func strictSecsEnv(key string) (time.Duration, error) {
+	v, err := strictIntEnv(key)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(v) * time.Second, nil
 }
 
 // rateLimitEnv reads the per-key rate limit pair. Both settings are optional

@@ -349,6 +349,13 @@ func parseLimit(raw string) int {
 
 func (h *Handler) failDecision(w http.ResponseWriter, id string, err error) {
 	h.logger.Error("approval decision failed", "approval_id", id, "error", err)
+	if engine.IsOverload(err) {
+		// Server capacity, not a rejected decision: answer retryable so the
+		// operator can send the decision again once the engine recovers.
+		w.Header().Set("Retry-After", protocol.BusyRetryAfter)
+		http.Error(w, "engine at capacity", http.StatusServiceUnavailable)
+		return
+	}
 	http.Error(w, "engine rejected the decision", http.StatusBadGateway)
 }
 

@@ -302,6 +302,109 @@ after an idle period, for example `100`. Must be set together with
 
 ---
 
+### `UNDOLOG_PROXY_MAX_ENGINE_RPCS`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `int` | `0` | No |
+
+Caps how many engine gRPC calls the proxy may have in flight at once, for
+example `32`. This cap is the structural reason the engine's database
+pool cannot exhaust: fewer requests can wait on the engine than the pool
+can serve. A call answered while the gate is full receives `503`, a
+`Retry-After` header, and the standard error envelope, counted on
+`/metrics` as `undolog_proxy_engine_rejections_total` with label
+`reason="gate"`. `0` disables the gate, keeping the previous unbounded
+behavior. Must be positive to use `UNDOLOG_PROXY_ENGINE_QUEUE_MAX`.
+
+---
+
+### `UNDOLOG_PROXY_ENGINE_QUEUE_MAX`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `int` | `0` | No |
+
+How many engine calls may wait for a free slot, for example `64`. A
+micro-burst inside this depth waits for the next slot; a call that finds
+the queue full is rejected immediately with `503` and `Retry-After`
+(`reason="queue"`). Must be set together with
+`UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS` and requires
+`UNDOLOG_PROXY_MAX_ENGINE_RPCS`; `0` disables the queue.
+
+---
+
+### `UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `int` | `0` | No |
+
+How long one engine call may wait for a free slot, in milliseconds, for
+example `250`. A call that waits this long without getting a slot is
+rejected with `503` and `Retry-After`. Keep the budget small: waiting
+longer than the caller's own `UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS` only
+delays an answer the caller will never use. Must be set together with
+`UNDOLOG_PROXY_ENGINE_QUEUE_MAX`; `0` disables the queue.
+
+---
+
+### `UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `int` | `0` | No |
+
+How many consecutive engine transport failures, for example `5`, open
+the circuit breaker. Only connection loss counts as a failure: an error
+the engine answered means it is reachable and resets the run. An open
+breaker answers every guarded call with `503` and `Retry-After`
+(`reason="breaker"`) without touching the engine, so a restarting engine
+is not hammered. Background approval reconciliation is exempt. Must be
+set together with `UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS`; `0`
+disables the breaker.
+
+---
+
+### `UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `int` | `0` | No |
+
+How long the breaker stays open before probing the engine again, in
+seconds, for example `30`. The probe is a single call: the first healthy
+answer closes the breaker, and a failed probe reopens it for another
+full interval. Must be set together with
+`UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD`; `0` disables the breaker.
+
+---
+
+### Status codes for server capacity
+
+The engine guard and the per-key limiter share one retry contract with
+distinct codes, so operators can tell "clients are too fast" apart from
+"the server is saturated":
+
+| Status | Meaning | Sources |
+|--------|---------|---------|
+| `429` | The caller exceeded its own per-key rate | the per-key rate limiter |
+| `503` | The server is at capacity | full gate, full queue, expired wait, open breaker, engine `RESOURCE_EXHAUSTED` |
+| `502` | The engine failed | any other engine error |
+
+Both `429` and `503` carry `Retry-After`, so SDK retry behavior is
+identical either way; a `503` advertises one second and is a retryable
+signal, not a guarantee of recovery. On the tool-call path the `503`
+body is the standard error envelope whose code names the failed stage
+(`intercept_failed` or `commit_failed`); the approve and reject
+endpoints answer the plain text `engine at capacity`. Whenever a
+mechanism is configured, `/metrics` publishes the
+`undolog_proxy_engine_inflight`, `undolog_proxy_engine_queue_depth`,
+and `undolog_proxy_engine_breaker_state` gauges (`0` closed, `1`
+half-open, `2` open) from startup.
+
+---
+
 ### Custom plugin examples
 
 Plugins compile into the proxy image: implement the interface in
@@ -418,3 +521,8 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_PLUGINS` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_RATE_LIMIT_RPS` | Proxy | `float` | `0` | No |
 | `UNDOLOG_PROXY_RATE_LIMIT_BURST` | Proxy | `int` | `0` | No |
+| `UNDOLOG_PROXY_MAX_ENGINE_RPCS` | Proxy | `int` | `0` | No |
+| `UNDOLOG_PROXY_ENGINE_QUEUE_MAX` | Proxy | `int` | `0` | No |
+| `UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS` | Proxy | `int` | `0` | No |
+| `UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD` | Proxy | `int` | `0` | No |
+| `UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS` | Proxy | `int` | `0` | No |

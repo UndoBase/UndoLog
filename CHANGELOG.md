@@ -163,6 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rejection, and a built-in header plugin.
 - Proxy: per-API-key rate limit that answers 429 with Retry-After and
   counts rejections on /metrics.
+- Proxy: engine bounded queue, concurrency limit, and circuit breaker
+  answer 503 with Retry-After instead of overwhelming the connection pool.
 
 ### Changed
 
