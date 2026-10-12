@@ -1,7 +1,9 @@
 // Package proxy implements the HTTP ingress for the UndoLog MCP interceptor.
 //
-// This package keeps runtime configuration explicit and environment-driven so
-// the proxy can be deployed safely in containers without auxiliary config files.
+// This package keeps runtime configuration explicit and environment-driven,
+// with an optional TOML file for operators who prefer one; environment
+// variables always override file values, so container deployments stay
+// fully environment-driven.
 package proxy
 
 import (
@@ -16,9 +18,10 @@ import (
 
 // Config holds all runtime settings for the proxy server.
 //
-// The values are sourced from environment variables and are intentionally kept
-// small and explicit so the proxy can be configured in containers without
-// auxiliary config files.
+// The values are sourced from environment variables first, then an optional
+// undolog.toml selected by UNDOLOG_PROXY_CONFIG, then built-in defaults, and
+// are intentionally kept small and explicit so the proxy can be configured
+// in containers without auxiliary config files.
 type Config struct {
 	// ListenAddr is the HTTP bind address used by the proxy server.
 	ListenAddr string
@@ -90,44 +93,50 @@ type Config struct {
 	MaxHeaderBytes int
 }
 
-// LoadConfig reads proxy settings from environment variables and applies sane defaults.
+// LoadConfig reads proxy settings from environment variables, an optional
+// undolog.toml selected by UNDOLOG_PROXY_CONFIG, and built-in defaults, in
+// that precedence order.
 func LoadConfig() (Config, error) {
-	bp, err := backpressureEnv()
+	f, err := loadFileConfig("UNDOLOG_PROXY_CONFIG")
 	if err != nil {
 		return Config{}, err
 	}
-	rateRPS, rateBurst, err := rateLimitEnv()
+	bp, err := resolveBackpressure(f)
+	if err != nil {
+		return Config{}, err
+	}
+	rateRPS, rateBurst, err := resolveRateLimit(f)
 	if err != nil {
 		return Config{}, err
 	}
 	cfg := Config{
-		ListenAddr:                getenv("UNDOLOG_PROXY_LISTEN_ADDR", ":8080"),
-		ReadTimeout:               durationEnv("UNDOLOG_PROXY_READ_TIMEOUT_SECS", 15*time.Second),
-		WriteTimeout:              durationEnv("UNDOLOG_PROXY_WRITE_TIMEOUT_SECS", 15*time.Second),
-		ShutdownTimeout:           durationEnv("UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS", 30*time.Second),
-		RequestTimeout:            durationEnv("UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS", 30*time.Second),
-		EngineRetryMaxAttempts:    intEnv("UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS", 3),
-		EngineRetryBackoff:        millisEnv("UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS", 100*time.Millisecond),
-		DashboardEventBufSize:     intEnv("UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE", 128),
-		ApprovalReconcileInterval: durationEnv("UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS", 60*time.Second),
-		ApprovalRetention:         durationEnv("UNDOLOG_PROXY_APPROVAL_RETENTION_SECS", 24*time.Hour),
-		EngineGRPCAddr:            getenv("UNDOLOG_PROXY_ENGINE_GRPC_ADDR", "localhost:50051"),
-		EngineAuthToken:           strings.TrimSpace(os.Getenv("UNDOLOG_PROXY_ENGINE_AUTH_TOKEN")),
+		ListenAddr:                resolveStr("UNDOLOG_PROXY_LISTEN_ADDR", f.ListenAddr, ":8080"),
+		ReadTimeout:               resolveSecs("UNDOLOG_PROXY_READ_TIMEOUT_SECS", f.ReadTimeoutSecs, 15*time.Second),
+		WriteTimeout:              resolveSecs("UNDOLOG_PROXY_WRITE_TIMEOUT_SECS", f.WriteTimeoutSecs, 15*time.Second),
+		ShutdownTimeout:           resolveSecs("UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS", f.ShutdownTimeoutSecs, 30*time.Second),
+		RequestTimeout:            resolveSecs("UNDOLOG_PROXY_REQUEST_TIMEOUT_SECS", f.RequestTimeoutSecs, 30*time.Second),
+		EngineRetryMaxAttempts:    resolveInt("UNDOLOG_PROXY_ENGINE_RETRY_MAX_ATTEMPTS", f.EngineRetryMaxAttempts, 3),
+		EngineRetryBackoff:        resolveMillis("UNDOLOG_PROXY_ENGINE_RETRY_BASE_MS", f.EngineRetryBaseMs, 100*time.Millisecond),
+		DashboardEventBufSize:     resolveInt("UNDOLOG_PROXY_DASHBOARD_EVENT_CHAN_SIZE", f.DashboardEventChanSize, 128),
+		ApprovalReconcileInterval: resolveSecs("UNDOLOG_PROXY_APPROVAL_RECONCILE_INTERVAL_SECS", f.ApprovalReconcileIntervalSecs, 60*time.Second),
+		ApprovalRetention:         resolveSecs("UNDOLOG_PROXY_APPROVAL_RETENTION_SECS", f.ApprovalRetentionSecs, 24*time.Hour),
+		EngineGRPCAddr:            resolveStr("UNDOLOG_PROXY_ENGINE_GRPC_ADDR", f.EngineGRPCAddr, "localhost:50051"),
+		EngineAuthToken:           resolveTrimmed("UNDOLOG_PROXY_ENGINE_AUTH_TOKEN", f.EngineAuthToken),
 		MaxEngineRPCs:             bp.maxRPCs,
 		EngineQueueMax:            bp.queueMax,
 		EngineQueueWait:           bp.queueWait,
 		EngineBreakerThreshold:    bp.breakerThreshold,
 		EngineBreakerReset:        bp.breakerReset,
-		UpstreamToolURL:           getenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", ""),
-		LogLevel:                  getenv("UNDOLOG_LOG_LEVEL", "info"),
-		TrustedAPIKeys:            parseAPIKeys(os.Getenv("UNDOLOG_PROXY_API_KEYS")),
-		Plugins:                   parsePlugins(os.Getenv("UNDOLOG_PROXY_PLUGINS")),
+		UpstreamToolURL:           resolveStr("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", f.UpstreamToolURL, ""),
+		LogLevel:                  resolveStr("UNDOLOG_LOG_LEVEL", f.LogLevel, "info"),
+		TrustedAPIKeys:            resolveAPIKeys(f),
+		Plugins:                   resolvePlugins(f),
 		RateLimitRPS:              rateRPS,
 		RateLimitBurst:            rateBurst,
-		MaxBodyBytes:              int64Env("UNDOLOG_PROXY_MAX_BODY_BYTES", 1<<20),
-		ReadHeaderTimeout:         durationEnv("UNDOLOG_PROXY_READ_HEADER_TIMEOUT_SECS", 15*time.Second),
-		IdleTimeout:               durationEnv("UNDOLOG_PROXY_IDLE_TIMEOUT_SECS", 60*time.Second),
-		MaxHeaderBytes:            intEnv("UNDOLOG_PROXY_MAX_HEADER_BYTES", 1<<20),
+		MaxBodyBytes:              resolveInt64("UNDOLOG_PROXY_MAX_BODY_BYTES", f.MaxBodyBytes, 1<<20),
+		ReadHeaderTimeout:         resolveSecs("UNDOLOG_PROXY_READ_HEADER_TIMEOUT_SECS", f.ReadHeaderTimeoutSecs, 15*time.Second),
+		IdleTimeout:               resolveSecs("UNDOLOG_PROXY_IDLE_TIMEOUT_SECS", f.IdleTimeoutSecs, 60*time.Second),
+		MaxHeaderBytes:            resolveInt("UNDOLOG_PROXY_MAX_HEADER_BYTES", f.MaxHeaderBytes, 1<<20),
 	}
 
 	if cfg.ListenAddr == "" {
@@ -169,27 +178,28 @@ type backpressureSettings struct {
 	breakerReset     time.Duration
 }
 
-// backpressureEnv reads the engine backpressure settings. Each mechanism is
-// optional and zero disables it, but a malformed or negative value fails
-// startup instead of silently dropping a configured limit, because a typo in
-// a safety setting must not disable it. LoadConfig validates which settings
-// must be set together.
-func backpressureEnv() (backpressureSettings, error) {
+// resolveBackpressure reads the engine backpressure settings from the
+// environment first and the config file second. Each mechanism is optional
+// and zero disables it, but a malformed or negative environment value fails
+// startup instead of silently dropping a configured limit, because a typo
+// in a safety setting must not disable it. LoadConfig validates which
+// settings must be set together.
+func resolveBackpressure(f *fileLayer) (backpressureSettings, error) {
 	var s backpressureSettings
 	var err error
-	if s.maxRPCs, err = strictIntEnv("UNDOLOG_PROXY_MAX_ENGINE_RPCS"); err != nil {
+	if s.maxRPCs, err = strictIntSetting("UNDOLOG_PROXY_MAX_ENGINE_RPCS", f.MaxEngineRPCs); err != nil {
 		return s, err
 	}
-	if s.queueMax, err = strictIntEnv("UNDOLOG_PROXY_ENGINE_QUEUE_MAX"); err != nil {
+	if s.queueMax, err = strictIntSetting("UNDOLOG_PROXY_ENGINE_QUEUE_MAX", f.EngineQueueMax); err != nil {
 		return s, err
 	}
-	if s.queueWait, err = strictMsEnv("UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS"); err != nil {
+	if s.queueWait, err = strictMsSetting("UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS", f.EngineQueueWaitMs); err != nil {
 		return s, err
 	}
-	if s.breakerThreshold, err = strictIntEnv("UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD"); err != nil {
+	if s.breakerThreshold, err = strictIntSetting("UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD", f.EngineBreakerThreshold); err != nil {
 		return s, err
 	}
-	if s.breakerReset, err = strictSecsEnv("UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS"); err != nil {
+	if s.breakerReset, err = strictSecsSetting("UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS", f.EngineBreakerResetSecs); err != nil {
 		return s, err
 	}
 	return s, nil
@@ -227,11 +237,12 @@ func strictSecsEnv(key string) (time.Duration, error) {
 	return time.Duration(v) * time.Second, nil
 }
 
-// rateLimitEnv reads the per-key rate limit pair. Both settings are optional
-// and zero disables the limiter, but a malformed or negative value fails
-// startup instead of silently dropping a configured limit, because a typo in
-// a safety setting must not disable it.
-func rateLimitEnv() (float64, int, error) {
+// resolveRateLimit reads the per-key rate limit pair from the environment
+// first and the config file second. Both settings are optional and zero
+// disables the limiter, but a malformed or negative environment value fails
+// startup instead of silently dropping a configured limit, because a typo
+// in a safety setting must not disable it.
+func resolveRateLimit(f *fileLayer) (float64, int, error) {
 	var rps float64
 	if raw := strings.TrimSpace(os.Getenv("UNDOLOG_PROXY_RATE_LIMIT_RPS")); raw != "" {
 		v, err := strconv.ParseFloat(raw, 64)
@@ -239,6 +250,8 @@ func rateLimitEnv() (float64, int, error) {
 			return 0, 0, fmt.Errorf("UNDOLOG_PROXY_RATE_LIMIT_RPS must be a non-negative number, got %q", raw)
 		}
 		rps = v
+	} else if f.RateLimitRPS != nil {
+		rps = float64(*f.RateLimitRPS)
 	}
 	var burst int
 	if raw := strings.TrimSpace(os.Getenv("UNDOLOG_PROXY_RATE_LIMIT_BURST")); raw != "" {
@@ -247,6 +260,8 @@ func rateLimitEnv() (float64, int, error) {
 			return 0, 0, fmt.Errorf("UNDOLOG_PROXY_RATE_LIMIT_BURST must be a non-negative integer, got %q", raw)
 		}
 		burst = v
+	} else if f.RateLimitBurst != nil {
+		burst = *f.RateLimitBurst
 	}
 	return rps, burst, nil
 }
