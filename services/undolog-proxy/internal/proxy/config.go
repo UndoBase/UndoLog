@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -58,6 +59,12 @@ type Config struct {
 	// Plugins is the ordered interceptor plugin names from
 	// UNDOLOG_PROXY_PLUGINS. An empty list runs no plugins.
 	Plugins []string
+	// RateLimitRPS is the sustained request rate allowed per API key in
+	// requests per second. Zero disables the limiter.
+	RateLimitRPS float64
+	// RateLimitBurst is the token bucket size per API key. It must be set
+	// together with RateLimitRPS.
+	RateLimitBurst int
 	// MaxBodyBytes is the maximum size of a request body the proxy decodes.
 	MaxBodyBytes int64
 	// ReadHeaderTimeout limits how long the server waits to read request headers.
@@ -71,6 +78,10 @@ type Config struct {
 
 // LoadConfig reads proxy settings from environment variables and applies sane defaults.
 func LoadConfig() (Config, error) {
+	rateRPS, rateBurst, err := rateLimitEnv()
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		ListenAddr:                getenv("UNDOLOG_PROXY_LISTEN_ADDR", ":8080"),
 		ReadTimeout:               durationEnv("UNDOLOG_PROXY_READ_TIMEOUT_SECS", 15*time.Second),
@@ -88,6 +99,8 @@ func LoadConfig() (Config, error) {
 		LogLevel:                  getenv("UNDOLOG_LOG_LEVEL", "info"),
 		TrustedAPIKeys:            parseAPIKeys(os.Getenv("UNDOLOG_PROXY_API_KEYS")),
 		Plugins:                   parsePlugins(os.Getenv("UNDOLOG_PROXY_PLUGINS")),
+		RateLimitRPS:              rateRPS,
+		RateLimitBurst:            rateBurst,
 		MaxBodyBytes:              int64Env("UNDOLOG_PROXY_MAX_BODY_BYTES", 1<<20),
 		ReadHeaderTimeout:         durationEnv("UNDOLOG_PROXY_READ_HEADER_TIMEOUT_SECS", 15*time.Second),
 		IdleTimeout:               durationEnv("UNDOLOG_PROXY_IDLE_TIMEOUT_SECS", 60*time.Second),
@@ -109,7 +122,34 @@ func LoadConfig() (Config, error) {
 			return Config{}, fmt.Errorf("UNDOLOG_PROXY_UPSTREAM_TOOL_URL must be an absolute http(s) URL, got %q", cfg.UpstreamToolURL)
 		}
 	}
+	if (cfg.RateLimitRPS > 0) != (cfg.RateLimitBurst > 0) {
+		return Config{}, fmt.Errorf("UNDOLOG_PROXY_RATE_LIMIT_RPS and UNDOLOG_PROXY_RATE_LIMIT_BURST must be set together")
+	}
 	return cfg, nil
+}
+
+// rateLimitEnv reads the per-key rate limit pair. Both settings are optional
+// and zero disables the limiter, but a malformed or negative value fails
+// startup instead of silently dropping a configured limit, because a typo in
+// a safety setting must not disable it.
+func rateLimitEnv() (float64, int, error) {
+	var rps float64
+	if raw := strings.TrimSpace(os.Getenv("UNDOLOG_PROXY_RATE_LIMIT_RPS")); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, 0, fmt.Errorf("UNDOLOG_PROXY_RATE_LIMIT_RPS must be a non-negative number, got %q", raw)
+		}
+		rps = v
+	}
+	var burst int
+	if raw := strings.TrimSpace(os.Getenv("UNDOLOG_PROXY_RATE_LIMIT_BURST")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return 0, 0, fmt.Errorf("UNDOLOG_PROXY_RATE_LIMIT_BURST must be a non-negative integer, got %q", raw)
+		}
+		burst = v
+	}
+	return rps, burst, nil
 }
 
 func getenv(key, fallback string) string {

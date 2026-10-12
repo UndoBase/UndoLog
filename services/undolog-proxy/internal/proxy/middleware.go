@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"undolog-proxy/internal/metrics"
+	"undolog-proxy/internal/plugin"
 )
 
 type ctxKey string
@@ -82,7 +83,8 @@ func (m *MiddlewareStack) SetMetrics(reg *metrics.Registry) {
 	m.metrics = reg
 }
 
-// Auth resolves X-Api-Key to an organization ID and stores it on the request.
+// Auth resolves X-Api-Key to an organization ID, stores it on the request
+// together with the matched key digest the rate limiter meters.
 func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiKey := strings.TrimSpace(r.Header.Get("X-Api-Key"))
@@ -90,12 +92,14 @@ func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 			writeError(w, m.logger, http.StatusUnauthorized, "auth_failed", "X-Api-Key header required", "")
 			return
 		}
-		orgID, ok := m.orgForKey(hmacDigest(m.hmacKey, apiKey))
+		digest := hmacDigest(m.hmacKey, apiKey)
+		orgID, ok := m.orgForKey(digest)
 		if !ok {
 			writeError(w, m.logger, http.StatusForbidden, "auth_failed", "API key not recognized", "")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxKeyOrgID, orgID)
+		ctx = plugin.WithAPIKeyDigest(ctx, hex.EncodeToString(digest))
 		r = r.WithContext(ctx)
 		r.Header.Set("X-Org-Id", orgID)
 		next.ServeHTTP(w, r)

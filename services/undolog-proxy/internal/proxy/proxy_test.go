@@ -241,6 +241,62 @@ func TestMaxBodyBytesEnvParses(t *testing.T) {
 	}
 }
 
+// TestLoadConfigRateLimitPair verifies the rate limit settings default to
+// disabled, parse a working pair together, and fail startup on a malformed
+// or half-configured pair instead of silently dropping a configured limit.
+func TestLoadConfigRateLimitPair(t *testing.T) {
+	t.Setenv("UNDOLOG_PROXY_API_KEYS", "k1=o1")
+	t.Setenv("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", "")
+	t.Setenv("UNDOLOG_PROXY_RATE_LIMIT_RPS", "")
+	t.Setenv("UNDOLOG_PROXY_RATE_LIMIT_BURST", "")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.RateLimitRPS != 0 || cfg.RateLimitBurst != 0 {
+		t.Fatalf("rate limit must be disabled by default, got rps=%v burst=%d", cfg.RateLimitRPS, cfg.RateLimitBurst)
+	}
+
+	t.Setenv("UNDOLOG_PROXY_RATE_LIMIT_RPS", "12.5")
+	t.Setenv("UNDOLOG_PROXY_RATE_LIMIT_BURST", "20")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.RateLimitRPS != 12.5 || cfg.RateLimitBurst != 20 {
+		t.Fatalf("rate limit = (%v, %d), want (12.5, 20)", cfg.RateLimitRPS, cfg.RateLimitBurst)
+	}
+
+	cases := []struct {
+		name    string
+		rps     string
+		burst   string
+		wantVar string
+	}{
+		{name: "rate without burst", rps: "10", burst: "", wantVar: "UNDOLOG_PROXY_RATE_LIMIT_RPS"},
+		{name: "burst without rate", rps: "", burst: "5", wantVar: "UNDOLOG_PROXY_RATE_LIMIT_RPS"},
+		{name: "malformed rate", rps: "fast", burst: "5", wantVar: "UNDOLOG_PROXY_RATE_LIMIT_RPS"},
+		{name: "negative rate", rps: "-1", burst: "5", wantVar: "UNDOLOG_PROXY_RATE_LIMIT_RPS"},
+		{name: "malformed burst", rps: "1", burst: "lots", wantVar: "UNDOLOG_PROXY_RATE_LIMIT_BURST"},
+		{name: "negative burst", rps: "1", burst: "-5", wantVar: "UNDOLOG_PROXY_RATE_LIMIT_BURST"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("UNDOLOG_PROXY_RATE_LIMIT_RPS", tc.rps)
+			t.Setenv("UNDOLOG_PROXY_RATE_LIMIT_BURST", tc.burst)
+
+			_, err := LoadConfig()
+			if err == nil {
+				t.Fatal("expected a startup error")
+			}
+			if !strings.Contains(err.Error(), tc.wantVar) {
+				t.Fatalf("error %v must name %s", err, tc.wantVar)
+			}
+		})
+	}
+}
+
 // TestServerHardeningValues verifies the HTTP server picks up the read-header,
 // idle, and header-size limits from the config.
 func TestServerHardeningValues(t *testing.T) {
@@ -319,6 +375,87 @@ func TestPluginRejectionWriterEnvelope(t *testing.T) {
 	}
 	if body.Code != "plugin_rejected" || body.Message != "source not allowed" || body.RequestID != "req-1" || body.Timestamp.IsZero() {
 		t.Fatalf("envelope = %+v, want plugin_rejected with reason and request id", body)
+	}
+}
+
+// TestRateLimitRejectsOverBurstAndCountsMetrics verifies the mounted limiter
+// admits a request within the bucket, answers the next one with 429 and a
+// Retry-After header, and counts the rejection on /metrics.
+func TestRateLimitRejectsOverBurstAndCountsMetrics(t *testing.T) {
+	cfg := Config{
+		ListenAddr:            ":0",
+		RequestTimeout:        time.Second,
+		DashboardEventBufSize: 8,
+		EngineGRPCAddr:        "engine:50051",
+		UpstreamToolURL:       "http://upstream",
+		TrustedAPIKeys:        map[string]string{"key-1": "org-1"},
+		RateLimitRPS:          0.0001,
+		RateLimitBurst:        1,
+	}
+	registry := metrics.NewRegistry()
+	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), registry, nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	within := httptest.NewRequest(http.MethodGet, "/approvals", nil)
+	within.Header.Set("X-Api-Key", "key-1")
+	withinRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(withinRec, within)
+	if withinRec.Code != http.StatusOK {
+		t.Fatalf("request within the bucket: status = %d, want 200 (%s)", withinRec.Code, withinRec.Body.String())
+	}
+
+	over := httptest.NewRequest(http.MethodGet, "/approvals", nil)
+	over.Header.Set("X-Api-Key", "key-1")
+	overRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(overRec, over)
+	if overRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("request over the burst: status = %d, want 429 (%s)", overRec.Code, overRec.Body.String())
+	}
+	if got := overRec.Header().Get("Retry-After"); got != "10000" {
+		t.Fatalf("Retry-After = %q, want 10000 seconds at 0.0001 rps", got)
+	}
+	if !strings.Contains(overRec.Body.String(), "rate limit exceeded") {
+		t.Fatalf("body must carry the rejection reason: %s", overRec.Body.String())
+	}
+
+	metricsRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(metricsRec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metricsRec.Body.String(), "# TYPE undolog_proxy_rate_limit_rejections_total counter") {
+		t.Fatalf("rejection counter missing from /metrics:\n%s", metricsRec.Body.String())
+	}
+}
+
+// TestRateLimitDisabledLeavesRequestsUntouched verifies the default config
+// mounts no limiter: with both settings unset, repeated requests behave
+// exactly as before rate limiting existed.
+func TestRateLimitDisabledLeavesRequestsUntouched(t *testing.T) {
+	cfg := Config{
+		ListenAddr:            ":0",
+		RequestTimeout:        time.Second,
+		DashboardEventBufSize: 8,
+		EngineGRPCAddr:        "engine:50051",
+		UpstreamToolURL:       "http://upstream",
+		TrustedAPIKeys:        map[string]string{"key-1": "org-1"},
+	}
+	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), metrics.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	for i := 1; i <= 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/approvals", nil)
+		req.Header.Set("X-Api-Key", "key-1")
+		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200 with the limiter disabled", i, rec.Code)
+		}
 	}
 }
 

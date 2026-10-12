@@ -52,6 +52,9 @@ func (c *Chain) Then(next http.Handler) http.Handler {
 			if status < http.StatusBadRequest || status > maxHTTPStatus {
 				status = http.StatusForbidden
 			}
+			for name, value := range d.Headers {
+				w.Header().Set(name, value)
+			}
 			c.logger.Warn("plugin rejected request",
 				"request_id", r.Header.Get("X-Request-Id"),
 				"plugin", p.Name(),

@@ -26,6 +26,9 @@ type Decision struct {
 	// Reason is the short explanation returned to the caller and written to
 	// the rejection log line. An empty Reason allows the request.
 	Reason string
+	// Headers are response headers the chain writes with a rejection before
+	// the error envelope, such as Retry-After on a rate-limit rejection.
+	Headers map[string]string
 }
 
 // Plugin is one interceptor in the proxy's request chain.
@@ -39,8 +42,8 @@ type Plugin interface {
 	Name() string
 
 	// Before runs before the handler. It may modify r in place, or return
-	// a rejection with a Status and Reason, which stops later plugins and
-	// the handler.
+	// a rejection with a Status, Reason, and optional Headers, which stops
+	// later plugins and the handler.
 	Before(r *http.Request) Decision
 
 	// After runs when the handler first commits the response and may set

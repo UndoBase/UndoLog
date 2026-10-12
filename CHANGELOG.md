@@ -161,6 +161,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   call, and the compose stack wires one token on both sides.
 - Proxy: interceptor plugin chain with configurable order, request
   rejection, and a built-in header plugin.
+- Proxy: per-API-key rate limit that answers 429 with Retry-After and
+  counts rejections on /metrics.
 
 ### Changed
 
