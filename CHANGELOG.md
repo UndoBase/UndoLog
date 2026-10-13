@@ -171,6 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   without a restart; everything else still needs one.
 - Proxy: in-process gRPC engine harness so proxy unit tests run with no
   Docker or PostgreSQL, plus a coverage gate for ``internal/proxy``.
+- Proxy: concurrency regression tests for startup, configuration
+  reload, and the first engine dial, each passing under ``-race``.
 
 ### Changed
 
