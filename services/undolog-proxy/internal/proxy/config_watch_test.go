@@ -5,11 +5,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -657,5 +660,120 @@ func TestLevelHandlerDerivedHandlersShareLevel(t *testing.T) {
 	}
 	if !group.Enabled(context.Background(), slog.LevelDebug) {
 		t.Fatal("a handler derived by WithGroup must follow SetLevel")
+	}
+}
+
+// TestReloadRacesRequestHandling rewrites configuration versions while
+// requests run the full middleware chain, so the reload races the state a
+// live request reads: the log level the logging middleware consults and the
+// limiter buckets the plugin chain checks. The race detector is the
+// assertion that this shared state is guarded. The final rewrite is a
+// distinctive version, and once the watcher stops the server must hold that
+// version in full, with level and limit from the same version rather than a
+// torn mix.
+func TestReloadRacesRequestHandling(t *testing.T) {
+	path := configPath(t)
+	rewriteConfigFile(t, path, baseConfig)
+	useConfigFile(t, path)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	buf := &syncBuffer{}
+	level := NewLevelHandler(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}), ParseLevel(cfg.LogLevel))
+	server, err := NewServer(cfg, &mockEngineClient{}, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}), metrics.NewRegistry(), slog.New(level))
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	server.level = level
+
+	applied := &appliedRecorder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	// watchConfig starts a goroutine the test cannot join, so build the same
+	// watcher by hand and run it through startWatcher: the stop function
+	// waits for the loop to exit, which is what makes the final read of the
+	// running configuration safe rather than a race with a late reload.
+	watcher := newConfigWatcher(path, time.Millisecond, server.logger, func(next Config) {
+		server.applyReload(next)
+		applied.record(next)
+	})
+	stop := startWatcher(t, ctx, watcher)
+
+	var served, unexpected atomic.Int32
+	stopRequests := make(chan struct{})
+	// The stop function is registered as a cleanup as well as called at the
+	// end of the test, so a failed waitFor cannot leave the request
+	// goroutines spinning for the rest of the run.
+	stopOnce := sync.Once{}
+	stopAll := func() { stopOnce.Do(func() { close(stopRequests) }) }
+	t.Cleanup(stopAll)
+	var requests sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			for {
+				select {
+				case <-stopRequests:
+					return
+				default:
+				}
+				req := httptest.NewRequest(http.MethodGet, "/approvals?state=pending", nil)
+				req.Header.Set("X-Api-Key", "key-1")
+				rec := httptest.NewRecorder()
+				server.httpSrv.Handler.ServeHTTP(rec, req)
+				served.Add(1)
+				// A racing version can empty this key's bucket, so 429 is as
+				// valid as 200; any other status would mean a reload leaked a
+				// torn state into request handling.
+				if rec.Code != http.StatusOK && rec.Code != http.StatusTooManyRequests {
+					unexpected.Add(1)
+				}
+			}
+		}()
+	}
+
+	// Every version differs in size from its neighbours and from the final
+	// one, so each write is a detectable version on any filesystem.
+	for i, version := range []string{configWith("warn", 5, 5), configWith("info", 30, 60)} {
+		rewriteConfigFile(t, path, version)
+		waitFor(t, func() bool { return applied.count() >= i+1 }, "a racing version to apply")
+	}
+	if server.level.Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("the racing versions must not enable debug before the final version applies")
+	}
+
+	rewriteConfigFile(t, path, configWith("debug", 7, 7))
+	waitFor(t, func() bool {
+		last, ok := applied.last()
+		return ok && last.LogLevel == "debug"
+	}, "the final version to apply")
+
+	stopAll()
+	requests.Wait()
+	cancel()
+	stop()
+
+	if got := served.Load(); got == 0 {
+		t.Fatal("requests must run while the reloads apply")
+	}
+	if got := unexpected.Load(); got != 0 {
+		t.Fatalf("%d requests answered outside 200 and 429 during the reloads", got)
+	}
+	if got := applied.count(); got < 3 {
+		t.Fatalf("applied %d configurations, want the two racing versions and the final one", got)
+	}
+	// The watcher has exited, so the running configuration is stable to
+	// read: it must match the final version as one, never a mix.
+	if server.cfg.LogLevel != "debug" || server.cfg.RateLimitRPS != 7 || server.cfg.RateLimitBurst != 7 {
+		t.Fatalf("settled on log level %q and limit %v/%d, want the final version debug 7/7",
+			server.cfg.LogLevel, server.cfg.RateLimitRPS, server.cfg.RateLimitBurst)
+	}
+	if !server.level.Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("the settled log level must pass debug records")
 	}
 }

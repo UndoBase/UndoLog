@@ -152,6 +152,13 @@ environment is never replaced by a reloaded file. Kubernetes ConfigMap
 mounts work unchanged: the mount is a symlink to a versioned directory, and
 the atomic symlink swap changes the modification time the proxy polls.
 
+A reload is safe while requests are in flight. The structures a reload
+touches are guarded for concurrent use: the log level swaps through an
+atomic, and the limiter replaces its rate and bucket size under the
+limiter's own lock. A request already in flight finishes against the
+settings it started with; requests issued after the swap see the new
+version.
+
 ---
 
 ### `UNDOLOG_PROXY_LISTEN_ADDR`
