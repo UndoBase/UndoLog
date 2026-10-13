@@ -33,6 +33,12 @@ type Server struct {
 	reconcileInterval time.Duration
 	approvalRetention time.Duration
 	logger            *slog.Logger
+	// rateLimiter is the mounted limiter's live-update handle, nil when the
+	// proxy started without rate limiting.
+	rateLimiter liveLimiter
+	// level is the handler a configuration reload changes verbosity
+	// through, nil until WatchConfig is called.
+	level *LevelHandler
 }
 
 // NewServer builds the full HTTP server stack for the proxy service.
@@ -109,13 +115,19 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 	if err != nil {
 		return nil, err
 	}
+	var limiter liveLimiter
 	if cfg.RateLimitRPS > 0 {
 		// The limiter mounts whenever it is configured, independently of
 		// UNDOLOG_PROXY_PLUGINS, and first so an exhausted bucket costs
 		// nothing beyond the bucket check.
-		chainPlugins = append([]plugin.Plugin{
-			plugin.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, registry),
-		}, chainPlugins...)
+		mounted := plugin.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, registry)
+		chainPlugins = append([]plugin.Plugin{mounted}, chainPlugins...)
+		// NewRateLimiter always returns *rateLimiter, which implements
+		// liveLimiter; the handle lets a configuration reload apply new
+		// limits without reaching into the plugin package.
+		if live, ok := mounted.(liveLimiter); ok {
+			limiter = live
+		}
 	}
 	pluginChain := plugin.NewChain(chainPlugins, logger, pluginRejectionWriter(logger))
 	protectedChain := mw.PanicRecovery(mw.RequestID(mw.StructuredLogging(mw.Auth(
@@ -132,6 +144,7 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 		approvals:         approvalStore,
 		broadcaster:       broadcaster,
 		handler:           mux,
+		rateLimiter:       limiter,
 		reconcilerOrgs:    orgsFromKeys(cfg.TrustedAPIKeys),
 		reconcileInterval: cfg.ApprovalReconcileInterval,
 		approvalRetention: cfg.ApprovalRetention,

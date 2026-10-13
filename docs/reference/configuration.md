@@ -127,6 +127,31 @@ whole. TOML wins over YAML because implicit typing has no place in a
 security tool's configuration, and over JSON because operators annotate
 config files and JSON has no comments.
 
+### Hot reload
+
+When the proxy reads a configuration file it polls the file's modification
+time every five seconds and applies new versions without a restart. Two
+settings reload live.
+
+| Setting | File keys | Effect of a reload |
+|---------|-----------|--------------------|
+| Log level | `log_level` | Verbosity changes in place for every log line. |
+| Rate limit | `rate_limit_rps`, `rate_limit_burst` | Buckets clamp to the new size and refill at the new rate; setting both to zero turns metering off. |
+
+Everything else shapes the already built process and needs a restart:
+listen and engine addresses, timeouts, API keys, plugins, and the engine
+backpressure mechanisms. A reload that changes one of them logs the file
+keys involved and keeps the running values. Enabling rate limiting when
+the proxy started without it also needs a restart, because the limiter
+mounts into the plugin chain at startup.
+
+A malformed or invalid new file is rejected as a whole: the proxy logs the
+error and keeps the last good configuration until the next change.
+Environment variables keep their precedence, so a value set in the
+environment is never replaced by a reloaded file. Kubernetes ConfigMap
+mounts work unchanged: the mount is a symlink to a versioned directory, and
+the atomic symlink swap changes the modification time the proxy polls.
+
 ---
 
 ### `UNDOLOG_PROXY_LISTEN_ADDR`

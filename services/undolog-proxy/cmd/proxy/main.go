@@ -25,28 +25,17 @@ func main() {
 	}
 }
 
-// logLevel maps a configured log-level name onto its slog.Level. Unknown or
-// empty names fall back to info, matching the LoadConfig default.
-func logLevel(name string) slog.Level {
-	switch name {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
-}
-
 func run() error {
 	cfg, err := proxy.LoadConfig()
 	if err != nil {
 		return err
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel(cfg.LogLevel)}))
+	// The JSON handler sits at the lowest level so LevelHandler is the only
+	// gate; a configuration reload then changes verbosity in place instead
+	// of rebuilding the logger every component holds.
+	level := proxy.NewLevelHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}), proxy.ParseLevel(cfg.LogLevel))
+	logger := slog.New(level)
 
 	registry := metrics.NewRegistry()
 
@@ -76,5 +65,6 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	srv.WatchConfig(ctx, level)
 	return srv.Start(ctx)
 }
