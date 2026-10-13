@@ -7,7 +7,7 @@
 
 GO_PB_DIR := services/undolog-proxy/internal/engine/pb
 
-.PHONY: proto proto-go proto-rust clean check fmt fmt-rust fmt-go fmt-python lint lint-rust lint-go lint-python test test-rust test-go test-python test-www doc-rust typecheck test-all demo-multi-tenant bench bench-quick bench-overhead bench-throughput bench-dedup bench-compensation bench-multitenant bench-sse bench-approval bench-longevity
+.PHONY: proto proto-go proto-rust clean check fmt fmt-rust fmt-go fmt-python lint lint-rust lint-go lint-python test test-rust test-go test-python test-www coverage-go doc-rust typecheck test-all demo-multi-tenant bench bench-quick bench-overhead bench-throughput bench-dedup bench-compensation bench-multitenant bench-sse bench-approval bench-longevity
 
 proto: proto-go proto-rust
 
@@ -68,6 +68,12 @@ test-rust:
 
 test-go:
 	cd services/undolog-proxy && go test -race ./... -count=1
+
+# Fails below the 80 percent statement-coverage floor for internal/proxy and
+# leaves coverage.out in the proxy module for go tool cover inspection.
+coverage-go:
+	cd services/undolog-proxy && go test ./internal/proxy -count=1 -coverprofile=coverage.out
+	cd services/undolog-proxy && go tool cover -func=coverage.out | awk 'END { total = $$3 + 0; if (total < 80) { printf "internal/proxy coverage %.1f%% is below the 80%% gate\n", total; exit 1 } printf "internal/proxy coverage %.1f%%\n", total }'
 
 test-python:
 	cd sdks/undolog-py && python -m pytest -v

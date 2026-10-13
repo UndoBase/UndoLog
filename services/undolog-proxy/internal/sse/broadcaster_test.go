@@ -6,10 +6,13 @@ package sse
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -181,5 +184,88 @@ func TestBroadcasterMetricsSubscribersAndDrops(t *testing.T) {
 	rendered = reg.Render()
 	if !strings.Contains(rendered, `undolog_proxy_sse_subscribers{org="org-1"} 0`) {
 		t.Errorf("expected org-1 gauge back to zero, got:\n%s", rendered)
+	}
+}
+
+// frameWriter records the streamed bytes and signals once the first write
+// lands, so a test can assert the frame format without racing the handler.
+type frameWriter struct {
+	*httptest.ResponseRecorder
+	sig  chan struct{}
+	once sync.Once
+}
+
+// Write records the payload and releases the waiting test on the first frame.
+func (w *frameWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseRecorder.Write(b)
+	w.once.Do(func() { close(w.sig) })
+	return n, err
+}
+
+// TestBroadcasterHandlerWritesStandardSSEFrame verifies one delivered event
+// uses the SSE wire format: an event, id, and data line followed by the
+// blank-line terminator.
+func TestBroadcasterHandlerWritesStandardSSEFrame(t *testing.T) {
+	b := NewBroadcaster(4)
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
+	req.Header.Set("X-Org-Id", "org-1")
+	w := &frameWriter{ResponseRecorder: httptest.NewRecorder(), sig: make(chan struct{})}
+
+	done := make(chan struct{})
+	go func() {
+		b.Handler(w, req)
+		close(done)
+	}()
+
+	// Emit until a frame lands: the handler subscribes after flushing the
+	// response headers, so an earlier emit would be dropped.
+	emitted := false
+	for i := 0; i < 10 && !emitted; i++ {
+		b.Emit(Event{Type: EventEffectCommitted, OrgID: "org-1", SessionID: "s-1", EffectID: "e-1"})
+		select {
+		case <-w.sig:
+			emitted = true
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not stop")
+	}
+	if !emitted {
+		t.Fatal("no frame was written")
+	}
+
+	body := w.Body.String()
+	frame, _, terminated := strings.Cut(body, "\n\n")
+	if !terminated {
+		t.Fatalf("frame must end with a blank line, got %q", body)
+	}
+	lines := strings.Split(frame, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("frame must carry event, id, and data lines, got %q", frame)
+	}
+	if lines[0] != "event: effect_committed" {
+		t.Errorf("event line = %q, want %q", lines[0], "event: effect_committed")
+	}
+	id := strings.TrimPrefix(lines[1], "id: ")
+	if id == lines[1] {
+		t.Errorf("frame is missing its id line: %q", lines[1])
+	} else if unixNano, err := strconv.ParseInt(id, 10, 64); err != nil || unixNano <= 0 {
+		t.Errorf("id line %q must carry the event time as Unix nanoseconds", lines[1])
+	}
+	data, isJSON := strings.CutPrefix(lines[2], "data: ")
+	if !isJSON {
+		t.Fatalf("frame is missing its data line: %q", lines[2])
+	}
+	var evt Event
+	if err := json.Unmarshal([]byte(data), &evt); err != nil {
+		t.Fatalf("data line must be the event JSON: %v", err)
+	}
+	if evt.Type != EventEffectCommitted || evt.EffectID != "e-1" || evt.OrgID != "org-1" {
+		t.Fatalf("data line carries %+v, want the emitted event", evt)
 	}
 }

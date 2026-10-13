@@ -24,6 +24,7 @@ import (
 
 	"undolog-proxy/internal/approval"
 	eng "undolog-proxy/internal/engine"
+	"undolog-proxy/internal/engine/pb"
 	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
 	"undolog-proxy/internal/sse"
@@ -664,81 +665,255 @@ func TestMiddlewareAuthRejectsUnknownAndMissingKeys(t *testing.T) {
 	}
 }
 
-// TestHandlerRoutesExecuteReplayAndApproval covers the handler's three outcome paths.
-func TestHandlerRoutesExecuteReplayAndApproval(t *testing.T) {
+// TestHandlerRoutesInterceptOutcomesThroughEngineTransport routes every
+// engine decision through the real gRPC codec: the scripted engine runs on
+// an in-memory listener, so proto marshaling and gRPC status mapping are
+// exercised instead of bypassed by an in-process mock.
+func TestHandlerRoutesInterceptOutcomesThroughEngineTransport(t *testing.T) {
 	t.Run("execute", func(t *testing.T) {
-		engine := &mockEngineClient{
-			interceptResp: protocol.InterceptResponse{
-				Outcome:  protocol.InterceptExecute,
-				EffectID: "eff-1",
-			},
-		}
-		b := sse.NewBroadcaster(8)
-		store := approval.NewStore()
-		executor := ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		script := &scriptedEngine{interceptResp: &pb.InterceptResponse{
+			Outcome: &pb.InterceptResponse_Execute{Execute: &pb.ExecuteOutcome{EffectId: "eff-1"}},
+		}}
+		harness := newEngineHarness(t, script)
+		execCalls := 0
+		server := newProxyTestServer(t, harness.client, ToolExecutorFunc(func(_ context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+			execCalls++
+			if call.ToolName != "search" {
+				t.Errorf("executed tool = %q, want search", call.ToolName)
+			}
 			return protocol.ToolResult{Success: true, Output: json.RawMessage(`{"ok":true}`)}, nil
-		})
-		h := NewHandler(engine, executor, store, b, time.Second, 1<<20, nil)
+		}))
 
-		body := `{"session_id":"sess-1","tool_name":"search","args":{"q":"undo"}}`
-		req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(body))
-		req = req.WithContext(context.WithValue(req.Context(), ctxKeyOrgID, "org-1"))
 		rec := httptest.NewRecorder()
-
-		h.ServeHTTP(rec, req)
+		server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
 
 		if rec.Code != http.StatusOK {
-			t.Fatalf("unexpected status: %d", rec.Code)
+			t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 		}
-		if engine.commitReq.EffectID != "eff-1" {
-			t.Fatalf("commit not called with effect id: %+v", engine.commitReq)
+		if execCalls != 1 {
+			t.Fatalf("executor calls = %d, want 1", execCalls)
+		}
+		wire := script.interceptReq.GetToolCall()
+		if wire.GetOrgId() != "org-1" || wire.GetSessionId() != "s1" || wire.GetToolName() != "search" {
+			t.Fatalf("engine received %+v, want the marshaled tool call", wire)
+		}
+		if got := string(wire.GetArgs()); got != "{}" {
+			t.Fatalf("engine received args %q, want the marshaled JSON", got)
+		}
+		wantSig, err := CanonicalSignature("search", json.RawMessage("{}"))
+		if err != nil {
+			t.Fatalf("canonical signature: %v", err)
+		}
+		if wire.GetSignature() != wantSig {
+			t.Fatalf("engine received signature %q, want %q", wire.GetSignature(), wantSig)
+		}
+		if script.commitReq.GetEffectId() != "eff-1" || script.commitReq.GetOrgId() != "org-1" {
+			t.Fatalf("commit crossed the wire as %+v", script.commitReq)
+		}
+		if !script.commitReq.GetResult().GetSuccess() {
+			t.Fatalf("commit must carry the executed result, got %+v", script.commitReq.GetResult())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"status":"executed"`) || !strings.Contains(body, `"effect_id":"eff-1"`) {
+			t.Fatalf("response must carry the executed result, got %s", body)
 		}
 	})
 
 	t.Run("replay", func(t *testing.T) {
-		engine := &mockEngineClient{
-			interceptResp: protocol.InterceptResponse{
-				Outcome:      protocol.InterceptReplay,
-				EffectID:     "eff-2",
-				CachedResult: &protocol.ToolResult{Success: true, Output: json.RawMessage(`{"cached":true}`)},
-			},
-		}
-		h := NewHandler(engine, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
-			t.Fatal("executor should not be called")
+		script := &scriptedEngine{interceptResp: &pb.InterceptResponse{
+			Outcome: &pb.InterceptResponse_Replay{Replay: &pb.ReplayOutcome{
+				EffectId:     "eff-2",
+				CachedResult: &pb.ToolResult{Success: true, Output: []byte(`{"cached":true}`)},
+			}},
+		}}
+		harness := newEngineHarness(t, script)
+		server := newProxyTestServer(t, harness.client, ToolExecutorFunc(func(_ context.Context, _ protocol.ToolCall) (protocol.ToolResult, error) {
+			t.Fatal("executor must not run for a replay")
 			return protocol.ToolResult{}, nil
-		}), approval.NewStore(), sse.NewBroadcaster(8), time.Second, 1<<20, nil)
+		}))
 
-		req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(`{"session_id":"sess-1","tool_name":"search","args":{}}`))
-		req = req.WithContext(context.WithValue(req.Context(), ctxKeyOrgID, "org-1"))
 		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
 
-		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("unexpected status: %d", rec.Code)
+			t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+		}
+		if script.commitReq != nil {
+			t.Fatalf("a replay must not commit, got %+v", script.commitReq)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"status":"replayed"`) || !strings.Contains(body, `"cached":true`) {
+			t.Fatalf("response must carry the cached result, got %s", body)
 		}
 	})
 
 	t.Run("approval", func(t *testing.T) {
-		engine := &mockEngineClient{
-			interceptResp: protocol.InterceptResponse{
-				Outcome:    protocol.InterceptAwaitingApproval,
-				ApprovalID: "app-1",
-			},
-		}
-		h := NewHandler(engine, ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
-			t.Fatal("executor should not be called")
+		script := &scriptedEngine{interceptResp: &pb.InterceptResponse{
+			Outcome: &pb.InterceptResponse_AwaitingApproval{AwaitingApproval: &pb.AwaitingApprovalOutcome{
+				EffectId:   "eff-3",
+				ApprovalId: "app-1",
+			}},
+		}}
+		harness := newEngineHarness(t, script)
+		server := newProxyTestServer(t, harness.client, ToolExecutorFunc(func(_ context.Context, _ protocol.ToolCall) (protocol.ToolResult, error) {
+			t.Fatal("executor must not run before approval")
 			return protocol.ToolResult{}, nil
-		}), approval.NewStore(), sse.NewBroadcaster(8), time.Second, 1<<20, nil)
+		}))
 
-		req := httptest.NewRequest(http.MethodPost, "/mcp/tool_call", bytes.NewBufferString(`{"session_id":"sess-1","tool_name":"delete_user","args":{}}`))
-		req = req.WithContext(context.WithValue(req.Context(), ctxKeyOrgID, "org-1"))
 		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
 
-		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusAccepted {
-			t.Fatalf("unexpected status: %d", rec.Code)
+			t.Fatalf("status = %d, want 202 (%s)", rec.Code, rec.Body.String())
+		}
+		if script.commitReq != nil {
+			t.Fatalf("a pending approval must not commit, got %+v", script.commitReq)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"status":"pending_approval"`) || !strings.Contains(body, `"approval_id":"app-1"`) {
+			t.Fatalf("response must carry the approval id, got %s", body)
 		}
 	})
+
+	t.Run("approval decision resumes over the wire", func(t *testing.T) {
+		script := &scriptedEngine{
+			interceptResp: &pb.InterceptResponse{
+				Outcome: &pb.InterceptResponse_AwaitingApproval{AwaitingApproval: &pb.AwaitingApprovalOutcome{
+					EffectId:   "eff-3",
+					ApprovalId: "app-1",
+				}},
+			},
+			approveResp: &pb.ApproveResponse{
+				EffectId:  "eff-3",
+				SessionId: "s1",
+				ToolName:  "delete_user",
+				Args:      []byte(`{"id":"u1"}`),
+			},
+		}
+		harness := newEngineHarness(t, script)
+		var executed []protocol.ToolCall
+		server := newProxyTestServer(t, harness.client, ToolExecutorFunc(func(_ context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+			executed = append(executed, call)
+			return protocol.ToolResult{Success: true}, nil
+		}))
+
+		intercept := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(intercept, newToolCallRequest())
+		if intercept.Code != http.StatusAccepted {
+			t.Fatalf("intercept status = %d, want 202 (%s)", intercept.Code, intercept.Body.String())
+		}
+
+		decision := httptest.NewRequest(http.MethodPost, "/approvals/app-1/approve", bytes.NewBufferString(`{"actor":"alice"}`))
+		decision.Header.Set("X-Api-Key", "key-1")
+		decisionRec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(decisionRec, decision)
+
+		if decisionRec.Code != http.StatusOK {
+			t.Fatalf("decision status = %d, want 200 (%s)", decisionRec.Code, decisionRec.Body.String())
+		}
+		if script.approveReq.GetApprovalId() != "app-1" || script.approveReq.GetOrgId() != "org-1" || script.approveReq.GetActor() != "alice" {
+			t.Fatalf("engine received %+v, want the marshaled approval decision", script.approveReq)
+		}
+		if script.commitReq.GetEffectId() != "eff-3" || !script.commitReq.GetResult().GetSuccess() {
+			t.Fatalf("the approved execution must commit over the wire, got %+v", script.commitReq)
+		}
+		if len(executed) != 1 || executed[0].ToolName != "delete_user" || executed[0].OrgID != "org-1" {
+			t.Fatalf("approved execution = %+v, want one org-1 delete_user call", executed)
+		}
+		body := decisionRec.Body.String()
+		if !strings.Contains(body, `"status":"approved"`) || !strings.Contains(body, `"execution":"committed"`) {
+			t.Fatalf("decision response must report the committed execution, got %s", body)
+		}
+	})
+
+	t.Run("unknown outcome answers 500", func(t *testing.T) {
+		script := &scriptedEngine{}
+		harness := newEngineHarness(t, script)
+		server := newProxyTestServer(t, harness.client, ToolExecutorFunc(func(_ context.Context, _ protocol.ToolCall) (protocol.ToolResult, error) {
+			t.Fatal("executor must not run on an unknown outcome")
+			return protocol.ToolResult{}, nil
+		}))
+
+		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"code":"intercept_failed"`) || !strings.Contains(body, "unexpected intercept outcome") {
+			t.Fatalf("response must name the unknown outcome, got %s", body)
+		}
+	})
+
+	t.Run("intercept failure answers 502", func(t *testing.T) {
+		script := &scriptedEngine{interceptErr: status.Error(codes.Internal, "engine exploded")}
+		harness := newEngineHarness(t, script)
+		server := newProxyTestServer(t, harness.client, ToolExecutorFunc(func(_ context.Context, _ protocol.ToolCall) (protocol.ToolResult, error) {
+			t.Fatal("executor must not run when the intercept fails")
+			return protocol.ToolResult{}, nil
+		}))
+
+		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
+
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502 (%s)", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"code":"intercept_failed"`) || !strings.Contains(body, "engine exploded") {
+			t.Fatalf("response must carry the gRPC status message, got %s", body)
+		}
+	})
+
+	t.Run("commit failure answers 502", func(t *testing.T) {
+		script := &scriptedEngine{
+			interceptResp: &pb.InterceptResponse{
+				Outcome: &pb.InterceptResponse_Execute{Execute: &pb.ExecuteOutcome{EffectId: "eff-1"}},
+			},
+			commitErr: status.Error(codes.Internal, "commit rejected"),
+		}
+		harness := newEngineHarness(t, script)
+		server := newProxyTestServer(t, harness.client, ToolExecutorFunc(func(_ context.Context, _ protocol.ToolCall) (protocol.ToolResult, error) {
+			return protocol.ToolResult{Success: true}, nil
+		}))
+
+		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, newToolCallRequest())
+
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502 (%s)", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"code":"commit_failed"`) || !strings.Contains(body, "commit rejected") {
+			t.Fatalf("response must carry the gRPC status message, got %s", body)
+		}
+	})
+}
+
+// TestApprovalsRoutesRejectWrongMethods verifies the approvals endpoints
+// answer 405 on a method mismatch instead of running their handlers.
+func TestApprovalsRoutesRejectWrongMethods(t *testing.T) {
+	server := newProxyTestServer(t, &mockEngineClient{}, ToolExecutorFunc(func(_ context.Context, _ protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}))
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/approvals"},
+		{http.MethodGet, "/approvals/app-1/approve"},
+		{http.MethodGet, "/approvals/app-1/reject"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("X-Api-Key", "key-1")
+		rec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: status = %d, want 405", tc.method, tc.path, rec.Code)
+		}
+	}
 }
 
 // TestHealthEndpointBypassesAuth verifies the health endpoint remains public.
