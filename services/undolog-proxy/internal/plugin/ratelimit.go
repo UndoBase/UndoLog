@@ -100,12 +100,31 @@ func (l *rateLimiter) Before(r *http.Request) Decision {
 // the interface requires the hook to exist.
 func (l *rateLimiter) After(http.ResponseWriter, *http.Request) {}
 
+// SetLimit applies a new sustained rate and bucket size to every key at its
+// next request. Existing tokens clamp to the new bucket size immediately, so
+// a lowered burst cannot be spent down from the old one, and a zero rate
+// disables metering exactly as it does at startup. The watcher calls it with
+// a pair LoadConfig has already validated as both zero or both positive.
+func (l *rateLimiter) SetLimit(rps float64, burst int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rps = rps
+	l.burst = float64(burst)
+	for _, b := range l.buckets {
+		b.tokens = min(b.tokens, l.burst)
+	}
+}
+
 // allow takes one token for identity at the given time and reports the wait
 // in whole seconds when the bucket is empty. Refill is lazy per request, so
-// an idle key always starts at full burst.
+// an idle key always starts at full burst. A zero rate disables metering:
+// every request passes, matching an unset limit at startup.
 func (l *rateLimiter) allow(identity string, now time.Time) (int, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.rps <= 0 {
+		return 0, true
+	}
 	b, ok := l.buckets[identity]
 	if !ok {
 		b = &tokenBucket{tokens: l.burst, refilledAt: now}

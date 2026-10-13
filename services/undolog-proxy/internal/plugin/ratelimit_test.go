@@ -1,7 +1,7 @@
 // Package plugin tests the per-API-key rate limiter: burst accounting, lazy
-// refill, per-key isolation, concurrent safety, the rejection counter on
-// /metrics, and the digest identity contract with the authentication
-// middleware.
+// refill, per-key isolation, concurrent safety, live limit updates, the
+// rejection counter on /metrics, and the digest identity contract with the
+// authentication middleware.
 package plugin
 
 import (
@@ -143,5 +143,60 @@ func TestRateLimiterConcurrentAllowIsRaceFree(t *testing.T) {
 
 	if got := allowed.Load(); got != burst {
 		t.Fatalf("allowed = %d, want exactly the burst of %d", got, burst)
+	}
+}
+
+// TestRateLimiterSetLimitClampsBuckets verifies a live update applies at the
+// next request: tokens above the new bucket size clamp immediately, so a
+// lowered burst cannot be spent down from the old one, and the next refill
+// runs at the new rate.
+func TestRateLimiterSetLimitClampsBuckets(t *testing.T) {
+	limiter := NewRateLimiter(100, 10, metrics.NewRegistry()).(*rateLimiter)
+	now := time.Now()
+
+	if _, allowed := limiter.allow("digest-a", now); !allowed {
+		t.Fatal("first request must pass")
+	}
+	limiter.SetLimit(1, 2)
+
+	// The bucket holds nine tokens; the new size of two must clamp it, so
+	// exactly two more requests pass at the same instant.
+	for i := 1; i <= 2; i++ {
+		if _, allowed := limiter.allow("digest-a", now); !allowed {
+			t.Fatalf("request %d within the new burst must pass", i)
+		}
+	}
+	wait, allowed := limiter.allow("digest-a", now)
+	if allowed {
+		t.Fatal("request over the new burst must be rejected")
+	}
+	if wait != 1 {
+		t.Fatalf("wait = %d seconds, want 1 at the new 1 rps", wait)
+	}
+}
+
+// TestRateLimiterSetLimitZeroDisables verifies a reload that zeroes the pair
+// stops metering every key, including buckets already drawn down, matching
+// an unset limit at startup, and that a positive pair meters again.
+func TestRateLimiterSetLimitZeroDisables(t *testing.T) {
+	limiter := NewRateLimiter(1, 1, metrics.NewRegistry()).(*rateLimiter)
+	now := time.Now()
+
+	if _, allowed := limiter.allow("digest-a", now); !allowed {
+		t.Fatal("first request must pass")
+	}
+	limiter.SetLimit(0, 0)
+	for i := 1; i <= 5; i++ {
+		if _, allowed := limiter.allow("digest-a", now); !allowed {
+			t.Fatalf("request %d must pass while the limiter is off", i)
+		}
+	}
+
+	limiter.SetLimit(100, 1)
+	if _, allowed := limiter.allow("digest-b", now); !allowed {
+		t.Fatal("a fresh key must pass with the re-enabled limit")
+	}
+	if _, allowed := limiter.allow("digest-b", now); allowed {
+		t.Fatal("the re-enabled limit must meter the key again")
 	}
 }

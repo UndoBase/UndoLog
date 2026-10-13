@@ -167,6 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   answer 503 with Retry-After instead of overwhelming the connection pool.
 - Proxy: optional ``undolog.toml`` config file, with environment
   variables overriding file values.
+- Proxy: hot-reloads log level and rate limit from the config file
+  without a restart; everything else still needs one.
 
 ### Changed
 

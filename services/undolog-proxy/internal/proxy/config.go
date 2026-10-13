@@ -8,13 +8,19 @@ package proxy
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// envKeyConfigFile names the environment variable that selects the optional
+// TOML configuration file.
+const envKeyConfigFile = "UNDOLOG_PROXY_CONFIG"
 
 // Config holds all runtime settings for the proxy server.
 //
@@ -91,13 +97,19 @@ type Config struct {
 	IdleTimeout time.Duration
 	// MaxHeaderBytes limits the total size of request headers the server parses.
 	MaxHeaderBytes int
+	// filePath is the configuration file this Config was loaded from, empty
+	// when the proxy runs from environment and defaults alone. The watcher
+	// polls it; it is an input artifact, not a setting, so it stays
+	// unexported.
+	filePath string
 }
 
 // LoadConfig reads proxy settings from environment variables, an optional
 // undolog.toml selected by UNDOLOG_PROXY_CONFIG, and built-in defaults, in
-// that precedence order.
+// that precedence order. The watcher re-runs it on every file change, so a
+// reload sees the same precedence and validation a restart would.
 func LoadConfig() (Config, error) {
-	f, err := loadFileConfig("UNDOLOG_PROXY_CONFIG")
+	f, err := loadFileConfig(envKeyConfigFile)
 	if err != nil {
 		return Config{}, err
 	}
@@ -166,7 +178,47 @@ func LoadConfig() (Config, error) {
 	if (cfg.EngineBreakerThreshold > 0) != (cfg.EngineBreakerReset > 0) {
 		return Config{}, fmt.Errorf("UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD and UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS must be set together")
 	}
+	cfg.filePath = strings.TrimSpace(os.Getenv(envKeyConfigFile))
 	return cfg, nil
+}
+
+// restartOnlyNames returns the file keys of the settings that differ between
+// the running configuration and a reloaded one but cannot be applied live,
+// because they shape the already built listener, engine client, or plugin
+// chain. The order is stable so the same change always logs the same list,
+// and only key names appear, never values: one of them is a secret.
+func restartOnlyNames(running, next Config) []string {
+	var out []string
+	add := func(name string, changed bool) {
+		if changed {
+			out = append(out, name)
+		}
+	}
+	add("listen_addr", running.ListenAddr != next.ListenAddr)
+	add("read_timeout_secs", running.ReadTimeout != next.ReadTimeout)
+	add("write_timeout_secs", running.WriteTimeout != next.WriteTimeout)
+	add("shutdown_timeout_secs", running.ShutdownTimeout != next.ShutdownTimeout)
+	add("request_timeout_secs", running.RequestTimeout != next.RequestTimeout)
+	add("engine_retry_max_attempts", running.EngineRetryMaxAttempts != next.EngineRetryMaxAttempts)
+	add("engine_retry_base_ms", running.EngineRetryBackoff != next.EngineRetryBackoff)
+	add("dashboard_event_chan_size", running.DashboardEventBufSize != next.DashboardEventBufSize)
+	add("approval_reconcile_interval_secs", running.ApprovalReconcileInterval != next.ApprovalReconcileInterval)
+	add("approval_retention_secs", running.ApprovalRetention != next.ApprovalRetention)
+	add("engine_grpc_addr", running.EngineGRPCAddr != next.EngineGRPCAddr)
+	add("engine_auth_token", running.EngineAuthToken != next.EngineAuthToken)
+	add("max_engine_rpcs", running.MaxEngineRPCs != next.MaxEngineRPCs)
+	add("engine_queue_max", running.EngineQueueMax != next.EngineQueueMax)
+	add("engine_queue_wait_ms", running.EngineQueueWait != next.EngineQueueWait)
+	add("engine_breaker_threshold", running.EngineBreakerThreshold != next.EngineBreakerThreshold)
+	add("engine_breaker_reset_secs", running.EngineBreakerReset != next.EngineBreakerReset)
+	add("upstream_tool_url", running.UpstreamToolURL != next.UpstreamToolURL)
+	add("api_keys", !maps.Equal(running.TrustedAPIKeys, next.TrustedAPIKeys))
+	add("plugins", !slices.Equal(running.Plugins, next.Plugins))
+	add("max_body_bytes", running.MaxBodyBytes != next.MaxBodyBytes)
+	add("read_header_timeout_secs", running.ReadHeaderTimeout != next.ReadHeaderTimeout)
+	add("idle_timeout_secs", running.IdleTimeout != next.IdleTimeout)
+	add("max_header_bytes", running.MaxHeaderBytes != next.MaxHeaderBytes)
+	return out
 }
 
 // backpressureSettings holds the raw engine backpressure values.
