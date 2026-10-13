@@ -4,11 +4,13 @@
 package proxy
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"undolog-proxy/internal/plugin"
+	"undolog-proxy/internal/protocol"
 )
 
 // TestAuthMiddlewareStoresKeyDigest verifies an authenticated request carries
@@ -51,5 +53,38 @@ func TestAuthMiddlewareStoresKeyDigest(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), missing)
 	if seen != "" {
 		t.Fatal("unauthenticated request must carry no digest")
+	}
+}
+
+// TestRouterAuthGatesProtectedRoutes verifies the assembled router rejects
+// every protected route with 401 for a missing key and 403 for an unknown
+// key, while /health stays open to unauthenticated callers.
+func TestRouterAuthGatesProtectedRoutes(t *testing.T) {
+	server := newProxyTestServer(t, &mockEngineClient{}, ToolExecutorFunc(func(_ context.Context, _ protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	}))
+
+	for _, path := range []string{"/mcp/tool_call", "/events", "/approvals", "/approvals/app-1/approve"} {
+		missing := httptest.NewRequest(http.MethodGet, path, nil)
+		missingRec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(missingRec, missing)
+		if missingRec.Code != http.StatusUnauthorized {
+			t.Errorf("%s without a key: status = %d, want 401", path, missingRec.Code)
+		}
+
+		unknown := httptest.NewRequest(http.MethodGet, path, nil)
+		unknown.Header.Set("X-Api-Key", "not-a-real-key")
+		unknownRec := httptest.NewRecorder()
+		server.httpSrv.Handler.ServeHTTP(unknownRec, unknown)
+		if unknownRec.Code != http.StatusForbidden {
+			t.Errorf("%s with an unknown key: status = %d, want 403", path, unknownRec.Code)
+		}
+	}
+
+	health := httptest.NewRequest(http.MethodGet, "/health", nil)
+	healthRec := httptest.NewRecorder()
+	server.httpSrv.Handler.ServeHTTP(healthRec, health)
+	if healthRec.Code != http.StatusOK {
+		t.Fatalf("/health without a key: status = %d, want 200", healthRec.Code)
 	}
 }

@@ -169,6 +169,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   variables overriding file values.
 - Proxy: hot-reloads log level and rate limit from the config file
   without a restart; everything else still needs one.
+- Proxy: in-process gRPC engine harness so proxy unit tests run with no
+  Docker or PostgreSQL, plus a coverage gate for ``internal/proxy``.
 
 ### Changed
 

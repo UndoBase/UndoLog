@@ -36,6 +36,14 @@ go test ./... -v -count=1
 
 The `-count=1` flag disables test caching. Use `-v` for verbose output, `-run` to filter by test name.
 
+The proxy tests need no Docker, no PostgreSQL, and no listening ports: the engine gRPC boundary is served in process over a `bufconn` listener (`internal/proxy/harness_test.go`), so the full stack, proto marshaling included, runs inside `go test`. The `internal/proxy` package carries a coverage gate:
+
+```bash
+make coverage-go
+```
+
+The target fails below 80 percent statement coverage for `internal/proxy` and writes `coverage.out` in the proxy module, which `go tool cover -html=coverage.out` opens as a per-line report.
+
 **Python. SDK:**
 
 ```bash
@@ -93,19 +101,7 @@ with pytest.raises(DuplicateSignatureError):
 
 ### Mocking the gRPC/proxy boundary
 
-The Go proxy communicates with the Rust engine over gRPC. In Go tests, use a gRPC test server:
-
-```go
-func TestProxyRegistersEffect(t *testing.T) {
-    srv := startTestEngineServer(t)
-    defer srv.Stop()
-
-    client := connectToEngine(t, srv.Addr())
-    // test against client
-}
-```
-
-Define helper functions in a shared `testutil` package to avoid duplicating test server setup across files.
+The Go proxy communicates with the Rust engine over gRPC. Proxy tests serve a scripted engine in process instead of requiring a running one: `internal/proxy/harness_test.go` implements the generated `UndoLogEngineServer` with canned answers, starts it on a `bufconn` listener, and dials it with the production `engine.Client`, so tests exercise the real codec, including proto marshaling and gRPC status mapping. Script the per-method responses on the `scriptedEngine` struct and assert on the requests it recorded.
 
 ## Testing compensations
 
