@@ -195,13 +195,19 @@ the host or the orchestrator instead, every 15 seconds:
 # Engine (HTTP liveness on 9090; answers on any path)
 curl -fsS -o /dev/null http://<engine-host>:9090/
 
-# Proxy
+# Proxy liveness: the process is up
 curl -fsS http://<proxy-host>:8080/health
+
+# Proxy readiness: the engine channel is connected (503 until it is)
+curl -fsS http://<proxy-host>:8080/readyz
 ```
 
 The proxy reports `{"status":"ok","service":"undolog-proxy"}` once HTTP is up.
-Its engine connection is created lazily on the first RPC and reconnects on its
-own, so a proxying health signal does not depend on the engine being online.
+Use `/health` as the liveness probe and gate traffic on `/readyz`, which
+answers 200 only while the engine channel is connected: 503 before the first
+connect or while the engine is down. The first `/readyz` call or tool call
+opens the channel, so readiness converges without traffic, and the channel
+reconnects on its own: liveness never depends on the engine being online.
 
 ### 7. Graceful shutdown
 
