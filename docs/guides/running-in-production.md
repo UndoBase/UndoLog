@@ -18,6 +18,20 @@ You will configure the UndoLog stack for production: tune PostgreSQL,
 authenticate the engine's gRPC endpoint, harden the proxy with API keys,
 set timeouts on the engine, and verify graceful shutdown.
 
+## When to prefer the split deployment
+
+UndoLog ships two topologies: one container running both programs (see
+[How to deploy UndoLog with Docker](deploying-with-docker.md)) and the
+split stack this guide describes. The combined unit is for single-node
+installs with no orchestration. Keep the split deployment when:
+
+- You scale either side independently: replicas, per-process resource
+  limits, or a rolling restart of one service only.
+- You need separate failure domains: a proxy crash must not restart the
+  engine, and the two log streams must stay separable.
+- You run the Helm chart or another orchestrator, which drives the split
+  services exactly as configured here.
+
 ## Steps
 
 ### 1. Configure PostgreSQL for production

@@ -1,0 +1,45 @@
+# UndoLog single-container topology (ADR 0021).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f infra/docker-compose.single.yml up -d
+#
+# The base file alone still runs the split stack unchanged. This file
+# rebuilds the proxy service on the combined image and holds the split
+# engine behind an unselected profile so the two topologies never start
+# together: a profile on the base file could not do this, because the
+# base services are not profile-gated and would start alongside the
+# combined container and collide on ports 8080 and 9090. The proxy's
+# restart policy carries over, so the runtime restarts the whole unit
+# when the entrypoint exits.
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.undolog
+    environment:
+      # The proxy now reaches the engine on loopback instead of across
+      # the compose network.
+      UNDOLOG_PROXY_ENGINE_GRPC_ADDR: 127.0.0.1:50051
+      # Moved from the base engine service: this container runs the
+      # engine too. YAML anchors do not cross files, so the development
+      # token is repeated literally and must stay identical to the base
+      # file's value.
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/undolog
+      UNDOLOG_ENGINE_AUTH_TOKEN: dev-engine-token
+    ports:
+      # The engine health endpoint is served from the same container.
+      - "9090:9090"
+    # The combined proxy replaces both split services, so the base
+    # dependency on the engine is replaced with the dependency the
+    # engine itself had: wait for a healthy database. The tag is
+    # required because a map merge would keep the engine entry, and a
+    # profile-gated service cannot satisfy it.
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+  engine:
+    # Hold the split engine back whenever this override is active. Use
+    # the base file for the split stack; enabling this profile next to
+    # the combined container would collide on 9090.
+    profiles: ["split"]

@@ -99,6 +99,37 @@ docker compose logs -f proxy
 docker compose logs -f engine
 ```
 
+## Run the proxy and the engine in one container
+
+For a single node that does not need two units, an override compose file
+runs both programs in one container beside PostgreSQL:
+
+```bash
+docker compose -f docker-compose.yml -f infra/docker-compose.single.yml up -d
+```
+
+The override rebuilds the `proxy` service on a combined image
+(`infra/Dockerfile.undolog`) that carries both binaries. Inside the
+container the proxy reaches the engine on `127.0.0.1:50051`, so no gRPC
+port is published; the engine's health endpoint shares the container on
+9090 next to the proxy's 8080. The split `engine` service is held behind
+the unselected `split` profile, so the two topologies never start
+together. The base file on its own is unchanged: it still runs the split
+stack described above.
+
+The same verification commands work, because both health endpoints
+answer from the one container. Stopping it signals both processes:
+
+```bash
+docker compose -f docker-compose.yml -f infra/docker-compose.single.yml stop proxy
+docker compose -f docker-compose.yml -f infra/docker-compose.single.yml logs proxy
+```
+
+The logs show the engine's `UndoLog Engine stopped` line plus an exit
+status line per process. This path needs Docker Compose 2.24.4 or newer
+for the `!override` tag the file uses to replace the proxy's dependency
+on the split engine.
+
 ## Scaling considerations
 
 - **Postgres**: Run on a dedicated host with persistent block storage. The
