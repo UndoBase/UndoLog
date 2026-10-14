@@ -1453,6 +1453,83 @@ func TestHealthDoesNotLeakConfig(t *testing.T) {
 	}
 }
 
+// readyEngineClient answers the readiness probe from a scripted flag while
+// delegating the engine RPC surface to the shared mock, so a route test
+// controls connection state without a channel.
+type readyEngineClient struct {
+	protocol.EngineClient
+	ready bool
+}
+
+// Ready reports the scripted connection state.
+func (e *readyEngineClient) Ready() bool { return e.ready }
+
+// TestReadyzMapsEngineReadiness verifies the readiness route: 503 before the
+// first connect or while disconnected, 200 once the engine reports connected,
+// no authentication in the way, no configuration in the body, and a
+// fail-closed answer for an engine client without a readiness view.
+func TestReadyzMapsEngineReadiness(t *testing.T) {
+	cfg := Config{
+		ListenAddr:      ":0",
+		ReadTimeout:     time.Second,
+		WriteTimeout:    time.Second,
+		ShutdownTimeout: time.Second,
+		RequestTimeout:  time.Second,
+		EngineGRPCAddr:  "engine:50051",
+		UpstreamToolURL: "http://upstream",
+		TrustedAPIKeys:  map[string]string{"key-1": "org-1"},
+	}
+	executor := ToolExecutorFunc(func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{}, nil
+	})
+
+	engineClient := &readyEngineClient{EngineClient: &mockEngineClient{}}
+	server, err := NewServer(cfg, engineClient, executor, metrics.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	// No API key on purpose: probes are reachable unauthenticated, exactly
+	// like /health, so an orchestrator needs no credentials.
+	probe := func(rec *httptest.ResponseRecorder) {
+		server.httpSrv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	}
+
+	rec := httptest.NewRecorder()
+	probe(rec)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("engine not connected: status = %d, want 503", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"not_ready"`) {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+
+	engineClient.ready = true
+	rec = httptest.NewRecorder()
+	probe(rec)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("engine connected: status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"status":"ready"`) {
+		t.Fatalf("unexpected body: %s", body)
+	}
+	if strings.Contains(body, "engine_addr") || strings.Contains(body, "engine:50051") || strings.Contains(body, "http://upstream") {
+		t.Fatalf("readiness leaked configuration, body: %s", body)
+	}
+
+	// An engine client without a readiness view answers closed, never open.
+	plain, err := NewServer(cfg, &mockEngineClient{}, executor, metrics.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	plain.httpSrv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("engine without a readiness view: status = %d, want 503", rec.Code)
+	}
+}
+
 // TestRequestIDPropagatedToEngine verifies the proxy request ID flows from the
 // middleware into the engine call context so engine logs share the ID.
 func TestRequestIDPropagatedToEngine(t *testing.T) {

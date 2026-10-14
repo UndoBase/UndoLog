@@ -98,12 +98,31 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 	})
 
 	mux := http.NewServeMux()
+	// The narrow readiness view /readyz answers from; an engine client that
+	// does not expose one fails the probe closed instead of guessing.
+	readiness, hasReadiness := engine.(interface{ Ready() bool })
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		// Liveness only: do not echo configuration values (such as the engine
 		// address or upstream URL) to unauthenticated callers. Readiness is
 		// separate from this endpoint by design.
 		writeJSON(w, logger, http.StatusOK, map[string]any{
 			"status":  "ok",
+			"service": "undolog-proxy",
+		})
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		// Readiness answers from engine connection state only: orchestration
+		// gates traffic here while /health stays reachable with the engine
+		// down, and no configuration value reaches an unauthenticated caller.
+		if hasReadiness && readiness.Ready() {
+			writeJSON(w, logger, http.StatusOK, map[string]any{
+				"status":  "ready",
+				"service": "undolog-proxy",
+			})
+			return
+		}
+		writeJSON(w, logger, http.StatusServiceUnavailable, map[string]any{
+			"status":  "not_ready",
 			"service": "undolog-proxy",
 		})
 	})

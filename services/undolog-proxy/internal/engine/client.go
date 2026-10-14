@@ -2,10 +2,10 @@
 //
 // The client isolates transport concerns from the proxy so tests can inject
 // fakes while production connects lazily to the Rust service. The connection is
-// established on the first RPC and reconnected automatically by gRPC whenever
-// the engine restarts or is slow to become ready, so the proxy never has to
-// block on a bootstrap dial. When an engine token is configured, every RPC
-// presents it as a bearer credential.
+// established on the first RPC or readiness probe and reconnected automatically
+// by gRPC whenever the engine restarts or is slow to become ready, so the proxy
+// never has to block on a bootstrap dial. When an engine token is configured,
+// every RPC presents it as a bearer credential.
 package engine
 
 import (
@@ -14,11 +14,13 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
@@ -56,30 +58,41 @@ var reconnectBackoff = backoff.Config{
 
 // Client manages the gRPC channel and RPC calls to the Rust engine.
 //
-// The channel is created lazily by the first RPC and shared for the lifetime of
-// the Client. gRPC reconnects automatically when the engine restarts, and each
-// connection-level failure resets its backoff so recovery is prompt. Concurrent
-// RPCs share one channel; the mutex guards channel creation, Close, and the
-// closed flag so a closed client never dials again.
+// The channel is created lazily by the first RPC or readiness probe and shared
+// for the lifetime of the Client. gRPC reconnects automatically when the engine
+// restarts, and each connection-level failure resets its backoff so recovery is
+// prompt. Concurrent RPCs share one channel; the mutex guards channel creation,
+// Close, the closed flag, and the watcher's one-time start so a closed client
+// never dials again.
 type Client struct {
 	address   string
 	retry     RetryConfig
 	logger    *slog.Logger
-	metrics   *metrics.Registry
+	metrics   atomic.Pointer[metrics.Registry]
 	dial      func(ctx context.Context, address string) (*grpc.ClientConn, error)
 	mu        sync.Mutex
 	conn      *grpc.ClientConn
 	transport Transport
 	closed    bool
 	guard     *guard
+	// watchCtx stops the connection watcher through watchCancel, and
+	// watchDone closes when the watcher exits. The watcher starts when the
+	// channel is first created, so watchDone stays open on a client that
+	// never opened one.
+	watchCtx    context.Context
+	watchCancel context.CancelFunc
+	watchDone   chan struct{}
+	watching    bool
 }
 
-// SetMetrics wires the registry so engine RPC latency, error counts, and retry
-// counts are exposed on /metrics. A nil registry disables instrumentation.
-// When a backpressure guard is configured its gauges are published here so
-// they appear from startup, not from the first RPC.
+// SetMetrics wires the registry so engine RPC latency, error counts, retry
+// counts, and connection state are exposed on /metrics. A nil registry
+// disables instrumentation. The pointer is stored atomically because the
+// connection watcher reads it from its own goroutine. When a backpressure
+// guard is configured its gauges are published here so they appear from
+// startup, not from the first RPC.
 func (c *Client) SetMetrics(reg *metrics.Registry) {
-	c.metrics = reg
+	c.metrics.Store(reg)
 	if c.guard != nil {
 		c.guard.publish()
 	}
@@ -109,6 +122,14 @@ const (
 	reasonQueue        = "queue"
 	reasonGate         = "gate"
 	reasonBreaker      = "breaker"
+)
+
+// Connection metric names published by the readiness watcher: the gauge
+// mirrors what /readyz answers, and the counter counts recoveries after the
+// engine channel lost its connection.
+const (
+	connectedMetric  = "undolog_proxy_engine_connected"
+	reconnectsMetric = "undolog_proxy_engine_reconnects_total"
 )
 
 // Metadata contract for engine authentication, fixed by ADR 0018 and checked
@@ -223,10 +244,9 @@ func newGuard(c *Client, cfg BackpressureConfig) *guard {
 // at call time, so a registry attached by SetMetrics after the client was
 // built receives the values.
 func (c *Client) setGuardGauge(name, help string, v float64) {
-	if c.metrics == nil {
-		return
+	if reg := c.metrics.Load(); reg != nil {
+		reg.Gauge(name, help).Set(v)
 	}
-	c.metrics.Gauge(name, help).Set(v)
 }
 
 // publish sets every configured gauge to its current value, so the metrics
@@ -262,8 +282,8 @@ func newDialer(token string) func(context.Context, string) (*grpc.ClientConn, er
 }
 
 // NewClient constructs a client for the given engine address. It does not
-// connect until the first RPC, so the engine does not need to be ready when the
-// proxy starts.
+// connect until the first RPC or readiness probe, so the engine does not need
+// to be ready when the proxy starts.
 func NewClient(address string, retry RetryConfig, logger *slog.Logger, opts ...Option) *Client {
 	if logger == nil {
 		logger = slog.Default()
@@ -278,11 +298,15 @@ func NewClient(address string, retry RetryConfig, logger *slog.Logger, opts ...O
 	for _, opt := range opts {
 		opt(&options)
 	}
+	watchCtx, watchCancel := context.WithCancel(context.Background())
 	c := &Client{
-		address: address,
-		retry:   retry,
-		logger:  logger,
-		dial:    newDialer(options.authToken),
+		address:     address,
+		retry:       retry,
+		logger:      logger,
+		dial:        newDialer(options.authToken),
+		watchCtx:    watchCtx,
+		watchCancel: watchCancel,
+		watchDone:   make(chan struct{}),
 	}
 	if options.backpressure != nil {
 		c.guard = newGuard(c, *options.backpressure)
@@ -300,11 +324,15 @@ func NewClientWithTransport(address string, retry RetryConfig, transport Transpo
 	return c
 }
 
-// Close closes the underlying gRPC channel if one was created and marks the
-// client closed. It is idempotent and safe to call on a client whose connection
-// was never established. RPCs after Close fail with ErrEngineClientClosed
-// instead of silently opening a fresh connection.
+// Close stops the readiness watcher, closes the underlying gRPC channel if
+// one was created, and marks the client closed. It is idempotent and safe to
+// call on a client whose connection was never established. RPCs after Close
+// fail with ErrEngineClientClosed instead of silently opening a fresh
+// connection.
 func (c *Client) Close() error {
+	// Cancel first so the watcher leaves its state wait instead of blocking
+	// until the channel reports the shutdown below.
+	c.watchCancel()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
@@ -318,9 +346,10 @@ func (c *Client) Close() error {
 }
 
 // getTransport returns the transport for an RPC, creating the channel lazily on
-// first use. After the initial creation the same channel is reused, and gRPC
-// reconnects it on demand when the engine is temporarily unreachable. A closed
-// client does not dial again: it fails with ErrEngineClientClosed.
+// first use, which also starts the readiness watcher. After the initial
+// creation the same channel is reused, and gRPC reconnects it on demand when
+// the engine is temporarily unreachable. A closed client does not dial again:
+// it fails with ErrEngineClientClosed.
 func (c *Client) getTransport(ctx context.Context) (Transport, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -342,6 +371,10 @@ func (c *Client) getTransport(ctx context.Context) (Transport, error) {
 	}
 	c.conn = conn
 	c.transport = NewGRPCTransport(conn)
+	if !c.watching {
+		c.watching = true
+		go c.watchConnection(conn)
+	}
 	return c.transport, nil
 }
 
@@ -353,6 +386,85 @@ func (c *Client) nudgeReconnect() {
 	defer c.mu.Unlock()
 	if c.conn != nil {
 		c.conn.ResetConnectBackoff()
+	}
+}
+
+// Ready reports whether the engine channel is connected.
+//
+// The first call opens the channel without an RPC, and an idle channel is
+// kicked back into connecting, so a readiness probe on a proxy that has not
+// served a tool call yet still reaches the engine. The kick is non-blocking:
+// Ready never waits for the connection, so a caller polls instead of
+// stalling. A client built with NewClientWithTransport reports not ready
+// because its channel belongs to the caller and its connection state is not
+// observed here.
+func (c *Client) Ready() bool {
+	if _, err := c.getTransport(context.Background()); err != nil {
+		c.logger.Debug("readiness cannot open the engine channel", "error", err)
+		return false
+	}
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn == nil {
+		return false
+	}
+	if conn.GetState() == connectivity.Idle {
+		conn.Connect()
+	}
+	return conn.GetState() == connectivity.Ready
+}
+
+// watchConnection follows one channel's connectivity for the life of the
+// client: it publishes the connected gauge as the channel moves between
+// states, counts a recovery when the channel returns to ready after losing
+// it, and returns when Close cancels the watch context, so no goroutine
+// outlives the client.
+func (c *Client) watchConnection(conn *grpc.ClientConn) {
+	defer close(c.watchDone)
+	everReady := false
+	disconnected := false
+	for {
+		state := conn.GetState()
+		ready := state == connectivity.Ready
+		c.publishConnected(ready)
+		if ready {
+			if disconnected {
+				c.countRecovery()
+				disconnected = false
+			}
+			everReady = true
+		} else if everReady {
+			// Arm on any state other than ready: only a return to ready
+			// counts, whatever the channel showed while the engine was
+			// away. everReady keeps the initial connect uncounted.
+			disconnected = true
+		}
+		if !conn.WaitForStateChange(c.watchCtx, state) {
+			return
+		}
+	}
+}
+
+// publishConnected sets the connected gauge when a registry is attached; a
+// transition before SetMetrics runs waits for the next state change to publish.
+func (c *Client) publishConnected(connected bool) {
+	reg := c.metrics.Load()
+	if reg == nil {
+		return
+	}
+	value := 0.0
+	if connected {
+		value = 1.0
+	}
+	reg.Gauge(connectedMetric, "Engine channel connected state: 1 connected, 0 otherwise").Set(value)
+}
+
+// countRecovery increments the reconnect counter for one return to ready
+// after the channel lost it, the observable half of an engine restart.
+func (c *Client) countRecovery() {
+	if reg := c.metrics.Load(); reg != nil {
+		reg.Counter(reconnectsMetric, "Engine channel recoveries after a disconnect").Add(1)
 	}
 }
 
@@ -533,8 +645,8 @@ func (c *Client) queueRejection(err error) error {
 // reject counts one backpressure rejection and wraps the busy sentinel the
 // HTTP layer maps to 503 with Retry-After.
 func (c *Client) reject(detail, reason string) error {
-	if c.metrics != nil {
-		c.metrics.Counter(rejectionsMetric, "Engine RPCs rejected by the queue, gate, or breaker", "reason").Add(1, reason)
+	if reg := c.metrics.Load(); reg != nil {
+		reg.Counter(rejectionsMetric, "Engine RPCs rejected by the queue, gate, or breaker", "reason").Add(1, reason)
 	}
 	return fmt.Errorf("%s: %w", detail, protocol.ErrEngineBusy)
 }
@@ -611,21 +723,21 @@ func (c *Client) retryVoid(ctx context.Context, method string, fn func(Transport
 // observeRPC records one engine RPC call: a duration histogram always, and an
 // error counter when the call failed.
 func (c *Client) observeRPC(method string, start time.Time, err error) {
-	if c.metrics == nil {
+	reg := c.metrics.Load()
+	if reg == nil {
 		return
 	}
-	c.metrics.Histogram(rpcDurationMetric, "Engine RPC call duration in seconds", nil, "method").Observe(time.Since(start).Seconds(), method)
+	reg.Histogram(rpcDurationMetric, "Engine RPC call duration in seconds", nil, "method").Observe(time.Since(start).Seconds(), method)
 	if err != nil {
-		c.metrics.Counter(rpcErrorsMetric, "Engine RPC calls that returned an error", "method").Add(1, method)
+		reg.Counter(rpcErrorsMetric, "Engine RPC calls that returned an error", "method").Add(1, method)
 	}
 }
 
 // observeRetry increments the retry counter for one re-executed engine call.
 func (c *Client) observeRetry(method string) {
-	if c.metrics == nil {
-		return
+	if reg := c.metrics.Load(); reg != nil {
+		reg.Counter(rpcRetriesMetric, "Engine RPC calls that were retried after a transient failure", "method").Add(1, method)
 	}
-	c.metrics.Counter(rpcRetriesMetric, "Engine RPC calls that were retried after a transient failure", "method").Add(1, method)
 }
 
 // explainAuthFailure wraps an UNAUTHENTICATED engine answer with the proxy

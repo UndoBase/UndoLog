@@ -175,6 +175,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   reload, and the first engine dial, each passing under ``-race``.
 - Infra: one container image runs the proxy and the engine, selected by
   an override compose file; the split stack is unchanged.
+- Proxy: ``/readyz`` reports engine reachability for orchestration probes,
+  and reconnect metrics count recovery after engine restarts.
 
 ### Changed
 
