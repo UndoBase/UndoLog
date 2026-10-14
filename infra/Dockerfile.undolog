@@ -1,0 +1,133 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dockerfile.undolog - UndoLog proxy and engine in one image (ADR 0021)
+#
+# Multi-stage build:
+#   1. golang:1.25-alpine    - compile the undolog-proxy binary
+#   2. rust:1.87-slim        - compile the undolog-engine binary
+#   3. debian:bookworm-slim  - run both behind the supervising entrypoint
+#
+# The runtime stage is Debian rather than scratch or distroless because
+# the entrypoint supervises two processes and forwards SIGTERM, which
+# needs a shell. The two single-process images keep their shell-free
+# runtimes for the split topology.
+#
+# Exposes:
+#   - HTTP endpoint on  :8080  (proxy: MCP tool call interception, approvals, SSE)
+#   - HTTP health on    :9090  (engine liveness / readiness probe)
+#   - gRPC endpoint on  :50051 (engine, reached on loopback from the proxy)
+#
+# Build:
+#   docker build -t undolog:latest -f infra/Dockerfile.undolog .
+#
+# Run (the override file wires the environment and ports):
+#   docker compose -f docker-compose.yml -f infra/docker-compose.single.yml up -d
+#
+# Runtime deps at a glance: the union of Dockerfile.proxy and
+# Dockerfile.engine, whose header blocks list every setting. Notable
+# here:
+#   DATABASE_URL                    (required, PostgreSQL connection string)
+#   UNDOLOG_ENGINE_AUTH_TOKEN       (optional, engine side of the gRPC token)
+#   UNDOLOG_PROXY_ENGINE_GRPC_ADDR  (the override file sets 127.0.0.1:50051)
+#   UNDOLOG_LOG_LEVEL               (one setting feeds both processes)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: Proxy builder ───────────────────────────────────────────────────
+FROM golang:1.25-alpine AS build-proxy
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /src
+
+# Copy dependency manifests first for layer caching.
+COPY services/undolog-proxy/go.mod services/undolog-proxy/go.sum ./
+RUN go mod download
+
+# Copy the entire proxy source tree.
+COPY services/undolog-proxy/ .
+
+# Build static binary (no CGO, stripped, no debug info).
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-w -s" -o /out/undolog-proxy ./cmd/proxy
+
+# ── Stage 2: Engine builder ──────────────────────────────────────────────────
+FROM rust:1.87-slim AS build-engine
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      pkg-config \
+      libssl-dev \
+      ca-certificates \
+      protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# ── Copy manifest files first for dependency caching ─────────────────────────
+COPY Cargo.toml Cargo.lock ./
+COPY crates/undolog-types/Cargo.toml  crates/undolog-types/
+COPY crates/undolog-store/Cargo.toml  crates/undolog-store/
+COPY crates/undolog-engine/Cargo.toml crates/undolog-engine/
+COPY crates/undolog-engine/build.rs   crates/undolog-engine/
+COPY crates/undolog-saga/Cargo.toml   crates/undolog-saga/
+COPY crates/undolog-migrate/Cargo.toml crates/undolog-migrate/
+
+# Dummy source files so Cargo can resolve the dependency graph.
+RUN mkdir -p crates/undolog-types/src  \
+             crates/undolog-store/src  \
+             crates/undolog-engine/src \
+             crates/undolog-saga/src   \
+             crates/undolog-migrate/src \
+  && touch crates/undolog-types/src/lib.rs   \
+           crates/undolog-store/src/lib.rs    \
+           crates/undolog-engine/src/lib.rs   \
+           crates/undolog-saga/src/lib.rs     \
+           crates/undolog-migrate/src/main.rs \
+  && echo "fn main() {}" > crates/undolog-engine/src/main.rs
+
+# Copy proto definitions so the build script (tonic-build) can generate
+# gRPC stubs during the dependency-caching build.
+COPY proto   proto/
+
+# Build and cache dependencies (this layer is reused across builds).
+RUN cargo build --release -p undolog-engine 2>&1
+
+# ── Copy real source code ────────────────────────────────────────────────────
+COPY crates/undolog-types/src  crates/undolog-types/src/
+COPY crates/undolog-store/src  crates/undolog-store/src/
+COPY crates/undolog-engine/src crates/undolog-engine/src/
+COPY crates/undolog-saga/src   crates/undolog-saga/src/
+COPY crates/undolog-migrate/src crates/undolog-migrate/src/
+
+# Force a rebuild with the real sources (cache hit for deps, only engine changes).
+RUN touch crates/undolog-types/src/lib.rs \
+        crates/undolog-store/src/lib.rs \
+        crates/undolog-engine/src/lib.rs \
+        crates/undolog-engine/src/main.rs \
+        crates/undolog-saga/src/lib.rs \
+        crates/undolog-migrate/src/main.rs && \
+    cargo build --release -p undolog-engine
+
+# Strip debug symbols (~30→5 MB).
+RUN strip /build/target/release/undolog-engine
+
+# ── Stage 3: Runtime ─────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+# TLS root certificates for the proxy's outbound HTTPS connections: the
+# same bundle Dockerfile.proxy ships.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=build-proxy  /out/undolog-proxy /usr/local/bin/undolog-proxy
+COPY --from=build-engine /build/target/release/undolog-engine /usr/local/bin/undolog-engine
+COPY infra/undolog-entrypoint.sh /usr/local/bin/undolog-entrypoint.sh
+
+EXPOSE 8080/tcp
+EXPOSE 50051/tcp
+EXPOSE 9090/tcp
+
+# HEALTHCHECK is omitted intentionally: the engine health endpoint answers
+# on any path and both endpoints are probed from outside the container.
+
+ENTRYPOINT ["/usr/local/bin/undolog-entrypoint.sh"]

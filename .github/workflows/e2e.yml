@@ -82,3 +82,34 @@ jobs:
       - name: Stop stack
         if: always()
         run: docker compose down
+
+  # ADR 0021 smoke run: the combined container must pass the same
+  # probes and tool call as the split stack, and a stop must reach both
+  # processes inside it.
+  smoke:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the combined stack
+        uses: ./.github/actions/start-stack
+        with:
+          compose_files: -f docker-compose.yml -f infra/docker-compose.single.yml
+          services: postgres tool-server proxy
+
+      - name: Stop the container and verify both shutdown paths
+        run: |
+          compose=(docker compose -f docker-compose.yml -f infra/docker-compose.single.yml)
+          "${compose[@]}" stop proxy
+          "${compose[@]}" logs proxy > combined-shutdown.log
+          grep "undolog-entrypoint: forwarding SIGTERM" combined-shutdown.log
+          grep "UndoLog Engine stopped" combined-shutdown.log
+          grep "undolog-entrypoint: engine exited with status 0" combined-shutdown.log
+          grep "undolog-entrypoint: proxy exited with status 0" combined-shutdown.log
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f infra/docker-compose.single.yml down

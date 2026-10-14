@@ -8,6 +8,10 @@ inputs:
     description: Docker Compose services to start (space-separated)
     required: false
     default: postgres tool-server proxy engine
+  compose_files:
+    description: Extra -f arguments for docker compose (empty selects the default file)
+    required: false
+    default: ""
   api_key:
     description: API key for the proxy functional probe
     required: false
@@ -19,7 +23,7 @@ runs:
     - name: Start containers
       shell: bash
       run: |
-        docker compose up -d ${{ inputs.services }}
+        docker compose ${{ inputs.compose_files }} up -d ${{ inputs.services }}
 
     - name: Wait for HTTP health endpoints
       shell: bash
