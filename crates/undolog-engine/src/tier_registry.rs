@@ -1,13 +1,17 @@
 //! TierRegistry - in-memory lookup table for tool tier classifications.
 //!
 //! Loaded from `undolog_tool_registry` at startup and refreshed every
-//! `refresh_interval` (default 60 s) to pick up new tool registrations
+//! `refresh_interval` (default 15 s) to pick up new tool registrations
 //! without a restart.
 //!
 //! All lookups are O(1). Interior `RwLock` allows unlimited concurrent
 //! reads (the hot path) with infrequent write locks (refresh only).
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 use undolog_types::{
@@ -126,6 +130,32 @@ impl Default for TierRegistry {
     }
 }
 
+// ── Last successful refresh ───────────────────────────────────────────────────
+
+/// Timestamp of the last successful registry load or refresh, shared with the
+/// engine health endpoint so staleness stays visible without a metrics
+/// subsystem. The process serves one registry, so one timestamp suffices.
+static LAST_REFRESH: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Seconds since the last successful registry refresh.
+///
+/// Returns `None` until the first successful load, which the health payload
+/// reports as a JSON `null`.
+pub fn last_refresh_age_secs() -> Option<u64> {
+    let last = LAST_REFRESH.lock().expect("last refresh lock poisoned");
+    last.map(|at| at.elapsed().as_secs())
+}
+
+/// Records the current instant as the last successful registry refresh.
+///
+/// Called after a successful database load or periodic refresh. A failed
+/// refresh leaves the previous timestamp in place, so the reported age keeps
+/// growing until data is read again.
+fn mark_refreshed() {
+    let mut last = LAST_REFRESH.lock().expect("last refresh lock poisoned");
+    *last = Some(Instant::now());
+}
+
 // ── Background refresh loop ───────────────────────────────────────────────────
 
 /// Spawn a background task that refreshes the registry from PostgreSQL
@@ -161,7 +191,8 @@ pub fn spawn_refresh_loop(
     })
 }
 
-/// Reload every active tool from `undolog_tool_registry` into the registry.
+/// Reload every active tool from `undolog_tool_registry` into the registry,
+/// recording the refresh time on success.
 pub(crate) async fn refresh_all_orgs(
     registry: &TierRegistry,
     pool: &sqlx::PgPool,
@@ -221,6 +252,7 @@ pub(crate) async fn refresh_all_orgs(
         registry.replace_org(&org_id, regs).await;
     }
 
+    mark_refreshed();
     Ok(())
 }
 
@@ -316,5 +348,47 @@ mod tests {
         reg.upsert(&org, make_reg("a", ToolTier::Safe)).await;
         reg.upsert(&org, make_reg("b", ToolTier::Safe)).await;
         assert_eq!(reg.total_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn registry_age_tracks_successful_refreshes_only() {
+        // A freshly started engine has read nothing, so the age is unset.
+        assert!(last_refresh_age_secs().is_none());
+
+        // An unreachable database fails the refresh and keeps the age unset.
+        // The one-second connect cap bounds the wait where the environment
+        // drops connections instead of refusing them.
+        let reg = TierRegistry::new();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://127.0.0.1:1/undolog_test?connect_timeout=1")
+            .expect("a well-formed URL must build a lazy pool");
+        refresh_all_orgs(&reg, &pool).await.expect_err("the refresh must fail");
+        assert!(last_refresh_age_secs().is_none());
+
+        // A successful refresh starts the clock, which then advances
+        // without ever moving backwards across polls.
+        mark_refreshed();
+        let first = last_refresh_age_secs().expect("the age after the first refresh");
+        assert!(first <= 1);
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let second = last_refresh_age_secs().expect("the age after another poll");
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let third = last_refresh_age_secs().expect("the age after a third poll");
+        assert!(second >= first, "the age must not decrease: {first} -> {second}");
+        assert!(third >= second, "the age must not decrease: {second} -> {third}");
+        assert!(third >= 1, "the age must grow between polls");
+
+        // A failed refresh keeps serving the age the last success recorded.
+        refresh_all_orgs(&reg, &pool).await.expect_err("the refresh must fail");
+        let after_failure = last_refresh_age_secs().expect("the age after the failure");
+        assert!(
+            after_failure >= third,
+            "a failure must not reset the age: {third} -> {after_failure}"
+        );
+
+        // The next successful refresh resets the age below its last value.
+        mark_refreshed();
+        let reset = last_refresh_age_secs().expect("the age after the reset");
+        assert!(reset < third, "a refresh must reset the age: {third} -> {reset}");
     }
 }

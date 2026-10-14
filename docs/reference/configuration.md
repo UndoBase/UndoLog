@@ -39,7 +39,7 @@ IP:port for the tonic gRPC server that handles Intercept, Commit, Fail, Approve,
 |------|---------|----------|
 | `string` | `0.0.0.0:9090` | Yes |
 
-IP:port for the HTTP health endpoint (`GET /` → `{"status":"ok","service":"undolog-engine"}`).
+IP:port for the HTTP health endpoint (`GET /` → `{"status":"ok","service":"undolog-engine","registry_age_secs":42}`). `registry_age_secs` counts the seconds since the last successful tool registry refresh, or `null` before the first one.
 
 ---
 
@@ -69,7 +69,12 @@ Log level for the Rust engine. Used as the default directive for `tracing_subscr
 
 | Type | Default | Description |
 |------|---------|-------------|
-| `uint64` | `60` | Interval in seconds between tool registry refreshes from the database. The engine loads `undolog_tool_registry` into an in-memory cache on startup and refreshes periodically at this interval. |
+| `uint64` | `15` | Interval in seconds between tool registry refreshes from the database. The engine loads `undolog_tool_registry` into an in-memory cache on startup and refreshes periodically at this interval. |
+
+Values below `5` are rejected at startup: zero would panic the spawned
+refresh task through `tokio::time::interval` and leave the registry stale
+without a log line. The health payload's `registry_age_secs` field shows
+how long the current registry data has been in memory.
 
 ---
 
@@ -568,7 +573,7 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_ENGINE_HEALTH_ADDR` | Engine | `string` | `0.0.0.0:9090` | Yes |
 | `UNDOLOG_ENGINE_AUTH_TOKEN` | Engine | `string` | `""` | No |
 | `UNDOLOG_LOG_LEVEL` | Engine, Proxy | `string` | `info` | No |
-| `UNDOLOG_REGISTRY_REFRESH_SECS` | Engine | `uint64` | `60` | No |
+| `UNDOLOG_REGISTRY_REFRESH_SECS` | Engine | `uint64` | `15` | No |
 | `UNDOLOG_LOCK_MAX_ATTEMPTS` | Engine | `uint32` | `3` | No |
 | `UNDOLOG_LOCK_RETRY_MS` | Engine | `uint64` | `100` | No |
 | `UNDOLOG_PROXY_LISTEN_ADDR` | Proxy | `string` | `:8080` | Yes |

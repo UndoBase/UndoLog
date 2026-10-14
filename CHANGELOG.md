@@ -209,6 +209,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   re-invoking with the returned state replays completed steps.
 - Documentation: CrewAI and Semantic Kernel guides open sessions that
   reach the tools and replay approval retries from the journal start.
+- Engine: ``UNDOLOG_REGISTRY_REFRESH_SECS`` below 5 seconds is rejected at
+  startup, and the health payload reports registry age so staleness is visible.
 
 ## [0.2.0] - 2026-08-01
 

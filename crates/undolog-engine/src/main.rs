@@ -7,7 +7,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tonic::transport::Server;
@@ -18,6 +18,7 @@ use undolog_engine::grpc::pb::undo_log_engine_server::UndoLogEngineServer;
 use undolog_engine::grpc::UndoLogEngineService;
 use undolog_engine::startup;
 use undolog_engine::telemetry;
+use undolog_engine::tier_registry;
 use undolog_engine::EngineConfig;
 
 // ── Env var defaults ────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ const ENV_AUTH_TOKEN: &str = "UNDOLOG_ENGINE_AUTH_TOKEN";
 const DEFAULT_GRPC_ADDR: &str = "0.0.0.0:50051";
 const DEFAULT_HEALTH_ADDR: &str = "0.0.0.0:9090";
 const DEFAULT_REGISTRY_REFRESH_SECS: &str = "15";
+const MIN_REGISTRY_REFRESH_SECS: u64 = 5;
 const DEFAULT_APPROVAL_TIMEOUT_SECS: &str = "86400";
 const DEFAULT_TIMEOUT_CHECK_INTERVAL_SECS: &str = "60";
 
@@ -56,6 +58,17 @@ async fn main() -> Result<()> {
         env_or(ENV_REGISTRY_REFRESH_SECS, DEFAULT_REGISTRY_REFRESH_SECS)
             .parse()
             .context("Invalid UNDOLOG_REGISTRY_REFRESH_SECS")?;
+    // Reject instead of clamping: a clamped value would hide the operator's
+    // mistake, and zero panics the refresh task's tokio interval, leaving
+    // the registry stale without a log line.
+    if registry_refresh_secs < MIN_REGISTRY_REFRESH_SECS {
+        bail!(
+            "Invalid {} - expected at least {} seconds, got {}",
+            ENV_REGISTRY_REFRESH_SECS,
+            MIN_REGISTRY_REFRESH_SECS,
+            registry_refresh_secs
+        );
+    }
     let lock_max_attempts: u32 =
         env_or(ENV_LOCK_MAX_ATTEMPTS, "3").parse().context("Invalid UNDOLOG_LOCK_MAX_ATTEMPTS")?;
     let lock_retry_ms: u64 =
@@ -132,10 +145,25 @@ async fn main() -> Result<()> {
 
 // ── Health endpoint ─────────────────────────────────────────────────────────
 
+/// Render the health payload: engine liveness plus the seconds since the
+/// last successful registry refresh.  The age is JSON null until the first
+/// successful database load, so a cold start is distinguishable from a
+/// stale one.
+fn health_body(registry_age_secs: Option<u64>) -> String {
+    let body = serde_json::json!({
+        "status": "ok",
+        "service": "undolog-engine",
+        "registry_age_secs": registry_age_secs,
+    });
+    format!("{body}\n")
+}
+
 /// Minimal HTTP health server.
 ///
-/// Responds `200 OK` with a JSON body on every request.  No routing - every
-/// path returns healthy.  Designed for orchestration liveness probes.
+/// Responds `200 OK` with a JSON body on every request, carrying the engine
+/// identity and the seconds since the last successful registry refresh.  No
+/// routing - every path returns healthy.  Designed for orchestration
+/// liveness probes.
 async fn health_server(addr: SocketAddr) {
     let listener = TcpListener::bind(addr).await.expect("Failed to bind health endpoint");
     info!(addr = %addr, "Health endpoint ready");
@@ -152,7 +180,7 @@ async fn health_server(addr: SocketAddr) {
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
 
-            let body = b"{\"status\":\"ok\",\"service\":\"undolog-engine\"}\n";
+            let body = health_body(tier_registry::last_refresh_age_secs());
             let response = format!(
                 "HTTP/1.1 200 OK\r\n\
                  content-type: application/json\r\n\
@@ -164,7 +192,7 @@ async fn health_server(addr: SocketAddr) {
                 warn!(peer = %peer, error = %e, "Health write failed");
                 return;
             }
-            if let Err(e) = stream.write_all(body).await {
+            if let Err(e) = stream.write_all(body.as_bytes()).await {
                 warn!(peer = %peer, error = %e, "Health body write failed");
             }
         });
@@ -201,4 +229,26 @@ async fn shutdown_signal() {
 /// Read an env var or return the default.
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::health_body;
+
+    #[test]
+    fn health_body_carries_the_registry_age() {
+        let body = health_body(Some(42));
+        assert!(body.contains("\"status\":\"ok\""));
+        assert!(body.contains("\"service\":\"undolog-engine\""));
+        assert!(body.contains("\"registry_age_secs\":42"));
+        assert!(body.ends_with('\n'));
+    }
+
+    #[test]
+    fn health_body_reports_a_null_age_before_the_first_refresh() {
+        let body = health_body(None);
+        assert!(body.contains("\"registry_age_secs\":null"));
+    }
 }
