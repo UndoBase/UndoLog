@@ -215,6 +215,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   production guide with the drain behavior the proxy and engine implement.
 - Documentation: corrected the docker guide: malformed cells, stale
   defaults, the tool server port, and an undefined variable name.
+- Documentation: noted that the SQLite engine health payload omits
+  ``registry_age_secs`` because the binary starts no registry refresh loop.
 
 ## [0.2.0] - 2026-08-01
 
