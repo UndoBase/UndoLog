@@ -213,6 +213,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   startup, and the health payload reports registry age so staleness is visible.
 - Documentation: replaced the fabricated graceful-shutdown log block in the
   production guide with the drain behavior the proxy and engine implement.
+- Documentation: corrected the docker guide: malformed cells, stale
+  defaults, the tool server port, and an undefined variable name.
 
 ## [0.2.0] - 2026-08-01
 

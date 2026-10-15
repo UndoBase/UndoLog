@@ -38,7 +38,7 @@ Create a `.env` file in the repository root:
 DATABASE_URL=postgres://postgres:postgres@postgres:5432/undolog
 UNDOLOG_LOG_LEVEL=info
 UNDOLOG_PROXY_API_KEYS=sk-demo-key=org-demo
-UNDOLOG_PROXY_UPSTREAM_TOOL_URL=http://tool-server:8080/tools
+UNDOLOG_PROXY_UPSTREAM_TOOL_URL=http://tool-server:9091/tools
 ```
 
 ### 3. Build and start the stack
@@ -137,24 +137,24 @@ on the split engine.
 - **Engine**: Stateless for interception; stateful for saga orchestrator. Run
   2+ replicas behind a load balancer for gRPC.
 - **Proxy**: Stateless. Scale horizontally behind an HTTP reverse proxy (nginx,
-  Caddy). Add `UPSTREAM_TOOL_URL` per replica.
+  Caddy). Add `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` per replica.
 - **Dashboard**: Stateless. One replica is sufficient for most deployments.
 
 ## Full environment reference
 
 | Variable | Service | Default | Description |
 |---|---|---|---|
-| `DATABASE_URL` | engine |, | PostgreSQL connection string (required) |
+| `DATABASE_URL` | engine | `postgresql://postgres:postgres@localhost:5432/undolog_dev` | PostgreSQL connection string; compose sets it |
 | `UNDOLOG_LOG_LEVEL` | all | `info` | Log verbosity |
 | `UNDOLOG_ENGINE_GRPC_ADDR` | engine | `0.0.0.0:50051` | gRPC listen address |
 | `UNDOLOG_ENGINE_HEALTH_ADDR` | engine | `0.0.0.0:9090` | Health HTTP listen address |
 | `UNDOLOG_LOCK_MAX_ATTEMPTS` | engine | `3` | Advisory lock retries |
 | `UNDOLOG_LOCK_RETRY_MS` | engine | `100` | Lock retry backoff |
-| `UNDOLOG_REGISTRY_REFRESH_SECS` | engine | `60` | Tier registry refresh interval |
+| `UNDOLOG_REGISTRY_REFRESH_SECS` | engine | `15` | Tier registry refresh interval (minimum 5 seconds) |
 | `UNDOLOG_PROXY_LISTEN_ADDR` | proxy | `:8080` | HTTP listen address |
-| `UNDOLOG_PROXY_ENGINE_GRPC_ADDR` | proxy | `engine:50051` | Engine gRPC address |
-| `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | proxy |, | Upstream tool HTTP endpoint |
-| `UNDOLOG_PROXY_API_KEYS` | proxy |, | Comma-separated `key=org` pairs |
+| `UNDOLOG_PROXY_ENGINE_GRPC_ADDR` | proxy | `localhost:50051` | Engine gRPC address; compose sets `engine:50051` |
+| `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | proxy | `none` | Upstream tool HTTP endpoint; compose sets the tool server |
+| `UNDOLOG_PROXY_API_KEYS` | proxy | `none` | Comma-separated `key=org` pairs; at least one is required |
 | `UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS` | proxy | `30` | Graceful shutdown timeout |
 | `NEXT_PUBLIC_PROXY_URL` | dashboard | `http://localhost:8080` | Proxy URL for API calls |
 | `NEXT_PUBLIC_SSE_URL` | dashboard | `http://localhost:8080` | SSE endpoint URL |
