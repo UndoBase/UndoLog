@@ -39,7 +39,19 @@ IP:port for the tonic gRPC server that handles Intercept, Commit, Fail, Approve,
 |------|---------|----------|
 | `string` | `0.0.0.0:9090` | Yes |
 
-IP:port for the HTTP health endpoint (`GET /` → `{"status":"ok","service":"undolog-engine","registry_age_secs":42}`). `registry_age_secs` counts the seconds since the last successful tool registry refresh, or `null` before the first one.
+IP:port for the HTTP health endpoint. Every path answers `200 OK` with a JSON
+body, and the two engine binaries answer with different bodies:
+
+| Build | `GET /` response body |
+|-------|-----------------------|
+| `undolog-engine` (PostgreSQL) | `{"status":"ok","service":"undolog-engine","registry_age_secs":42}` |
+| `undolog-engine-sqlite` (SQLite) | `{"status":"ok","service":"undolog-engine-sqlite"}` |
+
+`registry_age_secs` counts the seconds since the last successful tool registry
+refresh, or `null` before the first one. It appears only in the PostgreSQL
+body: the SQLite binary is built with `--no-default-features --features sqlite`
+and never starts the refresh loop the age measures, so the key is absent rather
+than `null`.
 
 ---
 
