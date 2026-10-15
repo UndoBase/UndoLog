@@ -211,9 +211,20 @@ reconnects on its own: liveness never depends on the engine being online.
 
 ### 7. Graceful shutdown
 
-Both the proxy and engine handle SIGINT and SIGTERM. The proxy drains in-flight
-requests within `SHUTDOWN_TIMEOUT_SECS` (default 30s). The engine closes gRPC
-connections within 10s.
+Both the proxy and the engine handle SIGINT and SIGTERM. On the signal the
+proxy closes dashboard event streams, stops accepting connections, and
+drains in-flight requests within `UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS`
+(default 30s). A drain that finishes inside the window exits with no
+shutdown log line; a drain that runs out logs `shutdown error` at WARN with
+the error and exits anyway. The engine stops accepting new gRPC
+connections, finishes in-flight RPCs, aborts its health endpoint, and logs
+`UndoLog Engine stopped` at INFO. Neither process puts a deadline on its
+own drain, so keep RPCs shorter than the signal grace period your
+orchestrator allows. Docker Compose escalates to SIGKILL 10 seconds after
+`stop` or `down` by default, which `stop_grace_period` raises.
+
+Both processes log JSON to stdout, so the commands below show shutdown
+warnings as they happen.
 
 Test graceful shutdown:
 
@@ -222,13 +233,9 @@ docker compose kill -s SIGTERM proxy
 docker compose logs proxy --tail=10
 ```
 
-Expected log output:
-
-```
-{"level":"info","msg":"shutdown initiated","signal":"SIGTERM"}
-{"level":"info","msg":"draining active requests","count":0}
-{"level":"info","msg":"shutdown complete"}
-```
+A clean drain adds no `shutdown error` line to that output. To see the WARN
+line, send the signal while a request is in flight and lower
+`UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS` to 1.
 
 ### 8. Backup Postgres
 
