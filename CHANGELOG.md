@@ -211,6 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   reach the tools and replay approval retries from the journal start.
 - Engine: ``UNDOLOG_REGISTRY_REFRESH_SECS`` below 5 seconds is rejected at
   startup, and the health payload reports registry age so staleness is visible.
+- Documentation: replaced the fabricated graceful-shutdown log block in the
+  production guide with the drain behavior the proxy and engine implement.
 
 ## [0.2.0] - 2026-08-01
 
