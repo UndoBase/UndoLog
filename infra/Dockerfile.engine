@@ -17,14 +17,22 @@
 #     -e DATABASE_URL=postgresql://user:pass@host/db \
 #     undolog-engine:latest
 #
-# Runtime deps at a glance:
-#   DATABASE_URL                       (required, PostgreSQL connection string)
-#   UNDOLOG_LOG_LEVEL                  (optional, default: info)
-#   UNDOLOG_ENGINE_GRPC_ADDR           (optional, default: 0.0.0.0:50051)
-#   UNDOLOG_ENGINE_HEALTH_ADDR         (optional, default: 0.0.0.0:9090)
-#   UNDOLOG_REGISTRY_REFRESH_SECS      (optional, default: 60)
-#   UNDOLOG_LOCK_MAX_ATTEMPTS          (optional, default: 3)
-#   UNDOLOG_LOCK_RETRY_MS              (optional, default: 100)
+# Runtime deps at a glance: every setting this binary reads. The sqlite
+# build's UNDOLOG_SQLITE_PATH does not apply to this image.
+#   DATABASE_URL                        (required, PostgreSQL connection string)
+#   UNDOLOG_LOG_LEVEL                   (optional, default: info)
+#   UNDOLOG_ENGINE_GRPC_ADDR            (optional, default: 0.0.0.0:50051)
+#   UNDOLOG_ENGINE_HEALTH_ADDR          (optional, default: 0.0.0.0:9090)
+#   UNDOLOG_REGISTRY_REFRESH_SECS       (optional, default: 15, minimum 5)
+#   UNDOLOG_LOCK_MAX_ATTEMPTS           (optional, default: 3)
+#   UNDOLOG_LOCK_RETRY_MS               (optional, default: 100)
+#   UNDOLOG_ENGINE_AUTH_TOKEN           (optional, default: empty, auth off)
+#   UNDOLOG_APPROVAL_TIMEOUT_SECS       (optional, default: 86400)
+#   UNDOLOG_AUTO_APPROVE_ON_TIMEOUT     (optional, default: false)
+#   UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS (optional, default: 60)
+#   UNDOLOG_OTEL_ENDPOINT               (optional, default: empty, no export)
+#   UNDOLOG_OTEL_LOG_LEVEL              (optional, default: info)
+#   UNDOLOG_OTEL_SERVICE_NAME           (optional, default: undolog-engine)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Stage 1: Builder ─────────────────────────────────────────────────────────
