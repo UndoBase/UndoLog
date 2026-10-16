@@ -202,6 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the tag and prints the push command rather than pushing itself.
 - Go proxy: ``golangci-lint`` (repo config) enforced and ``go test -race``
   enabled in CI.
+- Documentation: rewrote the Python SDK README around run_with_session,
+  the framework wrappers, error handling, and the testing helpers.
 
 ### Fixed
 
