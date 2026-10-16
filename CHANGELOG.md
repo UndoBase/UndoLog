@@ -217,6 +217,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   defaults, the tool server port, and an undefined variable name.
 - Documentation: noted that the SQLite engine health payload omits
   ``registry_age_secs`` because the binary starts no registry refresh loop.
+- Documentation: aligned .env.example and the engine and proxy Dockerfile
+  comments with the shipped variable set and defaults.
 
 ## [0.2.0] - 2026-08-01
 
