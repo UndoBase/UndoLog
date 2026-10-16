@@ -177,6 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   an override compose file; the split stack is unchanged.
 - Proxy: ``/readyz`` reports engine reachability for orchestration probes,
   and reconnect metrics count recovery after engine restarts.
+- Documentation: added the _session to run_with_session migration guide with
+  before and after examples and context propagation pitfalls.
 
 ### Changed
 

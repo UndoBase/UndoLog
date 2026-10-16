@@ -137,6 +137,10 @@ asyncio.run(main())
 Every tool call, safe or not, needs a session: the context variable or the
 explicit `_session` argument supplies it.
 
+Migrating a codebase that threads `_session` explicitly? The [migration
+guide](https://undolog.undobase.com/docs/guides/migrating-session-injection)
+moves it over one call site at a time, with both styles working throughout.
+
 ## Framework wrappers
 
 ```python
