@@ -179,6 +179,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and reconnect metrics count recovery after engine restarts.
 - Documentation: added the _session to run_with_session migration guide with
   before and after examples and context propagation pitfalls.
+- Documentation: documented test_compensation and test_saga in the Python
+  SDK reference, and audited the page against the shipped exports.
 
 ### Changed
 

@@ -1,12 +1,12 @@
 ---
 title: "Python SDK Reference"
-description: "**Package:** `undolog_sdk` **Module paths:** `undolog_sdk.client`, `undolog_sdk.session`, `undolog_sdk.decorators`, `undolog_sdk.tier`, `undolog_sdk.signature`, `undolog_sdk.integrations`"
+description: "**Package:** `undolog_sdk` **Module paths:** `undolog_sdk.client`, `undolog_sdk.session`, `undolog_sdk.decorators`, `undolog_sdk.tier`, `undolog_sdk.signature`, `undolog_sdk.integrations`, `undolog_sdk.test_harness`"
 section: "reference"
 ---
 # Python SDK Reference
 
 **Package:** `undolog_sdk`  
-**Module paths:** `undolog_sdk.client`, `undolog_sdk.session`, `undolog_sdk.decorators`, `undolog_sdk.tier`, `undolog_sdk.signature`, `undolog_sdk.integrations`
+**Module paths:** `undolog_sdk.client`, `undolog_sdk.session`, `undolog_sdk.decorators`, `undolog_sdk.tier`, `undolog_sdk.signature`, `undolog_sdk.integrations`, `undolog_sdk.test_harness`
 
 ---
 
@@ -14,13 +14,14 @@ section: "reference"
 
 **Module:** `undolog_sdk.client`
 
-Async HTTP client for the UndoLog MCP Proxy. Communicates with the Go proxy for tool call interception, commit, and fail reporting.
+Async HTTP client for the UndoLog MCP Proxy. Communicates with the Go proxy for tool call interception, commit, and fail reporting. Proxy errors surface as the SDK's `UndoLogError` subclasses from `undolog_sdk.errors`: `AuthenticationError`, `ServerError`, `TimeoutError`, and `ConnectionError`.
 
 ### Constructor
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `proxy_url` | `str \| None` | `None` | Base URL of the UndoLog proxy. Falls back to `UNDOLOG_PROXY_URL` env var, then `http://localhost:8080`. |
+| `api_key` | `str \| None` | `None` | API key sent as `X-Api-Key`. Falls back to `UNDOLOG_API_KEY` env var, then the empty string. |
 | `http_client` | `httpx.AsyncClient \| None` | `None` | Pre-configured HTTP client. If omitted, a default client is created with `base_url=proxy_url` and `timeout=30.0`. |
 
 ### Methods
@@ -52,8 +53,10 @@ async def intercept(
 
 | Exception | Condition |
 |-----------|-----------|
-| `httpx.HTTPStatusError` | Proxy-level HTTP errors (4xx/5xx). |
-| `httpx.RequestError` | Connection or timeout errors. |
+| `AuthenticationError` | Proxy rejected the credentials (401/403). |
+| `ServerError` | Proxy-side failure (5xx). |
+| `TimeoutError` | Request timed out. |
+| `ConnectionError` | Could not reach the proxy. |
 
 **HTTP:** `POST /mcp/tool_call` with headers `X-UndoLog-Org-Id`, `X-UndoLog-Session-Id`, and `X-Api-Key`.
 
@@ -68,7 +71,7 @@ async def commit(
     session_id: str,
     effect_id: str,
     result: dict[str, Any],
-) -> None
+) -> dict[str, Any]
 ```
 
 | Parameter | Type | Description |
@@ -80,12 +83,14 @@ async def commit(
 
 | Returns |
 |---------|
-| `None` |
+| `dict[str, Any]` Always the empty dict: the proxy commits inline. |
 
 | Exception | Condition |
 |-----------|-----------|
-| `httpx.HTTPStatusError` | Proxy-level HTTP errors. |
-| `httpx.RequestError` | Connection or timeout errors. |
+| `AuthenticationError` | Proxy rejected the credentials (401/403). |
+| `ServerError` | Proxy-side failure (5xx). |
+| `TimeoutError` | Request timed out. |
+| `ConnectionError` | Could not reach the proxy. |
 
 No-op; commit is handled inline by the proxy during the tool call. Kept for API compatibility.
 
@@ -100,7 +105,7 @@ async def fail(
     session_id: str,
     effect_id: str,
     error: str,
-) -> None
+) -> dict[str, Any]
 ```
 
 | Parameter | Type | Description |
@@ -112,12 +117,14 @@ async def fail(
 
 | Returns |
 |---------|
-| `None` |
+| `dict[str, Any]` Always the empty dict: the proxy handles failure inline. |
 
 | Exception | Condition |
 |-----------|-----------|
-| `httpx.HTTPStatusError` | Proxy-level HTTP errors. |
-| `httpx.RequestError` | Connection or timeout errors. |
+| `AuthenticationError` | Proxy rejected the credentials (401/403). |
+| `ServerError` | Proxy-side failure (5xx). |
+| `TimeoutError` | Request timed out. |
+| `ConnectionError` | Could not reach the proxy. |
 
 No-op; fail is handled inline by the proxy during the tool call. Kept for API compatibility.
 
@@ -383,6 +390,167 @@ def __init__(
 | `approval_id` | `str` | Approval request identifier. |
 | `tool_name` | `str` | Logical name of the tool being approved. |
 | `step_index` | `int` | Step index of the tool call. |
+
+---
+
+## Compensation testing harness
+
+**Module:** `undolog_sdk.test_harness`
+
+In-process simulation of the compensation machinery: run one compensation
+function or a whole LIFO rollback under pytest with no proxy, no engine, and
+no database. The names below are re-exported from `undolog_sdk`. Both
+functions carry the `test_` prefix the public API mandates and set
+`__test__ = False`, so pytest collects the tests written around them, not
+the harness itself.
+
+### `test_compensation`
+
+```text
+async def test_compensation(
+    fn: Callable[..., Coroutine[Any, Any, Any]],
+    *args: Any,
+    retries: int = 1,
+    **kwargs: Any,
+) -> CompensationReport
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `fn` | `Callable[..., Coroutine[Any, Any, Any]]` | (required) | The async compensation function under test. |
+| `*args` | `Any` | | Positional arguments for the compensation call. |
+| `retries` | `int` | `1` | Extra attempts allowed beyond the first call. |
+| `**kwargs` | `Any` | | Keyword arguments for the compensation call. |
+
+Executes `fn`, then verifies the idempotency contract by invoking it a
+second time with identical arguments: with `retries > 0` both results must
+agree for `final_state` to be `"compensated"`, which is the behaviour the
+engine relies on when it retries a compensation.
+
+| Returns | Description |
+|---------|-------------|
+| `CompensationReport` | Execution counts, final state, and the result value. |
+
+### `test_saga`
+
+```text
+async def test_saga(
+    session_effects: Sequence[EffectDescriptor],
+) -> SagaReport
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `session_effects` | `Sequence[EffectDescriptor]` | Recorded effects to roll back, in any order. |
+
+Rolls the effects back the way the engine's compensation pass would: LIFO
+by `stack_position`, a per-entry retry budget, and a stop at the first
+entry that fails permanently.
+
+| Returns | Description |
+|---------|-------------|
+| `SagaReport` | Per-step outcomes and the compensation invocation order. |
+
+| Exception | Condition |
+|-----------|-----------|
+| `ValueError` | Two entries share a `stack_position`, or the sequence is empty. |
+
+### `EffectDescriptor`
+
+One recorded effect in a simulated rollback, mirroring the fields of the
+engine's undo-stack entry.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tool_name` | `str` | (required) | Logical name of the tool that produced the effect. |
+| `compensation` | `Callable[..., Coroutine[Any, Any, Any]]` | (required) | The async compensation callable to invoke. |
+| `stack_position` | `int` | (required) | LIFO position; higher values roll back first. |
+| `max_retries` | `int` | `0` | Retry budget for the entry. `0` selects the default of 3, matching the engine contract. |
+| `args` | `tuple[Any, ...]` | `()` | Positional arguments for the compensation call. |
+| `kwargs` | `dict[str, Any] \| None` | `None` | Keyword arguments for the compensation call, normalized to `{}` at construction. |
+
+A negative `stack_position` raises `ValueError` at construction.
+
+### Report types
+
+`CompensationReport` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fn_name` | `str` | Name of the compensation function under test. |
+| `execution_count` | `int` | Invocations that returned normally. |
+| `retry_count` | `int` | Attempts consumed beyond the initial call. |
+| `final_state` | `str` | `"compensated"` on success; `"failed"` when every attempt raised or the two idempotency runs disagreed. |
+| `result` | `Any` | The return value of the successful attempt. |
+| `error` | `str \| None` | The last exception or mismatch message when `final_state == "failed"`. |
+
+`SagaReport` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_result` | `str` | `"compensated"` when every entry compensated, `"halted"` when one failed permanently. |
+| `steps` | `tuple[StepResult, ...]` | Per-entry outcomes in rollback execution order. |
+| `compensation_order` | `tuple[str, ...]` | Tool names that compensated successfully, in invocation order. |
+
+`StepResult` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_name` | `str` | Logical name of the compensated tool. |
+| `stack_position` | `int` | LIFO position the entry rolled back at. |
+| `attempts` | `int` | Times the compensation was invoked. |
+| `state` | `str` | `"compensated"` or `"failed"`. |
+| `error` | `str \| None` | The last exception message when `state == "failed"`. |
+
+### Harness classes
+
+`CompensationTestHarness(fn)` wraps a single compensation function and
+records `call_count`, `calls`, `results`, and `errors`. Its methods:
+`execute(*args, **kwargs)`, `execute_with_retry(*args, **kwargs)`,
+`assert_called_once()`, `assert_called_with(*args, **kwargs)`,
+`assert_idempotent(*args, **kwargs)`, and `reset()`.
+
+`SagaTestHarness(session_effects)` exposes `session_effects`,
+`async rollback() -> SagaReport`, and `report()`, which returns the most
+recent rollback's report or raises `RuntimeError` before one has run.
+
+### Example
+
+```python
+import pytest
+
+from undolog_sdk import EffectDescriptor, test_compensation, test_saga
+
+
+async def undo_refund(order_id: str) -> str:
+    return f"refunded {order_id}"
+
+
+async def undo_notify(order_id: str) -> str:
+    return f"notified about {order_id}"
+
+
+@pytest.mark.asyncio
+async def test_compensation_is_idempotent() -> None:
+    report = await test_compensation(undo_refund, "ord_1")
+    assert report.final_state == "compensated"
+    assert report.execution_count == 2
+
+
+@pytest.mark.asyncio
+async def test_rollback_runs_lifo() -> None:
+    report = await test_saga(
+        [
+            EffectDescriptor("refund", undo_refund, stack_position=1, args=("ord_1",)),
+            EffectDescriptor("notify", undo_notify, stack_position=2, args=("ord_1",)),
+        ]
+    )
+    assert report.session_result == "compensated"
+    assert report.compensation_order == ("notify", "refund")
+```
+
+Both tests need only `pip install undolog-sdk[test]`, so they run in any
+CI job that runs pytest.
 
 ---
 
