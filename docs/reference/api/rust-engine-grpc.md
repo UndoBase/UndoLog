@@ -13,6 +13,42 @@ section: "reference"
 
 ---
 
+## Authentication
+
+The engine supports optional bearer token authentication on its gRPC interface.
+
+Enforcement is configured by setting the `UNDOLOG_ENGINE_AUTH_TOKEN` environment
+variable on the engine process. When set, callers must supply the token on every
+RPC via request metadata. The Go MCP proxy sends this token when configured with
+`UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` (see ADR 0018:
+`docs/adr/0018-proxy-grpc-auth-method.md`).
+
+### Request Metadata
+
+Every incoming RPC must include the bearer token in the gRPC metadata when
+authentication is active:
+
+| Metadata key | Value format | Description |
+|--------------|--------------|-------------|
+| `authorization` | `Bearer <token>` | Lowercase ASCII header with the literal prefix `Bearer ` followed by the shared secret token. |
+
+### Verification Semantics
+
+- **Authentication disabled:** If `UNDOLOG_ENGINE_AUTH_TOKEN` is unset, empty,
+  or whitespace only, the engine interceptor permits all RPC requests without
+  checking metadata. This is the default for local development.
+- **Authentication enabled:** If `UNDOLOG_ENGINE_AUTH_TOKEN` is set, every
+  incoming RPC passes through the token interceptor. The presented token is
+  extracted from `authorization` metadata and validated using constant-time
+  comparison (`constant_time_eq`) to prevent timing side channels.
+- **Rejection behavior:** Missing credentials, non-ASCII metadata values,
+  missing `Bearer ` prefixes, or mismatched tokens are rejected before handler
+  execution with gRPC status `UNAUTHENTICATED` (code 16) and message:
+  `missing or invalid credentials: expected \`authorization\` metadata as \`Bearer <token>\``.
+  The rejection message never echoes configured or presented tokens.
+
+---
+
 ## Service Definition
 
 ```protobuf
@@ -152,7 +188,16 @@ Approve resolves an AwaitingApproval effect positively. The engine transitions t
 
 ### `ApproveResponse`
 
-Empty message.
+Carries the resume parameters for the approved tool call so the caller can
+proceed with execution.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `effect_id` | `string` | Effect identifier that transitioned from pending to approved. |
+| `session_id` | `string` | Session that was awaiting approval, now resumed to active. |
+| `tool_name` | `string` | Logical name of the tool to execute. |
+| `tool_version` | `string` | Semantic version of the tool implementation. |
+| `args` | `bytes` | Raw JSON arguments to execute with: contains `approved_args` if overridden by the approver, or the original proposed args. |
 
 ---
 
@@ -201,3 +246,107 @@ disconnect, so in-flight requests are not orphaned.
 | `tool_name` | `string` | Name of the tool proposed for execution. |
 | `args_json` | `string` | JSON-serialised arguments proposed for the tool. |
 | `created_at_unix_ms` | `int64` | Creation time in Unix milliseconds. |
+
+---
+
+## Dead-Letter Queue Operations
+
+The engine manages compensations that fail permanently and exhaust retry limits
+in a dedicated dead-letter store (`undolog_dead_letters`). Dead letters allow
+operators and automated tools to inspect, retry, or skip blocked compensations.
+
+### Lifecycle States
+
+| State | Classification | Description | Allowed next transitions |
+|-------|----------------|-------------|--------------------------|
+| `failed` | Initial | Compensation exhausted its retry budget (default: 3 attempts). Awaiting operator action. | `retry` -> `retrying`, `skip` -> `skipped` |
+| `retrying` | Transient | A retry has been initiated and is actively being executed. Increments `retry_count`. | `failed` (if retry fails again) or resolved |
+| `skipped` | Terminal | The compensation was intentionally skipped by an operator. No further execution occurs. | None (terminal state) |
+
+### State Transitions
+
+- **`failed` -> `retrying`:** Triggered by the retry operation. Increments `retry_count` by 1.
+- **`failed` -> `skipped`:** Triggered by the skip operation. Marks the dead-letter resolved without compensation re-execution.
+- **Invalid transitions:** Calling retry or skip on a record that is not in `failed` state returns an error.
+
+### Operations
+
+#### `ListDeadLetters`
+
+List dead-letter records for an organization, optionally filtered by state.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `org_id` | `string` (UUID) | Yes | Organisation that owns the dead letters. |
+| `state` | `string` | No | State filter (`"failed"`, `"retrying"`, `"skipped"`). Defaults to `"failed"`. |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `records` | `repeated DeadLetterRecord` | List of matching dead-letter records. |
+| `count` | `uint64` | Total number of records returned. |
+
+---
+
+#### `RetryDeadLetter`
+
+Reset a dead letter from `failed` to `retrying` and increment its retry counter,
+enabling re-execution of the failed compensation.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dead_letter_id` | `string` (UUID) | Yes | Unique identifier of the dead-letter record to retry. |
+
+**Response:**
+
+Returns the updated `DeadLetterRecord` in `retrying` state with `retry_count` incremented by 1.
+
+**Errors:**
+
+- Returns 404 Not Found when the dead letter ID does not exist or its current state is not `failed`.
+
+---
+
+#### `SkipDeadLetter`
+
+Mark a dead-letter record as `skipped` to resolve it permanently without
+re-running compensation.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dead_letter_id` | `string` (UUID) | Yes | Unique identifier of the dead-letter record to skip. |
+
+**Response:**
+
+Returns the updated `DeadLetterRecord` in `skipped` state.
+
+**Errors:**
+
+- Returns 404 Not Found when the dead letter ID does not exist or its current state is not `failed`.
+
+---
+
+### `DeadLetterRecord` Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dead_letter_id` | `string` (UUID) | Unique identifier for the dead-letter record. |
+| `org_id` | `string` (UUID) | Organisation that owns the record. |
+| `session_id` | `string` (UUID) | Session that produced the failed compensation. |
+| `effect_id` | `string` (UUID) | Effect whose compensation failed. |
+| `undo_id` | `string` (UUID) | Undo entry that failed. |
+| `compensation_fn` | `string` | Logical name of the compensation function. |
+| `compensation_version` | `string` | Semantic version of the compensation function. |
+| `compensation_args` | `bytes` / `string` | JSON-encoded arguments supplied to the compensation function. |
+| `error_message` | `string` | Error message captured from the failed compensation attempts. |
+| `retry_count` | `int32` | Number of retry attempts executed so far. |
+| `state` | `string` | Lifecycle state (`"failed"`, `"retrying"`, or `"skipped"`). |
+| `created_at` | `string` | Creation timestamp in RFC 3339 format. |
+| `updated_at` | `string` | Last modification timestamp in RFC 3339 format. |

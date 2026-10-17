@@ -184,6 +184,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: added the approval timeout variables, UNDOLOG_SQLITE_PATH,
   the OTEL variables, and the proxy /readyz endpoint to the configuration
   reference.
+- Documentation: documented bearer token authentication and the dead letter
+  list, retry, and skip RPCs in the engine gRPC reference.
 
 ### Changed
 
