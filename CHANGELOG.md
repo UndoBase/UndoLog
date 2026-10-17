@@ -208,6 +208,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   enabled in CI.
 - Documentation: rewrote the Python SDK README around run_with_session,
   the framework wrappers, error handling, and the testing helpers.
+- Documentation: audited the TypeScript SDK README against the shipped
+  exports and corrected the drift found.
 
 ### Fixed
 

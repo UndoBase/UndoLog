@@ -107,7 +107,6 @@ try {
 ### Vercel AI SDK
 
 ```typescript
-import { tool } from "ai";
 import { z } from "zod";
 import { UndoLogClient, ToolTier } from "@undolog/sdk";
 import { undologTool } from "@undolog/sdk/vercel-ai-sdk";
@@ -153,7 +152,7 @@ const weatherTool = createUndologTool(
       return `It is 72\u00b0F in ${location}`;
     },
   },
-  { toolName: "get_weather", tier: ToolTier.Safe },
+  { tier: ToolTier.Safe },
 );
 ```
 
@@ -196,7 +195,7 @@ const reverseTool = undologMastraTool(
   {
     id: "reverse-string",
     description: "Reverse the input string",
-    execute: async ({ input }) => ({
+    execute: async ({ input }: { input: string }) => ({
       output: input.split("").reverse().join(""),
     }),
   },
@@ -231,7 +230,7 @@ const server = createUndoLogMcpServer(
         required: ["location"],
       },
       tier: ToolTier.Safe,
-      execute: async ({ location }: { location: string }) => {
+      execute: async ({ location }) => {
         return { temperature: 72, condition: "sunny", location };
       },
     },
@@ -315,11 +314,13 @@ All SDK errors extend `UndoLogError` and carry a machine-readable `code`:
 
 ```typescript
 import {
+  UndoLogClient,
+  ToolTier,
   UndoLogError,
   AwaitingApprovalError,
-  AuthenticationError,
-  NotFoundError,
 } from "@undolog/sdk";
+
+const client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
 try {
   await client.intercept({ toolName: "t", args: {}, tier: ToolTier.Irreversible });
