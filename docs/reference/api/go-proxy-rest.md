@@ -10,6 +10,17 @@ section: "reference"
 
 ---
 
+## Request Identity and Correlation
+
+Every HTTP request entering the proxy through its middleware chain is assigned a unique UUID v4 request identifier.
+
+- **Response header:** The proxy echoes the assigned identifier in the `X-Request-Id` response header on all responses (including 2xx successes, streaming SSE frames, and 4xx/5xx errors).
+- **Error payloads:** When an error response is generated, the JSON error payload includes the identifier in the `request_id` field.
+- **Engine correlation:** The proxy propagates the request identifier as `x-request-id` gRPC metadata on every call to the engine. If W3C distributed tracing is enabled, `traceparent` and `tracestate` headers are also forwarded.
+- **Structured logs:** The proxy emits a structured log record upon request completion containing the `request_id`, `org_id`, `method`, `path`, `status`, `bytes`, and `duration_ms`.
+
+---
+
 ## `POST /mcp/tool_call`
 
 Intercept and execute a tool call through the UndoLog engine.
@@ -172,6 +183,52 @@ responses.
 
 ---
 
+## `GET /readyz`
+
+Readiness probe for the UndoLog proxy and engine reachability.
+
+### Request
+
+No headers are required and the endpoint is unauthenticated.
+
+### Responses
+
+#### `200 OK`. Ready
+
+```json
+{
+  "status": "ready",
+  "service": "undolog-proxy"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `string` | `"ready"` |
+| `service` | `string` | Service identifier (`"undolog-proxy"`). |
+
+Returned when the proxy has established an active and healthy gRPC connection to the engine.
+
+#### `503 Service Unavailable`. Not Ready
+
+```json
+{
+  "status": "not_ready",
+  "service": "undolog-proxy"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `string` | `"not_ready"` |
+| `service` | `string` | Service identifier (`"undolog-proxy"`). |
+
+Returned when the engine gRPC connection is unavailable, disconnected, or reconnecting. Orchestrators should gate incoming traffic on `/readyz` while leaving `/health` for liveness probes.
+
+Like `/health`, `/readyz` is served outside the middleware chain, requires no API key, and intentionally exposes no configuration values.
+
+---
+
 ## `GET /metrics`
 
 Prometheus text exposition of proxy service metrics. No auth required.
@@ -182,10 +239,17 @@ Prometheus text exposition of proxy service metrics. No auth required.
 |--------|------|--------|-------------|
 | `undolog_proxy_http_requests_total` | counter | `route`, `status` | Completed HTTP requests by route and status code. |
 | `undolog_proxy_http_request_duration_seconds` | histogram | `route` | HTTP request duration per route. Note that `/events` reports the full stream lifetime. |
-| `undolog_proxy_engine_rpc_duration_seconds` | histogram | `method` | Engine gRPC call duration. |
+| `undolog_proxy_engine_connected` | gauge | none | Current engine connection state: 1 when connected and ready, 0 when disconnected. |
+| `undolog_proxy_engine_reconnects_total` | counter | none | Number of successful engine reconnect attempts after connection drop. |
+| `undolog_proxy_engine_rpc_duration_seconds` | histogram | `method` | Engine gRPC call duration per method. |
 | `undolog_proxy_engine_rpc_errors_total` | counter | `method` | Engine calls that returned an error. |
 | `undolog_proxy_engine_rpc_retries_total` | counter | `method` | Engine calls retried after a transient failure. |
-| `undolog_proxy_executor_duration_seconds` | histogram | `result` | Upstream tool executor duration. |
+| `undolog_proxy_engine_inflight` | gauge | none | In-flight requests currently executing against the engine. |
+| `undolog_proxy_engine_queue_depth` | gauge | none | Requests waiting in the bounded queue for an engine execution slot. |
+| `undolog_proxy_engine_breaker_state` | gauge | none | Engine circuit breaker state: 0 (closed/healthy), 1 (half-open), 2 (open/failing). |
+| `undolog_proxy_engine_rejections_total` | counter | `reason` | Engine requests rejected by backpressure (`"breaker"` or `"queue_full"`). |
+| `undolog_proxy_rate_limit_rejections_total` | counter | none | Requests rejected by per-API-key rate limiting (HTTP 429). |
+| `undolog_proxy_executor_duration_seconds` | histogram | `result` | Upstream tool executor duration by outcome (`"success"` or `"error"`). |
 | `undolog_proxy_sse_subscribers` | gauge | `org` | Active SSE subscribers per organisation. |
 | `undolog_proxy_sse_events_dropped_total` | counter | `org` | SSE events dropped because a subscriber channel was full. |
 | `undolog_proxy_approval_decisions_total` | counter | `action`, `result` | Approval decisions by action and outcome. |
@@ -199,9 +263,9 @@ The `route` label carries the request path with the approval id collapsed to a
 fixed segment, so `/approvals/{id}/approve` and `/approvals/{id}/reject`
 produce one series per action instead of one per approval id. The `/events`
 duration histogram covers the full SSE stream lifetime. Approval latency only
-samples requests that reached the decision state machine. `/health` and
-`/metrics` are served outside the middleware chain, so they do not appear in
-the HTTP metrics and are not covered by API-key auth.
+samples requests that reached the decision state machine. The `/health`,
+`/readyz`, and `/metrics` endpoints are served outside the middleware chain, so
+they do not appear in the HTTP metrics and are not covered by API-key auth.
 
 ---
 
