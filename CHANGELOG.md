@@ -191,6 +191,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Documentation: the quickstart now starts with undolog dev for a zero
+  infrastructure first run; the durable compose setup moved to the
+  installation guide.
 - **Python SDK (breaking):** SAFE-tier tools no longer consume a step index,
   aligning Python behaviour with TypeScript.
 - Python SDK: license metadata corrected from MIT to Apache-2.0 (matches repo

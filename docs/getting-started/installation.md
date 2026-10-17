@@ -5,9 +5,15 @@ section: "getting-started"
 ---
 # Installation
 
-This guide walks you through setting up UndoLog on your machine. You have two
-paths: the **Docker** path gets you running in about five minutes; the
-**manual** path gives you full control over each component.
+For evaluating UndoLog locally without external dependencies, start with
+`undolog dev` in the [Quickstart](quickstart.md) (no Docker or PostgreSQL required).
+
+This guide walks you through setting up durable UndoLog infrastructure on your
+machine:
+- The **Docker Compose** path deploys the complete durable stack (PostgreSQL,
+  Rust effect engine, Go HTTP proxy, and dashboard).
+- The **manual** path gives you full control over building and running each
+  component from source.
 
 ---
 
@@ -26,22 +32,22 @@ Before you start, make sure you have these installed:
 
 ---
 
-## Option 1: Try it in 5 minutes with Docker
+## Option 1: Durable local deployment with Docker Compose
 
 Clone the repository and start the full stack:
 
 ```bash
-git clone https://github.com/your-org/undolog.git
-cd undolog
+git clone https://github.com/UndoBase/UndoLog.git
+cd UndoLog
 docker compose up -d
 ```
 
-This launches four services defined in `infra/docker-compose.yml`:
+This launches four services defined in `docker-compose.yml`:
 
 - **postgres** (port 5432). PostgreSQL 16 with the schema applied automatically
 - **engine** (port 50051). Rust effect engine, listens for gRPC requests
 - **proxy** (port 8080). Go HTTP proxy, routes tool calls to the engine
-- **dashboard** (port 3000). Next.js dashboard for monitoring sessions
+- **dashboard** (port 3000). Next.js dashboard for monitoring sessions (experimental)
 
 After the stack starts, install the Python SDK in your application:
 
@@ -109,7 +115,7 @@ variables are:
 | Variable | Default | Used by | Description |
 |---|---|---|---|
 | `UNDOLOG_PROXY_URL` | `http://localhost:8080` | Python SDK | Base URL of the Go proxy |
-| `DATABASE_URL` |, | Engine, Proxy | PostgreSQL connection string |
+| `DATABASE_URL` | none | Engine | PostgreSQL connection string |
 | `ENGINE_GRPC_ADDR` | `localhost:50051` | Go Proxy | gRPC address of the Rust engine |
 | `UNDOLOG_LOG_LEVEL` | `info` | All | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `UNDOLOG_TOOL_TIMEOUT_SECS` | `300` | Engine | Max seconds per tool execution |
