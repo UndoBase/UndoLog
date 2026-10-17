@@ -11,6 +11,7 @@
     { "slug": "integrating-semantic-kernel", "title": "Integrating with Semantic Kernel" },
     { "slug": "integrating-llamaindex", "title": "Integrating with LlamaIndex" },
     { "slug": "migrating-session-injection", "title": "Migrating Session Injection" },
+    { "slug": "writing-proxy-plugins", "title": "Writing Proxy Plugins" },
     { "slug": "deploying-with-docker", "title": "Deploying with Docker" },
     { "slug": "running-in-production", "title": "Running in Production" }
   ]

@@ -16,6 +16,7 @@ How-to guides for common UndoLog workflows.
 | [Integrating with LlamaIndex](integrating-llamaindex.md) | Running LlamaIndex tools inside UndoLog sessions with approval gating |
 | [Migrating session injection](migrating-session-injection.md) | Moving from explicit `_session` threading to `run_with_session` |
 | [Writing compensations](writing-compensations.md) | Best practices for idempotent, safe compensation handlers |
+| [Writing proxy plugins](writing-proxy-plugins.md) | Authoring custom request interceptors, failure policies, and chain ordering |
 | [Configuring approval gates](configuring-approval-gates.md) | Setting up manual or automated approval steps before high-risk effects |
 | [Deploying with Docker](deploying-with-docker.md) | Running the full stack with Docker Compose |
 | [Helm installation](helm-installation.md) | Deploying on Kubernetes with the Helm chart |

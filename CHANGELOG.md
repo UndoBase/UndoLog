@@ -188,6 +188,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   list, retry, and skip RPCs in the engine gRPC reference.
 - Documentation: added /readyz semantics, the /metrics surface, and the
   X-Request-Id echo behavior to the proxy REST reference.
+- Documentation: added a plugin authoring guide covering the interceptor
+  interface, ordering, failure policy, and a worked example.
 
 ### Changed
 

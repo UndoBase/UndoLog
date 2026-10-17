@@ -606,7 +606,8 @@ half-open, `2` open) from startup.
 Plugins compile into the proxy image: implement the interface in
 `services/undolog-proxy/internal/plugin`, register the constructor under a
 name in `builtins` in `plugin.go`, and rebuild. Both examples below are
-complete implementations of `Name`, `Before`, and `After`.
+complete implementations of `Name`, `Before`, and `After`. For a step-by-step
+guide, see [Writing proxy plugins](../guides/writing-proxy-plugins.md).
 
 Add a header to every request:
 
