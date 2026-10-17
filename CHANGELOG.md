@@ -181,6 +181,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   before and after examples and context propagation pitfalls.
 - Documentation: documented test_compensation and test_saga in the Python
   SDK reference, and audited the page against the shipped exports.
+- Documentation: added the approval timeout variables, UNDOLOG_SQLITE_PATH,
+  the OTEL variables, and the proxy /readyz endpoint to the configuration
+  reference.
 
 ### Changed
 

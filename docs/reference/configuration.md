@@ -23,6 +23,17 @@ Format: `postgresql://[user[:password]@][host][:port][/database][?params]`
 
 ---
 
+### `UNDOLOG_SQLITE_PATH`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `undolog.db` | No |
+
+Filesystem path of the SQLite database. The `undolog-engine-sqlite` binary
+reads this variable in place of `DATABASE_URL`.
+
+---
+
 ### `UNDOLOG_ENGINE_GRPC_ADDR`
 
 | Type | Default | Required |
@@ -77,6 +88,41 @@ Log level for the Rust engine. Used as the default directive for `tracing_subscr
 
 ---
 
+### `UNDOLOG_OTEL_ENDPOINT`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Enables OTLP/gRPC trace export when set, for example
+`http://localhost:4317`. Empty or unset keeps telemetry to the JSON log
+output the engine always produces; the tracer provider is flushed on
+shutdown.
+
+---
+
+### `UNDOLOG_OTEL_SERVICE_NAME`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `undolog-engine` | No |
+
+Resource `service.name` attached to exported spans. Read only while
+`UNDOLOG_OTEL_ENDPOINT` is set.
+
+---
+
+### `UNDOLOG_OTEL_LOG_LEVEL`
+
+| Type | Default | Valid Values |
+|------|---------|-------------|
+| `string` | follows `UNDOLOG_LOG_LEVEL`, then `info` | `trace`, `debug`, `info`, `warn`, `error` |
+
+Log level for the telemetry pipeline. When unset it falls back to
+`UNDOLOG_LOG_LEVEL`, so one variable usually suffices.
+
+---
+
 ### `UNDOLOG_REGISTRY_REFRESH_SECS`
 
 | Type | Default | Description |
@@ -103,6 +149,43 @@ how long the current registry data has been in memory.
 | Type | Default | Description |
 |------|---------|-------------|
 | `uint64` | `100` | Delay in milliseconds between advisory lock acquisition attempts. |
+
+---
+
+### `UNDOLOG_APPROVAL_TIMEOUT_SECS`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `int64` | `86400` | Seconds a pending approval waits for a human decision before the engine times it out. The deadline is fixed when the approval is created. |
+
+Values below `1` stop the engine at startup
+(`timeout_secs must be at least 1`). A sweep moves every expired
+approval out of the pending state and records an audit event in
+`undolog_approval_events`; the outcome follows
+`UNDOLOG_AUTO_APPROVE_ON_TIMEOUT`.
+
+---
+
+### `UNDOLOG_AUTO_APPROVE_ON_TIMEOUT`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `bool` | `false` | How an approval past its timeout is resolved. |
+
+`false` transitions timed-out approvals to `timed_out` (rejected);
+`true` transitions them to `auto_approved` instead.
+
+---
+
+### `UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| `uint64` | `60` | Interval between background sweeps for pending approvals past their timeout, in seconds. |
+
+Values below `1` stop the engine at startup
+(`check_interval_secs must be at least 1`). One sweep covers every
+organisation's pending approvals.
 
 ---
 
@@ -175,6 +258,18 @@ atomic, and the limiter replaces its rate and bucket size under the
 limiter's own lock. A request already in flight finishes against the
 settings it started with; requests issued after the swap see the new
 version.
+
+---
+
+### `UNDOLOG_PROXY_CONFIG`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Path of the optional TOML file. Unset or empty keeps configuration
+environment-only. See the two sections above for precedence, the file
+key mapping, and hot reload.
 
 ---
 
@@ -468,6 +563,19 @@ full interval. Must be set together with
 
 ---
 
+### Health and readiness endpoints
+
+Orchestration places and gates traffic on three unauthenticated
+endpoints:
+
+| Path | Answer | Meaning |
+|------|--------|---------|
+| `/health` | `200` (`status: ok`) | Liveness. Stays `200` while the engine is down and never echoes configuration values. |
+| `/readyz` | `200` (`status: ready`) while the engine gRPC connection is available, `503` (`status: not_ready`) otherwise | Readiness. The connection view an orchestrator probes. |
+| `/metrics` | `200` Prometheus exposition text | The counters and gauges named throughout this page. |
+
+---
+
 ### Status codes for server capacity
 
 The engine guard and the per-key limiter share one retry contract with
@@ -581,13 +689,21 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | Variable | Service | Type | Default | Required |
 |----------|---------|------|---------|----------|
 | `DATABASE_URL` | Engine | `string` | `postgresql://postgres:postgres@localhost:5432/undolog_dev` | Yes |
+| `UNDOLOG_SQLITE_PATH` | Engine | `string` | `undolog.db` | No |
 | `UNDOLOG_ENGINE_GRPC_ADDR` | Engine | `string` | `0.0.0.0:50051` | Yes |
 | `UNDOLOG_ENGINE_HEALTH_ADDR` | Engine | `string` | `0.0.0.0:9090` | Yes |
 | `UNDOLOG_ENGINE_AUTH_TOKEN` | Engine | `string` | `""` | No |
 | `UNDOLOG_LOG_LEVEL` | Engine, Proxy | `string` | `info` | No |
+| `UNDOLOG_OTEL_ENDPOINT` | Engine | `string` | `""` | No |
+| `UNDOLOG_OTEL_SERVICE_NAME` | Engine | `string` | `undolog-engine` | No |
+| `UNDOLOG_OTEL_LOG_LEVEL` | Engine | `string` | follows `UNDOLOG_LOG_LEVEL` | No |
 | `UNDOLOG_REGISTRY_REFRESH_SECS` | Engine | `uint64` | `15` | No |
 | `UNDOLOG_LOCK_MAX_ATTEMPTS` | Engine | `uint32` | `3` | No |
 | `UNDOLOG_LOCK_RETRY_MS` | Engine | `uint64` | `100` | No |
+| `UNDOLOG_APPROVAL_TIMEOUT_SECS` | Engine | `int64` | `86400` | No |
+| `UNDOLOG_AUTO_APPROVE_ON_TIMEOUT` | Engine | `bool` | `false` | No |
+| `UNDOLOG_TIMEOUT_CHECK_INTERVAL_SECS` | Engine | `uint64` | `60` | No |
+| `UNDOLOG_PROXY_CONFIG` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_LISTEN_ADDR` | Proxy | `string` | `:8080` | Yes |
 | `UNDOLOG_PROXY_READ_TIMEOUT_SECS` | Proxy | `int` | `15` | No |
 | `UNDOLOG_PROXY_WRITE_TIMEOUT_SECS` | Proxy | `int` | `15` | No |
