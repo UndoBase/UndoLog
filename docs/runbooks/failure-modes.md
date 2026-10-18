@@ -82,9 +82,20 @@ Maps each error code to cause, detection, recovery steps, and prevention.
 | Field | Value |
 |-------|-------|
 | Cause | Approval window expired before human decision |
-| Detection | Engine returns `ApprovalTimedOut` gRPC error |
+| Detection | Engine returns `ApprovalTimedOut` gRPC error; processor logs `Approval timeout processor: handled timed-out approvals`; proxy metric `undolog_proxy_approval_decisions_total{action="timeout"}` increments |
 | Recovery | If `auto_approve_on_timeout` is true, tool auto-executes; otherwise re-invoke agent |
 | Prevention | Set appropriate timeout windows; monitor pending approvals |
+
+---
+
+### `ApprovalNotFound`
+
+| Field | Value |
+|-------|-------|
+| Cause | Approve or Reject called for an approval ID not present in `undolog_approval_requests` |
+| Detection | Engine returns `ApprovalNotFound` gRPC error with status code `NOT_FOUND` |
+| Recovery | Check approval request ID against active requests in PostgreSQL or proxy `/approvals` list. Verify if request was purged by retention |
+| Prevention | Refresh the pending approval list before submitting operator decisions |
 
 ---
 
@@ -129,6 +140,28 @@ Maps each error code to cause, detection, recovery steps, and prevention.
 | Detection | Engine returns `Internal` gRPC error |
 | Recovery | Report as bug with session and effect IDs for debugging |
 | Prevention | Comprehensive testing; error handling for all edge cases |
+
+## Admission and backpressure failures
+
+### `CircuitBreakerOpen`
+
+| Field | Value |
+|-------|-------|
+| Cause | Consecutive engine errors reached the configured threshold (`UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD` on the proxy or engine `error_threshold`) |
+| Detection | Engine returns `CircuitBreakerOpen` error; proxy returns HTTP `503 Service Unavailable` with `Retry-After`; log `circuit breaker: Closed -> Open`; proxy metric `undolog_proxy_engine_breaker_state` changes to 2; metric `undolog_proxy_engine_rejections_total{reason="breaker"}` increments |
+| Recovery | Check engine logs for consecutive transport or database failures. The breaker automatically enters Half-Open after cooldown (`UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS`) and probes engine health with a single request |
+| Prevention | Address root causes of engine errors; tune breaker threshold and reset interval in proxy configuration |
+
+---
+
+### `ConcurrencyLimitReached`
+
+| Field | Value |
+|-------|-------|
+| Cause | In-flight engine RPCs exceed the concurrency gate (`UNDOLOG_PROXY_MAX_ENGINE_RPCS` or engine `max_concurrency`), or the wait queue reaches capacity |
+| Detection | Engine returns `ConcurrencyLimitReached` error; log `concurrency limit reached: N permits in use`; proxy returns HTTP `503 Service Unavailable` with `Retry-After`; proxy metric `undolog_proxy_engine_rejections_total` increments with `reason="gate"` or `reason="queue"`; `undolog_proxy_engine_inflight` reaches configured cap |
+| Recovery | Reduce caller request rate; inspect slow queries holding connections; scale engine instances horizontally if database capacity permits |
+| Prevention | Configure bounded wait queue (`UNDOLOG_PROXY_ENGINE_QUEUE_MAX` and `UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS`) to smooth micro-bursts; tune PgBouncer and engine concurrency limits |
 
 ---
 
@@ -199,6 +232,28 @@ Maps each error code to cause, detection, recovery steps, and prevention.
 | Detection | gRPC calls timeout; health checks fail |
 | Recovery | Wait for network recovery; check firewall rules; verify DNS resolution |
 | Prevention | Use multiple availability zones; monitor network latency; set appropriate timeouts |
+
+---
+
+### Stale tool registry
+
+| Field | Value |
+|-------|-------|
+| Cause | Background registry refresh loop cannot query `undolog_tool_registry` due to database connection loss or lock contention |
+| Detection | Engine log `Registry refresh failed - keeping stale data`; Engine HTTP health endpoint (`http://<engine-host>:9090/`) reports `registry_age_secs` climbing beyond expected refresh interval; newly registered tools fail with `ToolNotRegistered` |
+| Recovery | Verify PostgreSQL connectivity and permissions on `undolog_tool_registry`; check engine logs for SQL error; restart engine if connection pool is wedged |
+| Prevention | Alert on engine health endpoint when `registry_age_secs > 3 * UNDOLOG_REGISTRY_REFRESH_SECS`; ensure PgBouncer maintains adequate connection headroom for background queries |
+
+---
+
+### Session cache saturation
+
+| Field | Value |
+|-------|-------|
+| Cause | Active sessions exceed `max_entries` or high session churn causes rapid eviction of cached session states |
+| Detection | Engine debug logs `Session cache: evicting oldest entry at capacity` or high ratio of `Session cache miss` to `Session cache hit`; elevated database query volume on `undolog_sessions` |
+| Recovery | Increase `max_entries` and `ttl_secs` in `CacheConfig`; verify client applications reuse session IDs rather than generating fresh sessions per tool call |
+| Prevention | Size session cache to cover twice concurrent active sessions; monitor database query latency for session lookups |
 
 ---
 
