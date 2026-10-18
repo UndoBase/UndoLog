@@ -262,6 +262,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   DoS, cache confusion, and libvips image decoding defects.
 - Security: updated MCP SDK and locked network dependencies in TypeScript SDK,
   resolving OAuth credential leaks, IP spoofing, and DoS vulnerabilities.
+- Security: updated js-yaml, source-map-js, and postcss overrides in apps/www,
+  mitigating parser ReDoS and CSS source-map traversal risks.
 
 ## [0.2.0] - 2026-08-01
 
