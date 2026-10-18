@@ -198,6 +198,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: the quickstart now starts with undolog dev for a zero
   infrastructure first run; the durable compose setup moved to the
   installation guide.
+- Documentation: extended the runbooks with the circuit breaker,
+  concurrency limiter, session cache, approval timeout, and registry age
+  detection signals, each with recovery and prevention steps.
 - **Python SDK (breaking):** SAFE-tier tools no longer consume a step index,
   aligning Python behaviour with TypeScript.
 - Python SDK: license metadata corrected from MIT to Apache-2.0 (matches repo
