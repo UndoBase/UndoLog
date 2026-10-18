@@ -68,28 +68,31 @@ npm install
 cd ../..
 ```
 
-## Database setup
+## Database setup and migrations
 
-### Option A: Docker Compose (recommended)
+### Option A: Standalone migration CLI (recommended)
+
+Apply migrations using the standalone migration tool:
+
+```bash
+cargo run -p undolog-migrate -- up
+```
+
+To inspect migration status:
+
+```bash
+cargo run -p undolog-migrate -- status
+```
+
+### Option B: Docker Compose
+
+Start PostgreSQL via Docker Compose:
 
 ```bash
 docker compose up -d postgres
 ```
 
 The PostgreSQL container runs migrations automatically on startup. The default connection string is `postgres://undolog:undolog@localhost:5432/undolog_dev`.
-
-### Option B: Manual
-
-```bash
-createdb undolog_dev
-psql undolog_dev -f migrations/0001_initial.sql
-```
-
-If you need additional migrations, apply them in order:
-
-```bash
-for f in migrations/*.sql; do psql undolog_dev -f "$f"; done
-```
 
 ## Environment
 
@@ -108,25 +111,52 @@ The default values work for local development:
 | `PROXY_PORT` | `8080` | HTTP port for the proxy |
 | `RUST_LOG` | `info` | Engine log level |
 | `TEST_DATABASE_URL` | (see `.env.example`) | Used by integration tests |
+| `UNDOLOG_SQLITE_PATH` | `:memory:` | SQLite path when running the sqlite engine |
 
-## Run the engine
+## Local development loops
+
+UndoLog supports four development workflows depending on your focus:
+
+### 1. Zero-infrastructure loop with undolog dev
+
+For Python SDK development, framework wrappers, and test applications, run the embedded development server:
 
 ```bash
-cargo run -p undolog-engine
+undolog dev
 ```
 
-The engine starts a tonic gRPC server on `0.0.0.0:50051`. You should see log output confirming the server is listening.
+This starts a local development server with SQLite storage, requiring no Docker, no PostgreSQL, and no compilation step.
 
-## Run the proxy
+### 2. In-memory SQLite engine loop
 
-Open a second terminal:
+To develop against the Rust engine without running PostgreSQL, build and run with the `sqlite` feature flag:
 
 ```bash
+cargo run -p undolog-engine --no-default-features --features sqlite
+```
+
+### 3. Combined one-container loop
+
+To run the proxy and engine together in a single container alongside PostgreSQL:
+
+```bash
+docker compose -f docker-compose.yml -f infra/docker-compose.single.yml up -d
+```
+
+Inside the container, the proxy reaches the engine on `127.0.0.1:50051`.
+
+### 4. Standard split-stack loop
+
+Run PostgreSQL in Docker, then launch the engine and proxy in separate terminals:
+
+```bash
+# Terminal 1: engine
+cargo run -p undolog-engine
+
+# Terminal 2: proxy
 cd services/undolog-proxy
 go run ./cmd/proxy
 ```
-
-The proxy starts an HTTP server on `0.0.0.0:8080`.
 
 ## Verify
 
@@ -135,11 +165,11 @@ Check health endpoints from a third terminal:
 ```bash
 # Proxy health
 curl localhost:8080/health
-# Expected: {"status":"ok"}
+# Expected: {"status":"ok","service":"undolog-proxy"}
 
 # Engine gRPC (requires grpcurl)
 grpcurl -plaintext localhost:50051 list
-# Expected: undolog.v1.EngineService
+# Expected: undolog.v1.UndoLogEngine
 ```
 
 ## Troubleshooting
