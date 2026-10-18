@@ -149,7 +149,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
     "@langchain/core": "^0.3.80",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/node": "^22.0.0",
     "msw": "^2.7.0",
     "tsup": "^8.4.0",
@@ -163,10 +163,16 @@
     "uuid": "11.1.1",
     "@hono/node-server": "2.0.10",
     "esbuild": "0.28.1",
-    "fast-uri": "3.1.7",
-    "ip-address": "10.7.0",
-    "hono": "4.13.5",
-    "postcss": "8.5.27"
+    "fast-uri": "3.1.8",
+    "ip-address": "10.7.4",
+    "hono": "4.13.13",
+    "postcss": "8.5.27",
+    "brace-expansion": "5.0.12",
+    "proxy-addr": "2.0.8",
+    "qs": "6.16.1",
+    "markdown-it": "14.3.3",
+    "source-map-js": "1.2.2",
+    "tinypool": "2.2.0"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0"
