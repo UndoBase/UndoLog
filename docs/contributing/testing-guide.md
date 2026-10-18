@@ -31,18 +31,34 @@ cargo test --workspace -- test_name_prefix
 
 ```bash
 cd services/undolog-proxy
-go test ./... -v -count=1
+go test -race ./... -v -count=1
 ```
 
-The `-count=1` flag disables test caching. Use `-v` for verbose output, `-run` to filter by test name.
+The `-count=1` flag disables test caching. Use `-v` for verbose output, `-run` to filter by test name, and `-race` to run under the Go race detector. Running with `-race` is the default in `make test-go` and CI.
 
-The proxy tests need no Docker, no PostgreSQL, and no listening ports: the engine gRPC boundary is served in process over a `bufconn` listener (`internal/proxy/harness_test.go`), so the full stack, proto marshaling included, runs inside `go test`. The `internal/proxy` package carries a coverage gate:
+The proxy tests need no Docker, no PostgreSQL, and no listening ports: the engine gRPC boundary is served in process over a `bufconn` listener (`internal/proxy/harness_test.go`), so the full stack, proto marshaling included, runs inside `go test`.
+
+The `internal/proxy` package carries an automated statement coverage gate:
 
 ```bash
 make coverage-go
 ```
 
-The target fails below 80 percent statement coverage for `internal/proxy` and writes `coverage.out` in the proxy module, which `go tool cover -html=coverage.out` opens as a per-line report.
+The target fails if statement coverage for `internal/proxy` falls below 80 percent. The target writes `coverage.out` in `services/undolog-proxy/`.
+
+To inspect line-by-line coverage in a web browser:
+
+```bash
+cd services/undolog-proxy
+go tool cover -html=coverage.out
+```
+
+To view package and function coverage summaries in your terminal:
+
+```bash
+cd services/undolog-proxy
+go tool cover -func=coverage.out
+```
 
 **Python. SDK:**
 
@@ -99,9 +115,100 @@ with pytest.raises(DuplicateSignatureError):
     await store.register_effect(effect)
 ```
 
-### Mocking the gRPC/proxy boundary
+### In-process gRPC engine harness
 
-The Go proxy communicates with the Rust engine over gRPC. Proxy tests serve a scripted engine in process instead of requiring a running one: `internal/proxy/harness_test.go` implements the generated `UndoLogEngineServer` with canned answers, starts it on a `bufconn` listener, and dials it with the production `engine.Client`, so tests exercise the real codec, including proto marshaling and gRPC status mapping. Script the per-method responses on the `scriptedEngine` struct and assert on the requests it recorded.
+The Go proxy communicates with the Rust engine over gRPC. Rather than mocking network boundaries or requiring a live engine process, proxy unit tests serve a scripted engine in process using the test harness in `services/undolog-proxy/internal/proxy/harness_test.go`.
+
+The harness pairs two components:
+
+- **`scriptedEngine`:** Implements the generated `pb.UndoLogEngineServer` interface with canned answers (`interceptResp`, `interceptErr`, `commitErr`, `approveResp`). It records every incoming request (`interceptReq`, `commitReq`, `approveReq`), allowing tests to assert on the exact protobuf payload sent across the wire.
+- **`newEngineHarness`:** Starts the scripted engine on an in-memory `bufconn` listener (`1 << 20` byte buffer) and dials it with the production `engine.Client`. This exercises the real gRPC codec, protobuf serialization, and status error mapping without opening network ports, running Docker, or needing PostgreSQL. Teardown of the client, gRPC connection, server, and listener is handled automatically via `t.Cleanup`.
+
+Tests construct the proxy server via `newProxyTestServer(t, harness.client, executor)` and invoke requests directly using `server.httpSrv.Handler.ServeHTTP(rec, req)`.
+
+Here is a complete test pattern demonstrating intercept execution and request assertion:
+
+```go
+func TestInterceptExecutesToolWithHarness(t *testing.T) {
+	// Script the engine to return an Execute outcome.
+	script := &scriptedEngine{
+		interceptResp: &pb.InterceptResponse{
+			Outcome: &pb.InterceptResponse_Execute{
+				Execute: &pb.ExecuteOutcome{EffectId: "eff-1"},
+			},
+		},
+	}
+	harness := newEngineHarness(t, script)
+
+	execCalls := 0
+	server := newProxyTestServer(t, harness.client, ToolExecutorFunc(func(_ context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		execCalls++
+		if call.ToolName != "search" {
+			t.Errorf("executed tool = %q, want search", call.ToolName)
+		}
+		return protocol.ToolResult{
+			Success: true,
+			Output:  json.RawMessage(`{"found":true}`),
+		}, nil
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/mcp/tool_call",
+		strings.NewReader(`{"session_id":"s1","tool_name":"search","args":{"query":"test"}}`),
+	)
+	req.Header.Set("X-Api-Key", "key-1")
+	server.httpSrv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if execCalls != 1 {
+		t.Fatalf("executor calls = %d, want 1", execCalls)
+	}
+	if script.interceptReq == nil || script.interceptReq.ToolName != "search" {
+		t.Fatalf("unexpected intercept request recorded by engine: %+v", script.interceptReq)
+	}
+}
+```
+
+To test engine failure modes, script errors directly onto `scriptedEngine`:
+
+```go
+// Test that engine transient failure returns 502 Bad Gateway with gRPC error message:
+script := &scriptedEngine{
+	interceptErr: status.Error(codes.Unavailable, "engine restarting"),
+}
+harness := newEngineHarness(t, script)
+server := newProxyTestServer(t, harness.client, executor)
+```
+
+### Startup and concurrency test patterns
+
+The proxy service coordinates concurrent requests, background approval reconciliation, configuration reloads, and SSE broadcasts across shared state. Concurrency tests in `services/undolog-proxy/internal/proxy/` follow three established patterns:
+
+- **Simultaneous release via an unbuffered channel:** Tests spin up worker goroutines that increment a `sync.WaitGroup` and immediately block on `<-start`. Closing `close(start)` releases all workers at the same instant, maximizing lock contention and scheduling overlap:
+
+```go
+const workers = 16
+var wg sync.WaitGroup
+start := make(chan struct{})
+
+for i := 0; i < workers; i++ {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		// Execute concurrent operation under test
+	}()
+}
+close(start)
+wg.Wait()
+```
+
+- **Race detector as assertion:** All proxy tests run under `go test -race` (via `make test-go` and CI). In concurrency tests such as `TestStartupPassRacesSafely` and `TestWatcherReloadsConfigConcurrentlyWithInFlightRequests`, the primary assertion is that the race detector detects zero unsynchronized memory accesses while state transitions run concurrently.
+- **Settled state and invariant verification:** Once `wg.Wait()` returns, tests assert that shared structures settle into consistent states. For example, verifying that SSE subscriber gauges settle back to zero after concurrent unsubscribes, that the approval store contains reconciled records, or that burst requests receive only valid status codes (such as `200` or `503 Service Unavailable` with `Retry-After`).
 
 ## Testing compensations
 

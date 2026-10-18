@@ -233,6 +233,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the framework wrappers, error handling, and the testing helpers.
 - Documentation: audited the TypeScript SDK README against the shipped
   exports and corrected the drift found.
+- Documentation: documented the in-process gRPC engine harness, the proxy
+  coverage gate, and the startup and concurrency test patterns.
 
 ### Fixed
 
