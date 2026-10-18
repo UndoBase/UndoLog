@@ -10,15 +10,15 @@ section: "contributing"
 **Rust: all crates:**
 
 ```bash
-cargo test --workspace
+cargo test --lib --workspace --exclude undolog-engine
 ```
 
-This runs unit tests, doc tests, and integration tests across `undolog-engine`, `undolog-store`, `undolog-types`, and `undolog-saga`.
+This runs unit tests across `undolog-store`, `undolog-types`, and `undolog-saga` without requiring a database. This command runs as part of `make check`.
 
-To run a single crate's tests:
+To run tests across a specific crate:
 
 ```bash
-cargo test -p undolog-engine
+cargo test -p undolog-engine --lib
 ```
 
 To run a specific test by name:
@@ -69,7 +69,7 @@ pytest -v
 
 Uses `pytest-asyncio` for async test support. Tests requiring a running engine use the `engine` fixture defined in `conftest.py`.
 
-## Test database
+## Test database and engine tiers
 
 Integration tests that exercise the PostgreSQL store require a test database. Set the `TEST_DATABASE_URL` environment variable:
 
@@ -77,7 +77,84 @@ Integration tests that exercise the PostgreSQL store require a test database. Se
 export TEST_DATABASE_URL=postgres://undolog:undolog@localhost:5432/undolog_test
 ```
 
-The test harness creates the schema on first use and truncates tables between test runs. If you run tests without this variable, tests that require a database are skipped.
+The test harness creates the schema on first use and truncates tables between test runs.
+
+### Engine test tiers
+
+The Rust engine workspace separates tests into five distinct tiers based on external dependencies and verification scope:
+
+- **Tier 1: Unit and library tests:** Fast, in-process tests covering core types, serialization, and state helpers without database dependencies:
+
+```bash
+cargo test --lib --workspace --exclude undolog-engine
+```
+
+- **Tier 2: Property-based tests:** Invariant verification using `proptest` across generated inputs. These tests validate signature determinism, canonical JSON sorting, and state transitions without opening network or database connections:
+
+```bash
+cargo test -p undolog-engine --test property_tests
+cargo test -p undolog-saga --test saga_property_tests
+```
+
+- **Tier 3: Feature-gated SQLite tests:** Storage layer tests running against SQLite in `:memory:` without PostgreSQL:
+
+```bash
+cargo test -p undolog-store --features sqlite --test test_sqlite
+```
+
+- **Tier 4: Chaos engineering tests:** Resilience tests under adverse failure conditions (`crates/undolog-engine/tests/chaos.rs`). Without `TEST_DATABASE_URL`, tests requiring PostgreSQL are ignored, while offline failure tests run:
+
+```bash
+# Run offline chaos tests (skips DB-dependent cases):
+cargo test -p undolog-engine --test chaos
+
+# Run all chaos tests against PostgreSQL:
+cargo test -p undolog-engine --test chaos -- --ignored
+```
+
+- **Tier 5: Integration tests (PostgreSQL):** End-to-end routing, approval timeouts, backpressure, dead-letter administration, and saga crash recovery. These tests require `TEST_DATABASE_URL`:
+
+```bash
+cargo test -p undolog-saga --test saga_integration_tests
+cargo test -p undolog-engine --test integration_tests -- --ignored
+cargo test -p undolog-engine --test test_timeout
+cargo test -p undolog-engine --test test_rate_limit -- --ignored
+cargo test -p undolog-engine --test test_admin_api -- --ignored
+```
+
+### Database gating mechanism
+
+The engine crates gate database tests using two complementary mechanisms:
+
+- **Ignored tests in `undolog-engine`:** Integration and chaos tests that connect to PostgreSQL use `#[ignore = "requires TEST_DATABASE_URL"]`. Running `cargo test` executes the offline tests without failing, allowing offline builds and fast local iteration. Passing `-- --ignored` instructs the test runner to execute the database suite.
+- **Environment assertion in `undolog-saga`:** Saga integration tests (`crates/undolog-saga/tests/saga_integration_tests.rs`) verify crash recovery, compensation retries, and LIFO ordering against live PostgreSQL instances, requiring `TEST_DATABASE_URL` to be explicitly set.
+
+### Feature-gated test split
+
+The engine and store crates support two storage backends controlled by feature flags:
+
+- **`sqlite` feature:** Compiles SQLite support using `sqlx` in WAL mode with async connection pooling. To build and test with SQLite:
+
+```bash
+cargo test -p undolog-store --features sqlite --test test_sqlite
+cargo build -p undolog-engine --no-default-features --features sqlite
+```
+
+- **`pg` feature:** Enables PostgreSQL support (enabled by default in `undolog-engine`). To compile explicitly with PostgreSQL:
+
+```bash
+cargo build -p undolog-engine --features pg
+```
+
+### Chaos engineering scenarios
+
+The chaos test suite (`crates/undolog-engine/tests/chaos.rs`) simulates five specific operational failure modes:
+
+1. **Crash during compensation:** Aborts an active tokio task mid-intercept to simulate an unexpected process crash. Asserts that the session record remains in a valid state (`active`, `compensating`, `compensated`, `failed`, `halted`) with zero database corruption.
+2. **Concurrent same-signature serialization:** Dispatches two concurrent intercepts with identical parameters for the same session and step. Asserts that PostgreSQL advisory locks serialize execution so exactly one returns `Execute` and the other returns `Replay`.
+3. **Database connection failure:** Configures an unreachable database endpoint. Asserts that the engine cleanly propagates connection errors without panicking.
+4. **Pre-existing session recovery:** Creates session rows directly in the database, then starts a fresh engine instance with empty in-memory caches. Asserts that the engine processes intercepts correctly against existing state.
+5. **Rapid repeated intercepts:** Fires a burst of 10 concurrent requests with identical signatures. Asserts that exactly one `Execute` and nine `Replay` outcomes are produced, verifying idempotency under high contention.
 
 ## Writing tests
 

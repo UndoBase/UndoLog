@@ -235,6 +235,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   exports and corrected the drift found.
 - Documentation: documented the in-process gRPC engine harness, the proxy
   coverage gate, and the startup and concurrency test patterns.
+- Documentation: documented the engine chaos and integration test tiers,
+  the TEST_DATABASE_URL gating, and the feature-gated test split, and
+  updated development setup for the local dev loop.
 
 ### Fixed
 
