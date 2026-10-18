@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import matter from "gray-matter";
+import yaml from "js-yaml";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -133,7 +134,12 @@ function findAndParseDoc(slug: string): { content: string; data: Record<string, 
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
       const raw = fs.readFileSync(p, "utf-8");
-      const parsed = matter(raw);
+      const parsed = matter(raw, {
+        engines: {
+          yaml: (str: string) =>
+            (yaml.load(str, { schema: yaml.DEFAULT_SCHEMA }) as Record<string, unknown>) || {},
+        },
+      });
       return { content: parsed.content, data: parsed.data };
     }
   }

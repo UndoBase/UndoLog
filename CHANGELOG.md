@@ -268,6 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   resolving TLS 1.3 handshake boundary and W3C Baggage memory allocation risks.
 - Security: upgraded vitest and vitest-mocker in TypeScript SDK tooling,
   resolving mock redirect plugin path traversal vulnerabilities.
+- Security: updated frontmatter loader in apps/www to use safe YAML parser,
+  completely eliminating vulnerable sprintf-js and argparse dependencies.
 
 ## [0.2.0] - 2026-08-01
 
