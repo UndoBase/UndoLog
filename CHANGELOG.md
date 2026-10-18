@@ -190,6 +190,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   X-Request-Id echo behavior to the proxy REST reference.
 - Documentation: added a plugin authoring guide covering the interceptor
   interface, ordering, failure policy, and a worked example.
+- Documentation: added engine queue, concurrency cap, circuit breaker, and
+  rate limit tuning guidance to the production guide.
 
 ### Changed
 
