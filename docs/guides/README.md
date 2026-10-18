@@ -22,3 +22,4 @@ How-to guides for common UndoLog workflows.
 | [Helm installation](helm-installation.md) | Deploying on Kubernetes with the Helm chart |
 | [OpenTelemetry setup](opentelemetry-setup.md) | Configuring distributed tracing with OTLP and Grafana |
 | [Running in production](running-in-production.md) | Advisory lock tuning, connection pooling, partition management |
+| [Capacity planning](capacity-planning.md) | Pool sizing, replica scaling, retention and partition levers, and storage forecasting |

@@ -13,6 +13,7 @@
     { "slug": "migrating-session-injection", "title": "Migrating Session Injection" },
     { "slug": "writing-proxy-plugins", "title": "Writing Proxy Plugins" },
     { "slug": "deploying-with-docker", "title": "Deploying with Docker" },
-    { "slug": "running-in-production", "title": "Running in Production" }
+    { "slug": "running-in-production", "title": "Running in Production" },
+    { "slug": "capacity-planning", "title": "Capacity Planning" }
   ]
 }
