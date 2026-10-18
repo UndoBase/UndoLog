@@ -264,6 +264,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   resolving OAuth credential leaks, IP spoofing, and DoS vulnerabilities.
 - Security: updated js-yaml, source-map-js, and postcss overrides in apps/www,
   mitigating parser ReDoS and CSS source-map traversal risks.
+- Security: upgraded rustls and opentelemetry packages in Cargo dependencies,
+  resolving TLS 1.3 handshake boundary and W3C Baggage memory allocation risks.
 
 ## [0.2.0] - 2026-08-01
 
