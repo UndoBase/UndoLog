@@ -9,6 +9,7 @@
     { "slug": "error-codes", "title": "Error Codes" },
     { "slug": "configuration", "title": "Configuration" },
     { "slug": "database-schema", "title": "Database Schema" },
+    { "slug": "slo", "title": "Service Level Objectives" },
     { "slug": "api/python-sdk", "title": "Python SDK API" },
     { "slug": "api/go-proxy-rest", "title": "Go Proxy REST API" },
     { "slug": "api/rust-engine-grpc", "title": "Rust Engine gRPC API" }
