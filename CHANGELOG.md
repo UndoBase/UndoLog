@@ -195,6 +195,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: added the SLO reference with intercept, commit,
   compensation, approval, and recovery targets, each backed by a benchmark
   and the p95 regression checker.
+- Documentation: added the capacity planning guide covering engine pool
+  sizing, replica scaling, retention and partition levers, and proxy
+  admission tuning with a storage growth example.
 
 ### Changed
 
