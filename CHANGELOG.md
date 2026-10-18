@@ -256,6 +256,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: aligned .env.example and the engine and proxy Dockerfile
   comments with the shipped variable set and defaults.
 
+### Security
+
+- Security: upgraded Next.js and sharp across apps/www, resolving SSRF,
+  DoS, cache confusion, and libvips image decoding defects.
+
 ## [0.2.0] - 2026-08-01
 
 ### Added
