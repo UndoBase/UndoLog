@@ -192,6 +192,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   interface, ordering, failure policy, and a worked example.
 - Documentation: added engine queue, concurrency cap, circuit breaker, and
   rate limit tuning guidance to the production guide.
+- Documentation: added the SLO reference with intercept, commit,
+  compensation, approval, and recovery targets, each backed by a benchmark
+  and the p95 regression checker.
 
 ### Changed
 
