@@ -266,6 +266,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   mitigating parser ReDoS and CSS source-map traversal risks.
 - Security: upgraded rustls and opentelemetry packages in Cargo dependencies,
   resolving TLS 1.3 handshake boundary and W3C Baggage memory allocation risks.
+- Security: upgraded vitest and vitest-mocker in TypeScript SDK tooling,
+  resolving mock redirect plugin path traversal vulnerabilities.
 
 ## [0.2.0] - 2026-08-01
 
