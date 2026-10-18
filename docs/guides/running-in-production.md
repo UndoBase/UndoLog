@@ -16,7 +16,7 @@ section: "guides"
 
 You will configure the UndoLog stack for production: tune PostgreSQL,
 authenticate the engine's gRPC endpoint, harden the proxy with API keys,
-set timeouts on the engine, and verify graceful shutdown.
+configure backpressure and rate limits, and verify graceful shutdown.
 
 ## When to prefer the split deployment
 
@@ -209,7 +209,70 @@ connect or while the engine is down. The first `/readyz` call or tool call
 opens the channel, so readiness converges without traffic, and the channel
 reconnects on its own: liveness never depends on the engine being online.
 
-### 7. Graceful shutdown
+### 7. Tune backpressure and rate limiting
+
+Production deployments protect the engine and PostgreSQL from overload using
+four backpressure and admission mechanisms. Each knob defaults to `0` (disabled)
+and is configured on the proxy.
+
+#### The Four Mechanisms
+
+1. **Per-Key Rate Limiting at the Edge:**
+   - Knobs: `UNDOLOG_PROXY_RATE_LIMIT_RPS` (default: `0`) and `UNDOLOG_PROXY_RATE_LIMIT_BURST` (default: `0`).
+   - Protects against: a single misconfigured or runaway client monopolizing the system.
+   - Behavior: Enforces token-bucket rate limiting per API key digest. Calls exceeding the bucket return HTTP `429 Too Many Requests` with a `Retry-After` header. This limiter is the proxy's only source of 429.
+2. **Concurrency Cap (Engine Gate):**
+   - Knob: `UNDOLOG_PROXY_MAX_ENGINE_RPCS` (default: `0`).
+   - Protects against: PostgreSQL connection pool exhaustion.
+   - Behavior: Caps aggregate in-flight gRPC calls leaving the proxy for the engine. Sizing this cap below your PgBouncer pool (for example 20 RPCs for a pool of 25) ensures fewer queries wait on PostgreSQL than the pool can serve.
+3. **Bounded Wait Queue:**
+   - Knobs: `UNDOLOG_PROXY_ENGINE_QUEUE_MAX` (default: `0`) and `UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS` (default: `0`).
+   - Protects against: burst-induced transient failures.
+   - Behavior: When the concurrency gate is full, incoming calls wait in a FIFO queue for a free slot rather than failing immediately. Calls that wait longer than `UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS` or arrive when the queue has reached `UNDOLOG_PROXY_ENGINE_QUEUE_MAX` return HTTP `503 Service Unavailable`.
+4. **Circuit Breaker:**
+   - Knobs: `UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD` (default: `0`) and `UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS` (default: `0`).
+   - Protects against: hammering a failing or restarting engine.
+   - Behavior: Counts consecutive transport-level failures. When the threshold is reached, the breaker trips open and fast-fails client calls with HTTP `503 Service Unavailable` without placing traffic on the engine. Background approval reconciliation is exempt. After `UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS`, a single probe request checks engine health: success resets the breaker to closed.
+
+#### Mechanism Interaction Order
+
+The engine client coordinates admission across these layers: requests enter the bounded wait queue first to absorb micro-bursts, wait to acquire an in-flight slot from the concurrency cap to protect the database pool, and pass through the circuit breaker which trips open to fast-fail traffic if consecutive engine failures occur. If any admission layer is saturated, the proxy answers HTTP 503 with a Retry-After header.
+
+#### Reading Capacity Status Codes
+
+The proxy distinguishes client-side rate violations from server capacity constraints using separate HTTP status codes:
+
+| Status Code | Meaning | Source | Client Action |
+|---|---|---|---|
+| `429 Too Many Requests` | Client rate budget exceeded | Per-key token bucket | Slow down: reduce request rate to stay within configured RPS. |
+| `503 Service Unavailable` | Server capacity reached or engine down | Engine gate full, queue full, wait timeout, breaker open, or engine `RESOURCE_EXHAUSTED` | Retry: back off and retry after the duration in the `Retry-After` header (typically 1s). |
+| `502 Bad Gateway` | Engine internal failure | Unhandled engine transport or processing error | Investigate engine logs for unhandled errors or database connectivity issues. |
+
+For design rationale, failure models, and architecture decisions, see
+[ADR 0020: Proxy Rate Limiting and Backpressure](../adr/0020-proxy-rate-limiting.md).
+
+#### Recommended Starting Configuration
+
+Add the following settings to your proxy environment:
+
+```env
+# Per-key rate limiting (e.g. 50 rps sustained with 100 burst per key)
+UNDOLOG_PROXY_RATE_LIMIT_RPS=50
+UNDOLOG_PROXY_RATE_LIMIT_BURST=100
+
+# Concurrency cap: keep below PgBouncer default_pool_size (e.g. 20 for a pool of 25)
+UNDOLOG_PROXY_MAX_ENGINE_RPCS=20
+
+# Bounded queue: hold micro-bursts for up to 250ms
+UNDOLOG_PROXY_ENGINE_QUEUE_MAX=64
+UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS=250
+
+# Circuit breaker: trip after 5 consecutive transport drops; probe after 30s
+UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD=5
+UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS=30
+```
+
+### 8. Graceful shutdown
 
 Both the proxy and the engine handle SIGINT and SIGTERM. On the signal the
 proxy closes dashboard event streams, stops accepting connections, and
@@ -237,7 +300,7 @@ A clean drain adds no `shutdown error` line to that output. To see the WARN
 line, send the signal while a request is in flight and lower
 `UNDOLOG_PROXY_SHUTDOWN_TIMEOUT_SECS` to 1.
 
-### 8. Backup Postgres
+### 9. Backup Postgres
 
 Use `pg_dump` for logical backups and WAL archiving for point-in-time recovery:
 
@@ -306,7 +369,7 @@ docker compose exec pgbouncer psql -h localhost -p 6432 -U postgres -c "SHOW POO
 |---|---|---|
 | Proxy returns 502 on tool calls | `UPSTREAM_TOOL_URL` unreachable | Verify the tool server is running and reachable from the proxy container |
 | Engine health check fails | `DATABASE_URL` points to wrong host | Ensure the engine connects through PgBouncer, not directly to Postgres |
-| High lock contention | `UNDOLOG_LOCK_RETRY_MS` too low | Increase to 100–200ms; verify BRIN index is in place |
+| High lock contention | `UNDOLOG_LOCK_RETRY_MS` too low | Increase to 100-200ms. Verify BRIN index is in place. |
 | SSE dashboard disconnects | Reverse proxy buffers SSE | Set `proxy_buffering off; proxy_cache off;` for `/events` |
 | API key rejected | Key not in `UNDOLOG_PROXY_API_KEYS` | Restart proxy after changing env var; keys are loaded at startup |
 | 502 naming `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` | Proxy token missing or different from the engine's | Set the same value in `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` and `UNDOLOG_ENGINE_AUTH_TOKEN`, then restart both |
