@@ -15,3 +15,5 @@ This directory follows the [Diátaxis framework](https://diataxis.fr/) with four
 | [Explanation](explanation/safety-model.md) | Explanation | Design rationale and background |
 | [Architecture Decisions](adr/0001-rust-for-effect-engine.md) | Decisions | Record of architectural choices |
 | [Contributing](contributing/CONTRIBUTING.md) | Project guides | How to contribute to UndoLog |
+
+The dashboard application in `apps/dashboard` is experimental and not yet part of the documented surface.
