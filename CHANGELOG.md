@@ -268,6 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ``registry_age_secs`` because the binary starts no registry refresh loop.
 - Documentation: aligned .env.example and the engine and proxy Dockerfile
   comments with the shipped variable set and defaults.
+- Documentation: corrected the Python package version drift and included the
+  Apache-2.0 license file in the published distribution.
 
 ### Security
 
