@@ -6,6 +6,7 @@
     { "slug": "development-setup", "title": "Development Setup" },
     { "slug": "documentation-guide", "title": "Documentation Guide" },
     { "slug": "testing-guide", "title": "Testing Guide" },
+    { "slug": "release-process", "title": "Release Process" },
     { "slug": "release-notes-template", "title": "Release Notes Template" },
     { "slug": "COMMIT_AND_PR_STANDARDS", "title": "Commit & PR Standards" },
     { "slug": "CONTRIBUTING", "title": "Contributing Guidelines" },

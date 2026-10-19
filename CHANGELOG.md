@@ -206,6 +206,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   from the unreleased changelog with ADR and PR links.
 - Documentation: added SECURITY.md with the vulnerability disclosure policy
   and supported versions, linked from the README security section.
+- Documentation: added the maintainer release process: version bump map, tag
+  to workflow mapping, changelog cut, post-release verification, and
+  rollback notes.
 
 ### Changed
 
