@@ -9,7 +9,7 @@ This directory follows the [Diátaxis framework](https://diataxis.fr/) with four
 
 | Section | Layer | Entrypoint |
 |---|---|---|
-| [Getting Started](getting-started/installation.md) | Tutorials | Start here to install and run UndoLog |
+| [Getting Started](getting-started/quickstart.md) | Tutorials | Start here to run UndoLog locally in under 10 minutes |
 | [Guides](guides/annotating-tools.md) | How-to guides | Practical steps for specific tasks |
 | [Reference](reference/api/python-sdk.md) | Reference | Technical API and configuration details |
 | [Explanation](explanation/safety-model.md) | Explanation | Design rationale and background |

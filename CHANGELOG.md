@@ -238,6 +238,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: documented the engine chaos and integration test tiers,
   the TEST_DATABASE_URL gating, and the feature-gated test split, and
   updated development setup for the local dev loop.
+- Documentation: refreshed the root README with the TypeScript install, the
+  two process architecture, the dev server, and a project status line; the
+  guides index now lists the PostgreSQL HA guide.
 
 ### Fixed
 
