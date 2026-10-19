@@ -8,6 +8,7 @@
     { "slug": "testing-guide", "title": "Testing Guide" },
     { "slug": "release-process", "title": "Release Process" },
     { "slug": "release-notes-template", "title": "Release Notes Template" },
+    { "slug": "publish-checklist", "title": "Publish Checklist" },
     { "slug": "COMMIT_AND_PR_STANDARDS", "title": "Commit & PR Standards" },
     { "slug": "CONTRIBUTING", "title": "Contributing Guidelines" },
     { "slug": "CODE_OF_CONDUCT", "title": "Code of Conduct" }
