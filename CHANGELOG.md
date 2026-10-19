@@ -202,6 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   framework support agent, modeled on the LangChain example.
 - Documentation: added a dashboard README with run instructions and an
   explicit experimental status statement.
+- Documentation: added the release notes template and a 0.1.0 draft built
+  from the unreleased changelog with ADR and PR links.
 
 ### Changed
 
