@@ -270,6 +270,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   comments with the shipped variable set and defaults.
 - Documentation: corrected the Python package version drift and included the
   Apache-2.0 license file in the published distribution.
+- Documentation: included the Apache-2.0 license file in the npm package
+  and verified the published metadata fields.
 
 ### Security
 
