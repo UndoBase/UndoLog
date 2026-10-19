@@ -209,6 +209,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: added the maintainer release process: version bump map, tag
   to workflow mapping, changelog cut, post-release verification, and
   rollback notes.
+- Documentation: added the publish readiness checklist covering links,
+  clean-machine installs, command fidelity, registry pages, and the trust
+  sweep.
 
 ### Changed
 
