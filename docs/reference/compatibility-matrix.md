@@ -18,26 +18,20 @@ engine versions.
 ### Python SDK
 
 | SDK Version | Engine Version | Status |
-|-------------|----------------|--------|
+|---|---|---|
 | 0.1.x | 0.1.x | Supported |
-| 0.2.x | 0.1.x | Supported |
-| 0.2.x | 0.2.x | Supported |
 
 ### TypeScript SDK
 
 | SDK Version | Engine Version | Status |
-|-------------|----------------|--------|
+|---|---|---|
 | 0.1.x | 0.1.x | Supported |
-| 0.2.x | 0.1.x | Supported |
-| 0.2.x | 0.2.x | Supported |
 
 ### Go Proxy
 
 | Proxy Version | Engine Version | Status |
-|---------------|----------------|--------|
+|---|---|---|
 | 0.1.x | 0.1.x | Supported |
-| 0.2.x | 0.1.x | Supported |
-| 0.2.x | 0.2.x | Supported |
 
 ---
 
@@ -47,7 +41,7 @@ engine versions.
    0.1.5. Engine 0.1.0 works with SDK 0.1.3.
 
 2. **Minor versions within 0.x are compatible.** SDK 0.1.x works with
-   engine 0.2.x if no breaking protobuf changes were introduced.
+   future engine 0.x releases if no breaking protobuf changes were introduced.
 
 3. **Major versions require matching major versions.** SDK 1.0 requires
    engine 1.0 or later.

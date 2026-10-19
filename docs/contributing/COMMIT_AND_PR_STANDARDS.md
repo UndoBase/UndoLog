@@ -428,8 +428,8 @@ Version 0.x.x: During pre-1.0 development, MINOR bumps MAY include breaking chan
 
 1. Update `CHANGELOG.md`: move everything under `[Unreleased]` to a new `[X.Y.Z]. YYYY-MM-DD` section
 2. Bump version in all manifests (`Cargo.toml` workspace package version, `pyproject.toml`, `package.json`)
-3. Open a PR titled `chore(release): prepare v0.2.0`: this is the only PR type that touches the version
-4. After merge: tag the squash commit: `git tag v0.2.0` and push the tag
+3. Open a PR titled `chore(release): prepare v0.1.0`: this is the only PR type that touches the version
+4. After merge: tag the squash commit: `git tag v0.1.0` and push the tag
 5. The CI release job triggers on version tags: runs tests, builds binaries, publishes crates/packages, creates GitHub release with changelog section as body
 
 ### 5.3 Hotfixes
