@@ -110,11 +110,11 @@ The `@undolog/sdk` package is published to npm from CI with Sigstore provenance.
 ### Manual release
 
 1. Update the version in `sdks/undolog-ts/package.json` (or use `npm version`).
-2. Commit the version bump with a conventional commit message (e.g. `feat(sdk): release v0.2.0`).
+2. Commit the version bump with a conventional commit message (e.g. `feat(sdk): release v0.1.0`).
 3. Tag the commit with the package name and version:
    ```
-   git tag @undolog/sdk@v0.2.0
-   git push origin @undolog/sdk@v0.2.0
+   git tag @undolog/sdk@v0.1.0
+   git push origin @undolog/sdk@v0.1.0
    ```
 4. The `.github/workflows/release-sdk.yml` workflow builds, tests, and publishes automatically.
 

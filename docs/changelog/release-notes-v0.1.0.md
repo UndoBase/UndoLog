@@ -1,11 +1,9 @@
 ---
-title: "UndoLog 0.1.0 release notes (draft)"
-description: "Draft release notes for UndoLog 0.1.0 covering context-var session injection, proxy resilience, single-binary deployment, SQLite support, gRPC auth, and observability."
+title: "UndoLog 0.1.0 release notes"
+description: "Release notes for UndoLog 0.1.0 covering context-var session injection, proxy resilience, single-binary deployment, SQLite support, gRPC auth, and observability."
 section: "changelog"
 ---
-# UndoLog 0.1.0 release notes (draft)
-
-> Note: This document is a draft compiled from the unreleased changelog and architecture decision records in preparation for the upcoming 0.1.0 release.
+# UndoLog 0.1.0 release notes
 
 UndoLog 0.1.0 is the initial release of UndoLog, establishing the core safety layer for AI agents across SDK usability, proxy reliability, local developer workflows, and operational resilience. This release introduces context-var session injection for Python, deterministic cross-language BLAKE3 idempotency parity, an in-process SQLite engine adapter, a robust proxy interceptor plugin system, and end-to-end gRPC authentication.
 

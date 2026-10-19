@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-20
+
 ### Added
 
 - Documentation: added ADR 0008 defining the cross-language canonical JSON
@@ -212,6 +214,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: added the publish readiness checklist covering links,
   clean-machine installs, command fidelity, registry pages, and the trust
   sweep.
+- TypeScript SDK at ``sdks/undolog-ts/`` with full parity to the Python SDK:
+  ``ToolTier`` enum, typed error hierarchy, BLAKE3 ``callSignature()``,
+  ``UndoLogSession`` with ``AsyncLocalStorage`` context, ``UndoLogClient``
+  (intercept/commit/fail/approve/reject), and ``wrapTool()``. Includes
+  framework adapters (Vercel AI, LangChain, OpenAI Agents, Mastra, MCP server),
+  a mock-server testing package, and 453 unit tests.
+- TypeScript SDK renamed ``@undobase/undolog-sdk`` to ``@undolog/sdk``
+  (requires ``@undolog`` scope ownership on npm); license corrected to
+  Apache-2.0 (was MIT).
+- TypeScript SDK helpers: ``claimStepIndex()``, ``getEffect()``,
+  ``getSession()``, and the ``MissingSessionError`` class.
+- Live-stack tooling: shared ``start-stack`` action, ``e2e.yml`` workflow,
+  TypeScript ``test:integration`` script, and ``test_live_stack.py`` covering
+  approval lifecycle, concurrent execution, LIFO compensation, and BLAKE3
+  replay idempotency.
+- Benchmark harness at ``infra/benchmarks/``: eight benchmarks (overhead,
+  throughput, dedup, compensation chains, multi-tenant noise immunity, SSE
+  delivery, approval workflow, longevity), a p95 regression checker
+  (``compare_regression.py``), and nightly plus PR quick-check workflows.
+- Python SDK: strict mypy typing, stateful mock-tool-server with
+  idempotency-key dedup, cross-language BLAKE3 signature parity test, 19
+  state-machine property tests, and network-error simulation tests.
+- Multi-tenant demo (``multi_tenant_demo.py``), live SSE dashboard consumer
+  (``sse_dashboard.py``), and a second-org seed migration with ``dev-key-2``.
+- Approval workflow: session auto-creation, engine resume via gRPC
+  ``ApproveResponse``, auto-execution of approved irreversible tools, and
+  ``rows_affected()`` guards on every state transition.
+- Example agents for LangChain, Vanilla, CrewAI, Semantic Kernel, and
+  LlamaIndex sharing the ``example_tools`` registry, plus a stateful LangGraph
+  agent with interrupt-based approval branching and approval, compensation,
+  and replay demos.
+- Initial release of UndoLog: effect-tracking and exactly-once rollback system
+- Python SDK with ``@undolog_tool`` decorator for tier annotation
+- Go MCP proxy for HTTP/gRPC translation
+- Rust effect engine with PostgreSQL-backed state machine
+- Saga orchestrator for multi-step compensation
+- Three tier system: Safe, Compensable, Irreversible
+- Human-in-the-loop approval for irreversible actions
+- Deterministic call signature via BLAKE3 hashing
+- Advisory locks for tool call deduplication
+- Pre-registered compensation for crash safety
+- Website and documentation at https://undolog.undobase.com
 
 ### Changed
 
@@ -259,81 +303,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   guides index now lists the PostgreSQL HA guide.
 - Documentation: the deployment guides now state that images are built from
   the repository clone, matching the absence of a published registry.
-
-### Fixed
-
-- SDK: ``wrap_langgraph`` echoes the position its run started from, so
-  re-invoking with the returned state replays completed steps.
-- Documentation: CrewAI and Semantic Kernel guides open sessions that
-  reach the tools and replay approval retries from the journal start.
-- Engine: ``UNDOLOG_REGISTRY_REFRESH_SECS`` below 5 seconds is rejected at
-  startup, and the health payload reports registry age so staleness is visible.
-- Documentation: replaced the fabricated graceful-shutdown log block in the
-  production guide with the drain behavior the proxy and engine implement.
-- Documentation: corrected the docker guide: malformed cells, stale
-  defaults, the tool server port, and an undefined variable name.
-- Documentation: noted that the SQLite engine health payload omits
-  ``registry_age_secs`` because the binary starts no registry refresh loop.
-- Documentation: aligned .env.example and the engine and proxy Dockerfile
-  comments with the shipped variable set and defaults.
-- Documentation: corrected the Python package version drift and included the
-  Apache-2.0 license file in the published distribution.
-- Documentation: included the Apache-2.0 license file in the npm package
-  and verified the published metadata fields.
-
-### Security
-
-- Security: upgraded Next.js and sharp across apps/www, resolving SSRF,
-  DoS, cache confusion, and libvips image decoding defects.
-- Security: updated MCP SDK and locked network dependencies in TypeScript SDK,
-  resolving OAuth credential leaks, IP spoofing, and DoS vulnerabilities.
-- Security: updated js-yaml, source-map-js, and postcss overrides in apps/www,
-  mitigating parser ReDoS and CSS source-map traversal risks.
-- Security: upgraded rustls and opentelemetry packages in Cargo dependencies,
-  resolving TLS 1.3 handshake boundary and W3C Baggage memory allocation risks.
-- Security: upgraded vitest and vitest-mocker in TypeScript SDK tooling,
-  resolving mock redirect plugin path traversal vulnerabilities.
-- Security: updated frontmatter loader in apps/www to use safe YAML parser,
-  completely eliminating vulnerable sprintf-js and argparse dependencies.
-
-## [0.2.0] - 2026-08-01
-
-### Added
-
-- TypeScript SDK at ``sdks/undolog-ts/`` with full parity to the Python SDK:
-  ``ToolTier`` enum, typed error hierarchy, BLAKE3 ``callSignature()``,
-  ``UndoLogSession`` with ``AsyncLocalStorage`` context, ``UndoLogClient``
-  (intercept/commit/fail/approve/reject), and ``wrapTool()``. Includes
-  framework adapters (Vercel AI, LangChain, OpenAI Agents, Mastra, MCP server),
-  a mock-server testing package, and 453 unit tests.
-- TypeScript SDK renamed ``@undobase/undolog-sdk`` to ``@undolog/sdk``
-  (requires ``@undolog`` scope ownership on npm); license corrected to
-  Apache-2.0 (was MIT).
-- TypeScript SDK helpers: ``claimStepIndex()``, ``getEffect()``,
-  ``getSession()``, and the ``MissingSessionError`` class.
-- Live-stack tooling: shared ``start-stack`` action, ``e2e.yml`` workflow,
-  TypeScript ``test:integration`` script, and ``test_live_stack.py`` covering
-  approval lifecycle, concurrent execution, LIFO compensation, and BLAKE3
-  replay idempotency.
-- Benchmark harness at ``infra/benchmarks/``: eight benchmarks (overhead,
-  throughput, dedup, compensation chains, multi-tenant noise immunity, SSE
-  delivery, approval workflow, longevity), a p95 regression checker
-  (``compare_regression.py``), and nightly plus PR quick-check workflows.
-- Python SDK: strict mypy typing, stateful mock-tool-server with
-  idempotency-key dedup, cross-language BLAKE3 signature parity test, 19
-  state-machine property tests, and network-error simulation tests.
-- Multi-tenant demo (``multi_tenant_demo.py``), live SSE dashboard consumer
-  (``sse_dashboard.py``), and a second-org seed migration with ``dev-key-2``.
-- Approval workflow: session auto-creation, engine resume via gRPC
-  ``ApproveResponse``, auto-execution of approved irreversible tools, and
-  ``rows_affected()`` guards on every state transition.
-- Example agents for LangChain, Vanilla, CrewAI, Semantic Kernel, and
-  LlamaIndex sharing the ``example_tools`` registry, plus a stateful LangGraph
-  agent with interrupt-based approval branching and approval, compensation,
-  and replay demos.
-
-### Changed
-
 - Cross-language canonical JSON now follows ECMAScript ``JSON.stringify``
   number rules (RFC 8785) in the Rust, Python, and TypeScript SDKs and the Go
   proxy: ``-0.0`` becomes ``0``, fixed notation in ``[1e-6, 1e21)``, no leading
@@ -359,6 +328,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- SDK: ``wrap_langgraph`` echoes the position its run started from, so
+  re-invoking with the returned state replays completed steps.
+- Documentation: CrewAI and Semantic Kernel guides open sessions that
+  reach the tools and replay approval retries from the journal start.
+- Engine: ``UNDOLOG_REGISTRY_REFRESH_SECS`` below 5 seconds is rejected at
+  startup, and the health payload reports registry age so staleness is visible.
+- Documentation: replaced the fabricated graceful-shutdown log block in the
+  production guide with the drain behavior the proxy and engine implement.
+- Documentation: corrected the docker guide: malformed cells, stale
+  defaults, the tool server port, and an undefined variable name.
+- Documentation: noted that the SQLite engine health payload omits
+  ``registry_age_secs`` because the binary starts no registry refresh loop.
+- Documentation: aligned .env.example and the engine and proxy Dockerfile
+  comments with the shipped variable set and defaults.
+- Documentation: corrected the Python package version drift and included the
+  Apache-2.0 license file in the published distribution.
+- Documentation: included the Apache-2.0 license file in the npm package
+  and verified the published metadata fields.
 - SDK: Replay outcome now returns the tool's natural return type instead
   of the ``ToolResult`` envelope, matching Execute behavior.
 - Examples: live-stack tests reset the SDK default client between tests,
@@ -379,7 +366,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   fixing heap memory exhaustion via HTTP/2 DATA frame fragmentation.
 - Security: upgraded Go proxy API key hashing from SHA-256 to HMAC-SHA-256,
   satisfying CodeQL weak-crypto static analysis.
-
 - TypeScript SDK: tests are type-checked in CI; ``sessionId`` validated on
   ``intercept()``; ``wrapTool`` compensates when ``commit()`` fails and logs
   when ``fail()`` fails; mutating requests no longer retry on network errors
@@ -428,6 +414,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- Security: upgraded Next.js and sharp across apps/www, resolving SSRF,
+  DoS, cache confusion, and libvips image decoding defects.
+- Security: updated MCP SDK and locked network dependencies in TypeScript SDK,
+  resolving OAuth credential leaks, IP spoofing, and DoS vulnerabilities.
+- Security: updated js-yaml, source-map-js, and postcss overrides in apps/www,
+  mitigating parser ReDoS and CSS source-map traversal risks.
+- Security: upgraded rustls and opentelemetry packages in Cargo dependencies,
+  resolving TLS 1.3 handshake boundary and W3C Baggage memory allocation risks.
+- Security: upgraded vitest and vitest-mocker in TypeScript SDK tooling,
+  resolving mock redirect plugin path traversal vulnerabilities.
+- Security: updated frontmatter loader in apps/www to use safe YAML parser,
+  completely eliminating vulnerable sprintf-js and argparse dependencies.
 - Dependency upgrades for disclosed vulnerabilities: grpc (CVE-2026-33186,
   xDS RBAC bypass, HTTP/2 Rapid Reset DoS), ``golang.org/x/net``
   (CVE-2025-22872, CVE-2025-22870), postcss (path traversal), js-yaml (DoS),
@@ -436,19 +434,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Docs pipeline hardened: HTML sanitisation in heading extraction fixed and
   ``rehype-sanitize`` added; all CI jobs run with explicit least-privilege
   ``permissions``.
-
-## [0.1.0] - 2026-05-24
-
-### Added
-
-- Initial release of UndoLog: effect-tracking and exactly-once rollback system
-- Python SDK with ``@undolog_tool`` decorator for tier annotation
-- Go MCP proxy for HTTP/gRPC translation
-- Rust effect engine with PostgreSQL-backed state machine
-- Saga orchestrator for multi-step compensation
-- Three tier system: Safe, Compensable, Irreversible
-- Human-in-the-loop approval for irreversible actions
-- Deterministic call signature via BLAKE3 hashing
-- Advisory locks for tool call deduplication
-- Pre-registered compensation for crash safety
-- Website and documentation at https://undolog.undobase.com
