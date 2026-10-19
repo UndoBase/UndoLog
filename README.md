@@ -65,4 +65,4 @@ Contributions are welcome. Read the [contributing guide](docs/contributing/CONTR
 
 ## Security
 
-If you discover a security vulnerability, email [security@undobase.com](mailto:security@undobase.com). All reports are promptly addressed.
+If you discover a security vulnerability, email [security@undobase.com](mailto:security@undobase.com). For our vulnerability disclosure policy, response timeline, and supported versions, read [SECURITY.md](SECURITY.md). All reports are promptly addressed.
