@@ -14,14 +14,65 @@ Deploy UndoLog on Kubernetes using the Helm chart.
 - Kubernetes 1.25+
 - Helm 3.10+
 - A PostgreSQL 16 instance accessible from the cluster
+- The UndoLog repository cloned locally
+- Container runtime or registry access to build and host images
+
+---
+
+## Building container images
+
+No public container registry publishes pre-built UndoLog images today. Before
+installing the Helm chart, build the engine and proxy images from the repository
+clone and make them available to your Kubernetes cluster:
+
+```bash
+# Build engine and proxy images from repository root
+docker build -f infra/Dockerfile.engine -t undolog-engine:latest .
+docker build -f infra/Dockerfile.proxy -t undolog-proxy:latest .
+```
+
+For local clusters (such as kind or minikube), load the images directly into the
+cluster runtime:
+
+```bash
+# kind
+kind load docker-image undolog-engine:latest
+kind load docker-image undolog-proxy:latest
+
+# minikube
+minikube image load undolog-engine:latest
+minikube image load undolog-proxy:latest
+```
+
+For remote clusters, tag and push the images to your private container registry,
+then configure the repository values when installing:
+
+```bash
+docker tag undolog-engine:latest registry.example.com/undolog-engine:latest
+docker tag undolog-proxy:latest registry.example.com/undolog-proxy:latest
+docker push registry.example.com/undolog-engine:latest
+docker push registry.example.com/undolog-proxy:latest
+```
 
 ---
 
 ## Quick start
 
+For local clusters with loaded images:
+
 ```bash
 # Add the chart (local)
 helm install undolog deploy/helm/undolog \
+  --set database.url=postgresql://user:pass@postgres-host:5432/undolog \
+  --set apiKeys=sk-prod=org-acme
+```
+
+For remote clusters using a private registry:
+
+```bash
+helm install undolog deploy/helm/undolog \
+  --set engine.image.repository=registry.example.com/undolog-engine \
+  --set proxy.image.repository=registry.example.com/undolog-proxy \
   --set database.url=postgresql://user:pass@postgres-host:5432/undolog \
   --set apiKeys=sk-prod=org-acme
 ```
@@ -33,9 +84,20 @@ helm install undolog deploy/helm/undolog \
 ### Required values
 
 | Value | Description |
-|-------|-------------|
+|---|---|
 | `database.url` | PostgreSQL connection string |
 | `apiKeys` | Comma-separated `key=org_id` pairs for proxy authentication |
+
+### Image repository values
+
+| Value | Default | Description |
+|---|---|---|
+| `engine.image.repository` | `undolog-engine` | Engine container image repository |
+| `engine.image.tag` | `latest` | Engine container image tag |
+| `engine.image.pullPolicy` | `IfNotPresent` | Engine image pull policy |
+| `proxy.image.repository` | `undolog-proxy` | Proxy container image repository |
+| `proxy.image.tag` | `latest` | Proxy container image tag |
+| `proxy.image.pullPolicy` | `IfNotPresent` | Proxy image pull policy |
 
 ### Default values
 

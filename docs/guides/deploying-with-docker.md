@@ -17,6 +17,11 @@ You will deploy the full UndoLog stack. PostgreSQL 16, the Rust engine, the Go
 proxy, and the Next.js dashboard: using Docker Compose. You will verify each
 service with health checks and inspect the running deployment.
 
+Images are built locally from the repository clone. Pre-built container
+images are not published to a public registry today, so `docker compose build`
+compiles each component (`engine`, `proxy`, and `dashboard`) directly from
+source using the Dockerfiles in `infra/`.
+
 ## Steps
 
 ### 1. Examine the Compose file
@@ -42,6 +47,9 @@ UNDOLOG_PROXY_UPSTREAM_TOOL_URL=http://tool-server:9091/tools
 ```
 
 ### 3. Build and start the stack
+
+Because no public container registry publishes pre-built images, compile the
+service images locally before launching the containers:
 
 ```bash
 docker compose build --parallel

@@ -251,6 +251,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Documentation: refreshed the root README with the TypeScript install, the
   two process architecture, the dev server, and a project status line; the
   guides index now lists the PostgreSQL HA guide.
+- Documentation: the deployment guides now state that images are built from
+  the repository clone, matching the absence of a published registry.
 
 ### Fixed
 
