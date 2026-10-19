@@ -47,7 +47,7 @@ jobs:
 
       - name: Compare baseline against itself (validate tooling)
         run: |
-          python3 benchmarks/compare_baseline.py \
-            --results benchmarks/results/c5.xlarge.json \
-            --baseline benchmarks/results/c5.xlarge.json \
+          python3 infra/benchmarks/compare_baseline.py \
+            --results infra/benchmarks/results/c5.xlarge.json \
+            --baseline infra/benchmarks/results/c5.xlarge.json \
             --threshold 10

@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="./banner.png" alt="UndoLog"/>
+  <img src="./assets/banner.png" alt="UndoLog"/>
 
   <p>
     <a href="https://undolog.undobase.com">Website</a>

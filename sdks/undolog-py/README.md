@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="https://raw.githubusercontent.com/UndoBase/UndoLog/main/banner.png" alt="UndoLog"/>
+  <img src="https://raw.githubusercontent.com/UndoBase/UndoLog/main/assets/banner.png" alt="UndoLog"/>
 
 
   <p>
