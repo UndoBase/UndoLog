@@ -30,9 +30,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/UndoBase/UndoLog"
-Source = "https://github.com/UndoBase/UndoLog"
-Tracker = "https://github.com/UndoBase/UndoLog/issues"
+Homepage = "https://undolog.undobase.com"
+Documentation = "https://undolog.undobase.com/docs"
+Repository = "https://github.com/UndoBase/UndoLog"
+Issues = "https://github.com/UndoBase/UndoLog/issues"
+Changelog = "https://github.com/UndoBase/UndoLog/blob/main/CHANGELOG.md"
 
 [project.scripts]
 undolog = "undolog_sdk.dev:main"
