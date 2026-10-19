@@ -1,14 +1,14 @@
 ---
 title: "Changelog"
-description: "Version migration guides and release notes for UndoLog."
+description: "Version history and release notes for UndoLog."
 section: "changelog"
 ---
 
 # Changelog
 
-This section documents changes between UndoLog versions and provides
-migration instructions for breaking updates.
+This section documents release notes and architectural milestones across
+UndoLog versions.
 
 | Page | Description |
 |---|---|
-| [v0.1 to v0.2 Migration](migration/v0.1-to-v0.2.md) | Guide for upgrading from v0.1 to v0.2 |
+| [v0.1.0 Release Notes](release-notes-v0.1.0.md) | Release notes for the initial UndoLog 0.1.0 release |

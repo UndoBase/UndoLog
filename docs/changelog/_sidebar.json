@@ -3,6 +3,6 @@
   "order": 6,
   "pages": [
     { "slug": "index", "title": "Overview" },
-    { "slug": "migration/v0.1-to-v0.2", "title": "v0.1 to v0.2 Migration" }
+    { "slug": "release-notes-v0.1.0", "title": "v0.1.0 Release Notes" }
   ]
 }
