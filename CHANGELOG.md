@@ -204,6 +204,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   explicit experimental status statement.
 - Documentation: added the release notes template and a 0.1.0 draft built
   from the unreleased changelog with ADR and PR links.
+- Documentation: added SECURITY.md with the vulnerability disclosure policy
+  and supported versions, linked from the README security section.
 
 ### Changed
 
