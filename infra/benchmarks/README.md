@@ -52,9 +52,9 @@ cargo build --release --features pg
 ./target/release/undolog-engine --benchmark --iterations 1000 --warmup 100
 
 # 4. Compare against baseline
-python3 benchmarks/compare_baseline.py \
+python3 infra/benchmarks/compare_baseline.py \
   --results benchmark-results.json \
-  --baseline benchmarks/results/c5.xlarge.json \
+  --baseline infra/benchmarks/results/c5.xlarge.json \
   --threshold 10
 ```
 
@@ -83,9 +83,9 @@ the p95 latency exceeds the baseline by more than the configured
 threshold (default 10%).
 
 ```bash
-python3 benchmarks/compare_baseline.py \
+python3 infra/benchmarks/compare_baseline.py \
   --results benchmark-results.json \
-  --baseline benchmarks/results/c5.xlarge.json \
+  --baseline infra/benchmarks/results/c5.xlarge.json \
   --threshold 10
 ```
 
@@ -97,6 +97,6 @@ Exit codes:
 ## Adding new baselines
 
 1. Run the benchmark on the target hardware
-2. Save results to `benchmarks/results/<instance-type>.json`
+2. Save results to `infra/benchmarks/results/<instance-type>.json`
 3. Update this README with the new numbers
 4. Submit a PR with the baseline file and documentation changes

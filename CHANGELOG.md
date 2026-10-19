@@ -209,6 +209,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Chore: consolidated root structure by moving banner.png to assets/,
+  merging benchmarks/ into infra/benchmarks/, and relocating .golangci.yml.
 - Documentation: the quickstart now starts with undolog dev for a zero
   infrastructure first run; the durable compose setup moved to the
   installation guide.
