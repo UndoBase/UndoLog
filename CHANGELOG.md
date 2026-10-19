@@ -200,6 +200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   admission tuning with a storage growth example.
 - Documentation: added a top level examples README and a README for each
   framework support agent, modeled on the LangChain example.
+- Documentation: added a dashboard README with run instructions and an
+  explicit experimental status statement.
 
 ### Changed
 

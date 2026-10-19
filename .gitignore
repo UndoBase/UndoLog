@@ -23,7 +23,8 @@ out/
 *.tsbuildinfo
 
 # Dashboard (WIP, excluded from v0.1.0-alpha.1)
-apps/dashboard/
+apps/dashboard/*
+!apps/dashboard/README.md
 
 # Environment
 .env
