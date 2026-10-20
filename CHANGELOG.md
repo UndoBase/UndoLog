@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- SDK: bumped TypeScript SDK (``@undolog/sdk``) to 0.1.1.
+
 ## [0.1.0] - 2026-10-20
 
 ### Added
