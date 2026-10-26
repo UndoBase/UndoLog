@@ -182,15 +182,49 @@ export class EffectLogConcurrencyError extends EffectLogError {
  * No active session context available.
  *
  * @remarks
- * Thrown by ``requireCurrentSession()`` when called outside of any
- * ``runWithSession()`` scope.
+ * Thrown when a tool, client interception, or operation requiring an active
+ * session executes outside of a ``runWithSession()`` context without an
+ * explicit ``sessionId``.
  */
 export class MissingSessionError extends UndoLogError {
-  constructor(message?: string) {
-    super(ErrorCodes.MISSING_SESSION, message ?? "No active session context");
+  /** Name of the tool whose execution failed due to missing session context, if known. */
+  readonly toolName?: string;
+
+  /**
+   * @param messageOrToolName - Optional error message or tool name.
+   * @param toolName - Optional tool name when message is provided as first argument.
+   */
+  constructor(messageOrToolName?: string, toolName?: string) {
+    let resolvedMessage: string;
+    let resolvedToolName: string | undefined;
+
+    if (toolName !== undefined) {
+      resolvedToolName = toolName;
+      resolvedMessage =
+        messageOrToolName ??
+        `Tool "${toolName}" executed without an active session context: wrap your call in runWithSession() or provide an explicit sessionId.`;
+    } else if (
+      messageOrToolName !== undefined &&
+      !messageOrToolName.includes(" ")
+    ) {
+      resolvedToolName = messageOrToolName;
+      resolvedMessage = `Tool "${messageOrToolName}" executed without an active session context: wrap your call in runWithSession() or provide an explicit sessionId.`;
+    } else {
+      resolvedMessage =
+        messageOrToolName ??
+        "No active session context: wrap your execution in runWithSession() or provide an explicit sessionId.";
+      resolvedToolName = undefined;
+    }
+
+    super(ErrorCodes.MISSING_SESSION, resolvedMessage);
     this.name = "MissingSessionError";
+    this.toolName = resolvedToolName;
   }
 }
+
+/** Alias for MissingSessionError. */
+export const MissingSessionContextError = MissingSessionError;
+export type MissingSessionContextError = MissingSessionError;
 
 /**
  * The requested resource was not found.

@@ -3,7 +3,7 @@ import { UndoLogClient, type EffectRecord } from "../../src/client.js";
 import { wrapTool, type ToolDefinition } from "../../src/decorators.js";
 import { ToolTier } from "../../src/tier.js";
 import type { CompensationDescriptor } from "../../src/tier.js";
-import { AwaitingApprovalError } from "../../src/errors.js";
+import { AwaitingApprovalError, MissingSessionError } from "../../src/errors.js";
 import { UndoLogSession, runWithSession, getCurrentSession } from "../../src/session.js";
 
 const NOW = new Date().toISOString();
@@ -285,16 +285,60 @@ describe("Error propagation", () => {
 });
 
 describe("Missing session detection", () => {
-  it("works without an active session context", async () => {
+  it("throws MissingSessionError when tool executes outside runWithSession without explicit sessionId", async () => {
     expect(getCurrentSession()).toBeUndefined();
+    const fn = vi.fn().mockResolvedValue("executed");
+    const tool = wrapTool(client, { name: "send_payment", tier: ToolTier.Compensable, fn });
 
+    await expect(tool({ amount: 100 })).rejects.toThrow(MissingSessionError);
+    await expect(tool({ amount: 100 })).rejects.toThrow(/Tool "send_payment" executed without an active session context/);
+    await expect(tool({ amount: 100 })).rejects.toThrow(/runWithSession\(\)/);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("throws MissingSessionError when requireSession is explicitly true", async () => {
+    expect(getCurrentSession()).toBeUndefined();
+    const tool = wrapTool(
+      client,
+      { name: "guarded_tool", tier: ToolTier.Compensable, fn: vi.fn(), requireSession: true },
+    );
+
+    let thrown: MissingSessionError | undefined;
+    try {
+      await tool({});
+    } catch (err) {
+      thrown = err as MissingSessionError;
+    }
+    expect(thrown).toBeInstanceOf(MissingSessionError);
+    expect(thrown?.toolName).toBe("guarded_tool");
+    expect(thrown?.message).toContain("guarded_tool");
+  });
+
+  it("allows tool execution when explicit sessionId is passed in context", async () => {
+    expect(getCurrentSession()).toBeUndefined();
     vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
     vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
-    const fn = vi.fn().mockResolvedValue("no_session_ok");
+    const fn = vi.fn().mockResolvedValue("context_session_ok");
 
-    const tool = wrapTool(client, { name: "tool", tier: ToolTier.Compensable, fn });
+    const tool = wrapTool(client, { name: "tool", tier: ToolTier.Compensable, fn, requireSession: true });
+    const result = await tool({}, { sessionId: "550e8400-e29b-41d4-a716-446655440001" });
 
-    await expect(tool({})).resolves.toBe("no_session_ok");
+    expect(result).toBe("context_session_ok");
+    expect(fn).toHaveBeenCalled();
+  });
+
+  it("allows tool execution when explicit session instance is passed in context", async () => {
+    expect(getCurrentSession()).toBeUndefined();
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+    const fn = vi.fn().mockResolvedValue("instance_session_ok");
+    const explicitSession = new UndoLogSession();
+
+    const tool = wrapTool(client, { name: "tool", tier: ToolTier.Compensable, fn, requireSession: true });
+    const result = await tool({}, { session: explicitSession });
+
+    expect(result).toBe("instance_session_ok");
+    expect(fn).toHaveBeenCalled();
   });
 
   it("uses active session context when available", async () => {

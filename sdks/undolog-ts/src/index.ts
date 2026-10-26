@@ -8,7 +8,7 @@ export type {
 } from "./client.js";
 
 export { wrapTool } from "./decorators.js";
-export type { ToolDefinition, WrappedTool } from "./decorators.js";
+export type { ToolDefinition, WrappedTool, WrapToolOptions } from "./decorators.js";
 
 export {
   UndoLogError,
@@ -19,6 +19,7 @@ export {
   EffectLogError,
   EffectLogConcurrencyError,
   MissingSessionError,
+  MissingSessionContextError,
   NotFoundError,
   PermissionError,
   RateLimitError,

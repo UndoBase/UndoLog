@@ -102,6 +102,20 @@ describe("step monotonicity", () => {
     expect(Math.max(...results)).toBe(50);
   });
 
+  it("parallel claimStepIndex calls produce strictly unique 0-based sequence values", async () => {
+    const session = new UndoLogSession();
+    const promises: Promise<number>[] = [];
+    for (let i = 0; i < 50; i++) {
+      promises.push(Promise.resolve().then(() => session.claimStepIndex()));
+    }
+    const results = await Promise.all(promises);
+    const unique = new Set(results);
+    expect(unique.size).toBe(50);
+    expect(Math.min(...results)).toBe(0);
+    expect(Math.max(...results)).toBe(49);
+    expect(session.stepIndex).toBe(50);
+  });
+
   it("stepIndex never decreases", () => {
     const session = new UndoLogSession();
     let previous = session.stepIndex;
@@ -272,6 +286,22 @@ describe("nesting", () => {
     });
   });
 
+  it("restores outer session even when nested inner callback throws an error", () => {
+    const outer = new UndoLogSession();
+    const inner = new UndoLogSession();
+
+    runWithSession(outer, () => {
+      expect(getCurrentSession()).toBe(outer);
+      expect(() => {
+        runWithSession(inner, () => {
+          expect(getCurrentSession()).toBe(inner);
+          throw new Error("inner failure");
+        });
+      }).toThrow("inner failure");
+      expect(getCurrentSession()).toBe(outer);
+    });
+  });
+
   it("restores outer session after nested async callback", async () => {
     const outer = new UndoLogSession();
     const inner = new UndoLogSession();
@@ -390,5 +420,18 @@ describe("requireCurrentSession", () => {
 
   it("throws MissingSessionError when no session is active", () => {
     expect(() => requireCurrentSession()).toThrow(MissingSessionError);
+  });
+
+  it("includes tool name and guidance in MissingSessionError when toolName is provided", () => {
+    let thrown: MissingSessionError | undefined;
+    try {
+      requireCurrentSession("my_custom_tool");
+    } catch (err) {
+      thrown = err as MissingSessionError;
+    }
+    expect(thrown).toBeInstanceOf(MissingSessionError);
+    expect(thrown?.toolName).toBe("my_custom_tool");
+    expect(thrown?.message).toContain("my_custom_tool");
+    expect(thrown?.message).toContain("runWithSession()");
   });
 });

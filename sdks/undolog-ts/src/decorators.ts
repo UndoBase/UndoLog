@@ -8,6 +8,8 @@
  */
 
 import type { UndoLogClient } from "./client.js";
+import { MissingSessionError } from "./errors.js";
+import { getCurrentSession, UndoLogSession } from "./session.js";
 import type { ToolTier, CompensationDescriptor } from "./tier.js";
 import { isSafe, isCompensable } from "./tier.js";
 
@@ -37,6 +39,27 @@ export interface ToolDefinition<
 
   /** Compensation descriptor for Compensable-tier tools. */
   readonly compensation?: CompensationDescriptor;
+
+  /** Explicit session ID to associate with this tool's executions. */
+  readonly sessionId?: string;
+
+  /**
+   * Whether to require an active session context.
+   * If true, throws MissingSessionError when invoked without an active session context.
+   */
+  readonly requireSession?: boolean;
+}
+
+/** Options for configuring wrapTool behaviour. */
+export interface WrapToolOptions {
+  /** Explicit session ID to associate with this tool's executions. */
+  readonly sessionId?: string;
+
+  /**
+   * Whether to require an active session context.
+   * If true, throws MissingSessionError when invoked without an active session context.
+   */
+  readonly requireSession?: boolean;
 }
 
 /** An async function that has been wrapped with UndoLog effect tracking.
@@ -92,12 +115,48 @@ export type WrappedTool<
  * const result = await sendEmail({ to: "a@b.com", subject: "Hi" });
  * ```
  */
+function extractSessionId(context: unknown): string | undefined {
+  if (
+    typeof context === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(context)
+  ) {
+    return context;
+  }
+  if (context && typeof context === "object") {
+    const record = context as Record<string, unknown>;
+    if (
+      typeof record.sessionId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.sessionId)
+    ) {
+      return record.sessionId;
+    }
+    if (record.session instanceof UndoLogSession) {
+      return record.session.sessionId;
+    }
+  }
+  return undefined;
+}
+
+function extractSession(context: unknown): UndoLogSession | undefined {
+  if (context instanceof UndoLogSession) {
+    return context;
+  }
+  if (context && typeof context === "object") {
+    const record = context as Record<string, unknown>;
+    if (record.session instanceof UndoLogSession) {
+      return record.session;
+    }
+  }
+  return undefined;
+}
+
 export function wrapTool<
   TArgs extends Record<string, unknown>,
   TResult,
 >(
   client: UndoLogClient,
   definition: ToolDefinition<TArgs, TResult>,
+  options?: WrapToolOptions,
 ): WrappedTool<TArgs, TResult> {
   const { name, tier, fn, compensation } = definition;
 
@@ -106,11 +165,27 @@ export function wrapTool<
       return fn(args, context);
     }
 
+    const session = getCurrentSession() ?? extractSession(context);
+    const explicitSessionId =
+      extractSessionId(context) ?? options?.sessionId ?? definition.sessionId;
+
+    if (
+      (definition.requireSession || options?.requireSession) &&
+      !session &&
+      !explicitSessionId
+    ) {
+      throw new MissingSessionError(
+        `Tool "${name}" executed without an active session context: wrap your call in runWithSession() or provide an explicit sessionId.`,
+        name,
+      );
+    }
+
     const effect = await client.intercept({
       toolName: name,
       args,
       tier,
       compensation,
+      sessionId: explicitSessionId,
     });
 
     const isReplay = effect.status === "committed";

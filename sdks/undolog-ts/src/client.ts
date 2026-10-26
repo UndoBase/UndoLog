@@ -14,7 +14,7 @@ import type { UndoLogSession } from "./session.js";
 import { callSignature } from "./signature.js";
 import type { ToolTier } from "./tier.js";
 import type { CompensationDescriptor } from "./tier.js";
-import { AwaitingApprovalError, NotFoundError, ValidationError } from "./errors.js";
+import { AwaitingApprovalError, MissingSessionError, NotFoundError, ValidationError } from "./errors.js";
 
 /** Lifecycle status of an effect in the UndoLog. */
 export type EffectStatus = "pending" | "approved" | "rejected" | "committed" | "failed";
@@ -104,6 +104,7 @@ export interface InterceptParams {
 export class UndoLogClient {
   readonly #http: HttpClient;
   readonly #sessionMutexes = new Map<string, Promise<void>>();
+  readonly #sessionIdCounters = new Map<string, number>();
 
   /**
    * @param options - Server URL, credentials, and HTTP behaviour.
@@ -145,11 +146,18 @@ export class UndoLogClient {
    */
   async intercept(params: InterceptParams): Promise<EffectRecord> {
     const session = getCurrentSession();
-    const sessionId = params.sessionId ?? session?.sessionId ?? randomUUID();
+    const sessionId = params.sessionId ?? session?.sessionId;
 
-    if (params.sessionId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.sessionId)) {
+    if (sessionId === undefined) {
+      throw new MissingSessionError(
+        `Tool "${params.toolName}" executed without an active session context: wrap your call in runWithSession() or provide an explicit sessionId.`,
+        params.toolName,
+      );
+    }
+
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
       throw new ValidationError(
-        `Invalid sessionId: "${params.sessionId}"`,
+        `Invalid sessionId: "${sessionId}"`,
         "sessionId",
         "must be a valid UUID",
       );
@@ -175,7 +183,9 @@ export class UndoLogClient {
     } else if (session !== undefined) {
       stepIndex = session.claimStepIndex();
     } else {
-      stepIndex = 0;
+      const current = this.#sessionIdCounters.get(sessionId) ?? 0;
+      this.#sessionIdCounters.set(sessionId, current + 1);
+      stepIndex = current;
     }
 
     const signature = callSignature(sessionId, stepIndex, params.toolName, params.args);
