@@ -4,6 +4,7 @@ import { ToolTier } from "../../src/tier.js";
 import {
   AuthenticationError,
   AwaitingApprovalError,
+  MissingSessionError,
   NotFoundError,
   TimeoutError,
   UndoLogError,
@@ -203,20 +204,41 @@ describe("intercept()", () => {
     expect(body.step_index).toBe(5);
   });
 
-  it("generates a random sessionId when no session context and no explicit sessionId", async () => {
+  it("throws MissingSessionError when no session context and no explicit sessionId", async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(proxyInterceptResponse()));
     client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
 
-    await client.intercept({
-      toolName: "test",
+    await expect(
+      client.intercept({
+        toolName: "test",
+        args: {},
+        tier: ToolTier.Safe,
+      }),
+    ).rejects.toThrow(MissingSessionError);
+  });
+
+  it("allocates monotonic stepIndex when explicit sessionId is used without session", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      Promise.resolve(jsonResponse(proxyInterceptResponse())),
+    );
+    client = new UndoLogClient({ baseUrl: "http://localhost:8080" });
+    const explicitId = "550e8400-e29b-41d4-a716-446655440099";
+
+    const r1 = await client.intercept({
+      toolName: "step_a",
       args: {},
       tier: ToolTier.Safe,
+      sessionId: explicitId,
+    });
+    const r2 = await client.intercept({
+      toolName: "step_b",
+      args: {},
+      tier: ToolTier.Safe,
+      sessionId: explicitId,
     });
 
-    const body = parseRequestBody();
-    expect(body.session_id).toBeDefined();
-    expect(typeof body.session_id).toBe("string");
-    expect(body.session_id).not.toBe("");
+    expect(r1.stepIndex).toBe(0);
+    expect(r2.stepIndex).toBe(1);
   });
 
   it("returns committed status for replayed proxy response", async () => {

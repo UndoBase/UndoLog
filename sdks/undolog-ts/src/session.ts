@@ -129,13 +129,14 @@ export function getCurrentSession(): UndoLogSession | undefined {
  * Same as ``getCurrentSession()`` but throws ``MissingSessionError``
  * instead of returning ``undefined`` when no session context is active.
  *
+ * @param toolName - Optional name of the calling tool to include in the error message.
  * @returns The active session (never ``undefined``).
  * @throws {MissingSessionError} If no session context is active.
  */
-export function requireCurrentSession(): UndoLogSession {
+export function requireCurrentSession(toolName?: string): UndoLogSession {
   const session = als.getStore()?.session;
   if (session === undefined) {
-    throw new MissingSessionError();
+    throw new MissingSessionError(undefined, toolName);
   }
   return session;
 }
