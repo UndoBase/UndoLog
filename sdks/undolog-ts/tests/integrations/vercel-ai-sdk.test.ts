@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { UndoLogClient, type EffectRecord } from "../../src/client.js";
-import { undologTool } from "../../src/integrations/vercel-ai-sdk.js";
+import { undologTool, wrapVercelAITools } from "../../src/integrations/vercel-ai-sdk.js";
 import type { UndologVercelTool, UndologVercelToolOptions } from "../../src/integrations/vercel-ai-sdk.js";
 import { ToolTier } from "../../src/tier.js";
-import { AwaitingApprovalError } from "../../src/errors.js";
+import { AwaitingApprovalError, MissingSessionError } from "../../src/errors.js";
+import { getCurrentSession, runWithSession, UndoLogSession } from "../../src/session.js";
 
 const NOW = new Date().toISOString();
 
@@ -385,5 +386,257 @@ describe("undologTool error propagation", () => {
     );
 
     await expect(tool.execute({})).rejects.toThrow("commit_fail");
+  });
+});
+
+describe("wrapVercelAITools", () => {
+  it("wraps entire dictionary of tools in a single call", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const rawTools = {
+      weather: {
+        description: "Get weather",
+        parameters: { parse: (x: unknown) => x as { city: string } },
+        execute: vi.fn().mockResolvedValue({ temp: 72 }),
+      },
+      calculator: {
+        description: "Calculate sum",
+        parameters: { parse: (x: unknown) => x as { a: number; b: number } },
+        execute: vi.fn().mockResolvedValue(42),
+      },
+    };
+
+    const tools = wrapVercelAITools(client, rawTools);
+
+    expect(tools).toHaveProperty("weather");
+    expect(tools).toHaveProperty("calculator");
+
+    const weatherResult = await tools.weather.execute({ city: "Tokyo" });
+    const calcResult = await tools.calculator.execute({ a: 20, b: 22 });
+
+    expect(weatherResult).toEqual({ temp: 72 });
+    expect(calcResult).toBe(42);
+    expect(rawTools.weather.execute).toHaveBeenCalledWith({ city: "Tokyo" }, undefined);
+    expect(rawTools.calculator.execute).toHaveBeenCalledWith({ a: 20, b: 22 }, undefined);
+  });
+
+  it("preserves original parameter schemas and descriptions unchanged", () => {
+    const weatherParams = { parse: (x: unknown) => x };
+    const rawTools = {
+      weather: {
+        description: "Weather in location",
+        parameters: weatherParams,
+        execute: async () => ({ ok: true }),
+      },
+    };
+
+    const tools = wrapVercelAITools(client, rawTools);
+
+    expect(tools.weather.description).toBe("Weather in location");
+    expect(tools.weather.parameters).toBe(weatherParams);
+  });
+
+  it("preserves tools without execute functions", () => {
+    const rawTools = {
+      clientSideTool: {
+        description: "UI prompt tool without execute",
+        parameters: { parse: (x: unknown) => x },
+      },
+    };
+
+    const tools = wrapVercelAITools(client, rawTools);
+
+    expect(tools.clientSideTool.description).toBe("UI prompt tool without execute");
+    expect(tools.clientSideTool).not.toHaveProperty("execute");
+  });
+
+  it("creates automatic session lifecycle if invoked outside an existing session", async () => {
+    let capturedSessionId: string | undefined;
+    vi.spyOn(client, "intercept").mockImplementation(async (params) => {
+      capturedSessionId = params.sessionId ?? getCurrentSession()?.sessionId;
+      return mockEffect({ sessionId: capturedSessionId });
+    });
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const rawTools = {
+      charge: {
+        execute: async () => {
+          expect(getCurrentSession()).toBeDefined();
+          return "success";
+        },
+      },
+    };
+
+    expect(getCurrentSession()).toBeUndefined();
+    const tools = wrapVercelAITools(client, rawTools);
+    const result = await tools.charge.execute({});
+
+    expect(result).toBe("success");
+    expect(capturedSessionId).toBeDefined();
+    expect(capturedSessionId).toMatch(/^[0-9a-f-]{36}$/i);
+    // Session context should clean up after execution
+    expect(getCurrentSession()).toBeUndefined();
+  });
+
+  it("reuses existing ambient session when invoked inside runWithSession", async () => {
+    const outerSession = new UndoLogSession();
+    let capturedSessionId: string | undefined;
+
+    vi.spyOn(client, "intercept").mockImplementation(async (params) => {
+      capturedSessionId = params.sessionId ?? getCurrentSession()?.sessionId;
+      return mockEffect({ sessionId: capturedSessionId });
+    });
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const tools = wrapVercelAITools(client, {
+      action: { execute: async () => "ok" },
+    });
+
+    await runWithSession(outerSession, async () => {
+      await tools.action.execute({});
+    });
+
+    expect(capturedSessionId).toBe(outerSession.sessionId);
+  });
+
+  it("throws MissingSessionError when autoSession is false and no ambient session exists", async () => {
+    const tools = wrapVercelAITools(
+      client,
+      {
+        write_db: { execute: async () => "done" },
+      },
+      {
+        autoSession: false,
+        tiers: { write_db: ToolTier.Compensable },
+      },
+    );
+
+    expect(getCurrentSession()).toBeUndefined();
+    await expect(tools.write_db.execute({})).rejects.toThrow(MissingSessionError);
+  });
+
+  it("intercepts calls and pauses with AwaitingApprovalError on irreversible tools", async () => {
+    const approvalErr = new AwaitingApprovalError(
+      "delete_account",
+      { userId: "usr_1" },
+      "appr_123",
+    );
+    vi.spyOn(client, "intercept").mockRejectedValue(approvalErr);
+    const executeSpy = vi.fn();
+
+    const tools = wrapVercelAITools(
+      client,
+      {
+        delete_account: { execute: executeSpy },
+      },
+      {
+        tiers: { delete_account: ToolTier.Irreversible },
+      },
+    );
+
+    await expect(tools.delete_account.execute({ userId: "usr_1" })).rejects.toThrow(
+      AwaitingApprovalError,
+    );
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it("commits effect records on successful execution and triggers fail callback on error", async () => {
+    const intercept = vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    const commit = vi.spyOn(client, "commit").mockResolvedValue(
+      mockEffect({ status: "committed" }),
+    );
+    const fail = vi.spyOn(client, "fail").mockResolvedValue(
+      mockEffect({ status: "failed" }),
+    );
+
+    const tools = wrapVercelAITools(client, {
+      success_tool: { execute: async () => "ok" },
+      failing_tool: {
+        execute: async () => {
+          throw new Error("tool_crashed");
+        },
+      },
+    });
+
+    await tools.success_tool.execute({});
+    expect(intercept).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "success_tool" }),
+    );
+    expect(commit).toHaveBeenCalledWith("eff_001");
+
+    await expect(tools.failing_tool.execute({})).rejects.toThrow("tool_crashed");
+    expect(fail).toHaveBeenCalledWith("eff_001", "tool_crashed");
+  });
+
+  it("bypasses intercept and commit for Safe tier tools", async () => {
+    const intercept = vi.spyOn(client, "intercept");
+    const commit = vi.spyOn(client, "commit");
+    const execute = vi.fn().mockResolvedValue("read_data");
+
+    const tools = wrapVercelAITools(
+      client,
+      {
+        get_info: { execute },
+      },
+      {
+        tiers: { get_info: ToolTier.Safe },
+      },
+    );
+
+    const result = await tools.get_info.execute({});
+    expect(result).toBe("read_data");
+    expect(intercept).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("applies defaultTier to unlisted tools and forwards compensation metadata", async () => {
+    const intercept = vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const tools = wrapVercelAITools(
+      client,
+      {
+        transfer: { execute: async () => "transferred" },
+      },
+      {
+        defaultTier: ToolTier.Compensable,
+        compensations: {
+          transfer: { fnName: "undo_transfer", args: { fee: 5 } },
+        },
+      },
+    );
+
+    await tools.transfer.execute({});
+    expect(intercept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "transfer",
+        tier: ToolTier.Compensable,
+        compensation: { fnName: "undo_transfer", args: { fee: 5 } },
+      }),
+    );
+  });
+
+  it("supports wrapVercelAITools(tools, options) overload with client in options", async () => {
+    const intercept = vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const tools = wrapVercelAITools(
+      {
+        ping: { execute: async () => "pong" },
+      },
+      { client },
+    );
+
+    const result = await tools.ping.execute({});
+    expect(result).toBe("pong");
+    expect(intercept).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "ping" }),
+    );
+  });
+
+  it("handles empty tools dictionary without errors", () => {
+    const tools = wrapVercelAITools(client, {});
+    expect(tools).toEqual({});
   });
 });

@@ -70,3 +70,11 @@ export type {
   CompensationReport,
   TestSagaOptions,
 } from "./testing/saga.js";
+
+export { undologTool, wrapVercelAITools } from "./integrations/vercel-ai-sdk.js";
+export type {
+  UndologVercelTool,
+  UndologVercelToolOptions,
+  WrapVercelAIToolsOptions,
+  WrappedVercelAITools,
+} from "./integrations/vercel-ai-sdk.js";
