@@ -3,22 +3,22 @@
  * Provides a fully in-memory mock server that mimics the UndoLog proxy MCP
  * protocol (``POST /mcp/tool_call``, effect commit/fail, and approval
  * endpoints), parity assertion helpers for cross-language signature testing,
- * and factory functions for creating session and effect test doubles.
+ * multi-step saga compensation simulation harnesses, and factory functions
+ * for creating session and effect test doubles.
  *
  * Import from ``@undolog/sdk/testing``.
  *
  * @example
  * ```ts
- * import { mockServer } from "@undolog/sdk/testing";
+ * import { mockServer, createTestSaga } from "@undolog/sdk/testing";
  * import { UndoLogClient, ToolTier } from "@undolog/sdk";
  *
- * const server = mockServer({
- *   tools: { send_email: ToolTier.Compensable },
+ * const saga = createTestSaga();
+ * saga.addStep({
+ *   toolName: "reserve_inventory",
+ *   compensation: async () => {},
  * });
- * const client = new UndoLogClient({
- *   baseUrl: "http://localhost",
- *   httpClient: server.httpClient,
- * });
+ * const report = await saga.simulateFailureAt(1);
  * ```
  *
  * @module
@@ -546,3 +546,26 @@ export function createMockEffect(overrides?: Partial<EffectRecord>): EffectRecor
     ...overrides,
   };
 }
+
+// ── Multi-step saga compensation test harness ────────────────────────────
+
+export {
+  DEFAULT_MAX_RETRIES,
+  TestSaga,
+  SagaTestHarness,
+  CompensationTestHarness,
+  createTestSaga,
+  testSaga,
+  testCompensation,
+} from "./saga.js";
+
+export type {
+  SagaStepDescriptor,
+  EffectDescriptor,
+  SagaStepResult,
+  StepResult,
+  ExecutedCompensation,
+  SagaReport,
+  CompensationReport,
+  TestSagaOptions,
+} from "./saga.js";
