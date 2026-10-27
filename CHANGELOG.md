@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - SDK: added ``createTestSaga`` harness in ``@undolog/sdk/testing`` to
   simulate multi-step saga compensation workflows, LIFO rollbacks, and
   irreversible approval gates in memory without external dependencies.
+- SDK: added ``wrapVercelAITools`` to automatically instrument Vercel
+  AI SDK tool sets with UndoLog effect tracking, approval gating, and
+  session lifecycle management.
 
 ### Changed
 
