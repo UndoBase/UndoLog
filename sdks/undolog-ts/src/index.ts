@@ -49,3 +49,24 @@ export {
   isSafe,
 } from "./tier.js";
 export type { CompensationDescriptor } from "./tier.js";
+
+export {
+  DEFAULT_MAX_RETRIES,
+  TestSaga,
+  SagaTestHarness,
+  CompensationTestHarness,
+  createTestSaga,
+  testSaga,
+  testCompensation,
+} from "./testing/saga.js";
+
+export type {
+  SagaStepDescriptor,
+  EffectDescriptor,
+  SagaStepResult,
+  StepResult,
+  ExecutedCompensation,
+  SagaReport,
+  CompensationReport,
+  TestSagaOptions,
+} from "./testing/saga.js";

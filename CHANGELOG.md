@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- SDK: added ``createTestSaga`` harness in ``@undolog/sdk/testing`` to
+  simulate multi-step saga compensation workflows, LIFO rollbacks, and
+  irreversible approval gates in memory without external dependencies.
+
 ### Changed
 
 - SDK: bumped TypeScript SDK (``@undolog/sdk``) to 0.1.1.
