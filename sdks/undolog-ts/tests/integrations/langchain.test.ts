@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
 import { UndoLogClient, type EffectRecord } from "../../src/client.js";
-import { createUndologTool } from "../../src/integrations/langchain.js";
+import {
+  createUndologTool,
+  wrapLangChainAgent,
+  wrapLangChainTools,
+} from "../../src/integrations/langchain.js";
 import type { UndologLangchainToolOptions } from "../../src/integrations/langchain.js";
 import { ToolTier } from "../../src/tier.js";
-import { AwaitingApprovalError } from "../../src/errors.js";
+import { AwaitingApprovalError, MissingSessionError } from "../../src/errors.js";
+import { getCurrentSession, runWithSession, UndoLogSession } from "../../src/session.js";
 
 const NOW = new Date().toISOString();
 
@@ -413,5 +418,361 @@ describe("createUndologTool error propagation", () => {
     );
 
     await expect(tool.func({})).rejects.toThrow("commit_fail");
+  });
+});
+
+describe("wrapLangChainAgent and wrapLangChainTools", () => {
+  it("binds UndoLog interception to all tools registered on an agent executor", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const searchTool = {
+      name: "search_docs",
+      description: "Search documentation",
+      func: vi.fn().mockResolvedValue("search_results"),
+    };
+    const calcTool = {
+      name: "calculate",
+      description: "Perform calculation",
+      invoke: vi.fn().mockResolvedValue("42"),
+    };
+
+    const executor = {
+      tools: [searchTool, calcTool],
+      invoke: async (input: { query: string }) => {
+        const r1 = await searchTool.func({ query: input.query });
+        const r2 = await calcTool.invoke({ expr: "20+22" });
+        return `${r1} and ${r2}`;
+      },
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor, {
+      tiers: {
+        search_docs: ToolTier.Safe,
+        calculate: ToolTier.Compensable,
+      },
+    });
+
+    expect(wrapped.tools.length).toBe(2);
+    expect(wrapped._undologWrapped).toBe(true);
+
+    const result = await wrapped.invoke({ query: "pricing" });
+    expect(result).toBe("search_results and 42");
+    expect(client.commit).toHaveBeenCalledWith("eff_001");
+  });
+
+  it("intercepts tool calls inside LangChain agent execution loops", async () => {
+    let capturedSessionId: string | undefined;
+    vi.spyOn(client, "intercept").mockImplementation(async (params) => {
+      capturedSessionId = params.sessionId ?? getCurrentSession()?.sessionId;
+      return mockEffect({ sessionId: capturedSessionId, toolName: params.toolName });
+    });
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const step1Tool = {
+      name: "step_one",
+      call: vi.fn().mockResolvedValue("res_1"),
+    };
+    const step2Tool = {
+      name: "step_two",
+      call: vi.fn().mockResolvedValue("res_2"),
+    };
+
+    const executor = {
+      tools: [step1Tool, step2Tool],
+      invoke: async (_input?: unknown) => {
+        const a = await step1Tool.call({ x: 1 });
+        const b = await step2Tool.call({ y: 2 });
+        return [a, b];
+      },
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor);
+    const result = await wrapped.invoke({});
+
+    expect(result).toEqual(["res_1", "res_2"]);
+    expect(client.intercept).toHaveBeenCalledTimes(2);
+    expect(client.commit).toHaveBeenCalledTimes(2);
+    expect(capturedSessionId).toBeDefined();
+  });
+
+  it("structured tool arguments are validated and serialized via canonical JSON", async () => {
+    const interceptSpy = vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const schema = z.object({
+      target: z.string(),
+      payload: z.object({
+        z: z.number(),
+        a: z.number(),
+      }),
+    });
+
+    const structuredTool = {
+      name: "structured_tool",
+      schema,
+      func: vi.fn().mockImplementation(async (args) => {
+        schema.parse(args);
+        return "valid";
+      }),
+    };
+
+    const executor = {
+      tools: [structuredTool],
+      invoke: async (input?: unknown) => structuredTool.func(input),
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor);
+    const complexArgs = { target: "srv-1", payload: { z: 99, a: 1 } };
+    const res = await wrapped.invoke(complexArgs);
+
+    expect(res).toBe("valid");
+    expect(interceptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "structured_tool",
+        args: complexArgs,
+      }),
+    );
+  });
+
+  it("normalizes primitive tool arguments for intercept while forwarding original primitive", async () => {
+    const interceptSpy = vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    let receivedArg: unknown;
+    const primitiveTool = {
+      name: "primitive_tool",
+      invoke: vi.fn().mockImplementation(async (arg: unknown) => {
+        receivedArg = arg;
+        return `echo:${arg}`;
+      }),
+    };
+
+    const executor = {
+      tools: [primitiveTool],
+      invoke: async (input: unknown) => primitiveTool.invoke(input),
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor);
+    const res = await wrapped.invoke("raw_string_param");
+
+    expect(res).toBe("echo:raw_string_param");
+    expect(receivedArg).toBe("raw_string_param");
+    expect(interceptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "primitive_tool",
+        args: expect.objectContaining({ input: "raw_string_param" }),
+      }),
+    );
+  });
+
+  it("replay status committed skips re-commit while returning re-executed values", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(
+      mockEffect({ status: "committed" }),
+    );
+    const commitSpy = vi.spyOn(client, "commit");
+
+    const invokeSpy = vi.fn().mockResolvedValue("replayed_value");
+    const tool = {
+      name: "replay_action",
+      invoke: invokeSpy,
+    };
+
+    const executor = {
+      tools: [tool],
+      invoke: async (_input?: unknown) => tool.invoke({ action: "read" }),
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor);
+    const result = await wrapped.invoke({});
+
+    expect(result).toBe("replayed_value");
+    expect(invokeSpy).toHaveBeenCalled();
+    expect(commitSpy).not.toHaveBeenCalled();
+  });
+
+  it("skips fail callback when replayed tool throws", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(
+      mockEffect({ status: "committed" }),
+    );
+    const failSpy = vi.spyOn(client, "fail");
+
+    const tool = {
+      name: "flaky_replay",
+      call: vi.fn().mockRejectedValue(new Error("replay_crash")),
+    };
+
+    const executor = {
+      tools: [tool],
+      invoke: async (_input?: unknown) => tool.call({}),
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor);
+    await expect(wrapped.invoke({})).rejects.toThrow("replay_crash");
+    expect(failSpy).not.toHaveBeenCalled();
+  });
+
+  it("reversible tool failure registers failure record and propagates error to loop", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    const failSpy = vi.spyOn(client, "fail").mockResolvedValue(
+      mockEffect({ status: "failed" }),
+    );
+
+    const failingTool = {
+      name: "failing_operation",
+      func: vi.fn().mockRejectedValue(new Error("operation_aborted")),
+    };
+
+    const executor = {
+      tools: [failingTool],
+      invoke: async (_input?: unknown) => {
+        try {
+          await failingTool.func({ id: 10 });
+        } catch (err) {
+          return `caught: ${(err as Error).message}`;
+        }
+      },
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor);
+    const result = await wrapped.invoke({});
+
+    expect(result).toBe("caught: operation_aborted");
+    expect(failSpy).toHaveBeenCalledWith("eff_001", "operation_aborted");
+  });
+
+  it("pauses with AwaitingApprovalError on irreversible tool before tool execution", async () => {
+    const approvalErr = new AwaitingApprovalError(
+      "delete_data",
+      { id: 42 },
+      "appr_xyz",
+    );
+    vi.spyOn(client, "intercept").mockRejectedValue(approvalErr);
+    const execSpy = vi.fn();
+
+    const irreversibleTool = {
+      name: "delete_data",
+      invoke: execSpy,
+    };
+
+    const executor = {
+      tools: [irreversibleTool],
+      invoke: async (_input?: unknown) => irreversibleTool.invoke({ id: 42 }),
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor, {
+      tiers: { delete_data: ToolTier.Irreversible },
+    });
+
+    await expect(wrapped.invoke({})).rejects.toThrow(AwaitingApprovalError);
+    expect(execSpy).not.toHaveBeenCalled();
+  });
+
+  it("creates automatic session lifecycle if invoked outside an existing session", async () => {
+    let activeInLoop: boolean | undefined;
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const tool = {
+      name: "session_aware_tool",
+      func: vi.fn().mockImplementation(async () => {
+        activeInLoop = getCurrentSession() !== undefined;
+        return "ok";
+      }),
+    };
+
+    const executor = {
+      tools: [tool],
+      invoke: async (_input?: unknown) => tool.func({}),
+    };
+
+    expect(getCurrentSession()).toBeUndefined();
+    const wrapped = wrapLangChainAgent(client, executor);
+    await wrapped.invoke({});
+
+    expect(activeInLoop).toBe(true);
+    expect(getCurrentSession()).toBeUndefined();
+  });
+
+  it("reuses existing ambient session when invoked inside runWithSession", async () => {
+    const ambientSession = new UndoLogSession();
+    let capturedSessionId: string | undefined;
+
+    vi.spyOn(client, "intercept").mockImplementation(async (params) => {
+      capturedSessionId = params.sessionId ?? getCurrentSession()?.sessionId;
+      return mockEffect({ sessionId: capturedSessionId });
+    });
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const tool = {
+      name: "ambient_tool",
+      func: vi.fn().mockResolvedValue("ambient_ok"),
+    };
+
+    const executor = {
+      tools: [tool],
+      invoke: async (_input?: unknown) => tool.func({}),
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor);
+    await runWithSession(ambientSession, async () => {
+      await wrapped.invoke({});
+    });
+
+    expect(capturedSessionId).toBe(ambientSession.sessionId);
+  });
+
+  it("throws MissingSessionError when autoSession is false and no ambient session exists", async () => {
+    const tool = {
+      name: "guard_tool",
+      func: vi.fn().mockResolvedValue("ok"),
+    };
+
+    const executor = {
+      tools: [tool],
+      invoke: async (_input?: unknown) => tool.func({}),
+    };
+
+    const wrapped = wrapLangChainAgent(client, executor, { autoSession: false });
+    expect(getCurrentSession()).toBeUndefined();
+    await expect(wrapped.invoke({})).rejects.toThrow(MissingSessionError);
+  });
+
+  it("supports wrapLangChainTools utility to instrument standalone tool arrays", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const rawTools = [
+      { name: "t1", func: vi.fn().mockResolvedValue("r1") },
+      { name: "t2", invoke: vi.fn().mockResolvedValue("r2") },
+    ];
+
+    const wrappedTools = wrapLangChainTools(client, rawTools);
+    expect(wrappedTools.length).toBe(2);
+    expect(wrappedTools[0]?._undologWrapped).toBe(true);
+    expect(wrappedTools[1]?._undologWrapped).toBe(true);
+
+    // Does not double-wrap already instrumented tools
+    const rewrapped = wrapLangChainTools(client, wrappedTools);
+    expect(rewrapped[0]).toBe(wrappedTools[0]);
+  });
+
+  it("supports wrapLangChainAgent(executor, options) overload with client in options", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const tool = {
+      name: "overload_tool",
+      func: vi.fn().mockResolvedValue("overload_ok"),
+    };
+
+    const executor = {
+      tools: [tool],
+      call: async (_input?: unknown) => tool.func({}),
+    };
+
+    const wrapped = wrapLangChainAgent(executor, { client });
+    const res = await wrapped.call({});
+    expect(res).toBe("overload_ok");
   });
 });

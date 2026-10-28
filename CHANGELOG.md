@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - SDK: added ``wrapVercelAITools`` to automatically instrument Vercel
   AI SDK tool sets with UndoLog effect tracking, approval gating, and
   session lifecycle management.
+- SDK: added ``wrapLangChainAgent`` to instrument LangChain agents and
+  executors, intercepting tool executions and preserving schema metadata.
 
 ### Changed
 
