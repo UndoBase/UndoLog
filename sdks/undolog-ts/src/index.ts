@@ -78,3 +78,16 @@ export type {
   WrapVercelAIToolsOptions,
   WrappedVercelAITools,
 } from "./integrations/vercel-ai-sdk.js";
+
+export {
+  createUndologTool,
+  wrapLangChainAgent,
+  wrapLangChainTools,
+} from "./integrations/langchain.js";
+export type {
+  UndologLangchainToolOptions,
+  WrapLangChainAgentOptions,
+  LangChainToolLike,
+  LangChainAgentExecutorLike,
+  WrappedLangChainAgent,
+} from "./integrations/langchain.js";
