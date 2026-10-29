@@ -1,9 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { UndoLogClient, type EffectRecord } from "../../src/client.js";
-import { undologMastraTool } from "../../src/integrations/mastra.js";
-import type { UndologMastraTool, UndologMastraToolOptions } from "../../src/integrations/mastra.js";
+import {
+  undologMastraTool,
+  wrapMastraAgent,
+  wrapMastraTools,
+  isSuspensionState,
+} from "../../src/integrations/mastra.js";
+import type {
+  UndologMastraTool,
+  UndologMastraToolOptions,
+} from "../../src/integrations/mastra.js";
 import { ToolTier } from "../../src/tier.js";
-import { AwaitingApprovalError } from "../../src/errors.js";
+import { AwaitingApprovalError, MissingSessionError } from "../../src/errors.js";
+import { UndoLogSession, getCurrentSession, runWithSession } from "../../src/session.js";
 
 const NOW = new Date().toISOString();
 
@@ -486,5 +495,285 @@ describe("undologMastraTool missing session", () => {
 
     await expect(tool.execute({})).resolves.toBe("result");
     expect(intercept).toHaveBeenCalled();
+  });
+});
+
+describe("wrapMastraAgent and wrapMastraTools", () => {
+  it("intercepts Mastra tool execution steps inside agent generate loops", async () => {
+    const interceptSpy = vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    const commitSpy = vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const searchTool = {
+      id: "search_tool",
+      description: "Searches knowledge base",
+      execute: vi.fn().mockResolvedValue({ results: ["doc1", "doc2"] }),
+    };
+
+    const agent = {
+      name: "ResearchAgent",
+      tools: { search_tool: searchTool },
+      generate: async (prompt: string) => {
+        const toolRes = await agent.tools.search_tool.execute({ query: prompt });
+        return `Generated answer with ${toolRes.results.length} docs`;
+      },
+    };
+
+    const wrapped = wrapMastraAgent(client, agent);
+    const result = await wrapped.generate("agent safety");
+
+    expect(result).toBe("Generated answer with 2 docs");
+    expect(interceptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "search_tool",
+        args: { query: "agent safety" },
+      }),
+    );
+    expect(commitSpy).toHaveBeenCalled();
+  });
+
+  it("preserves input and output schemas across tool invocations", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const inputSchema = { type: "object", properties: { query: { type: "string" } } };
+    const outputSchema = { type: "object", properties: { score: { type: "number" } } };
+
+    const schemaTool = {
+      id: "scored_search",
+      description: "Search with score",
+      inputSchema,
+      outputSchema,
+      execute: vi.fn().mockResolvedValue({ score: 99 }),
+    };
+
+    const agent = {
+      tools: { scored_search: schemaTool },
+      execute: async (input: { q: string }) => schemaTool.execute({ query: input.q }),
+    };
+
+    const wrapped = wrapMastraAgent(client, agent);
+
+    expect(wrapped.tools.scored_search.inputSchema).toBe(inputSchema);
+    expect(wrapped.tools.scored_search.outputSchema).toBe(outputSchema);
+    expect(wrapped.tools.scored_search.description).toBe("Search with score");
+
+    const res = await wrapped.execute({ q: "schema verification" });
+    expect(res).toEqual({ score: 99 });
+  });
+
+  it("establishes ambient session context across multi-step workflow executions", async () => {
+    const sessionIdsRecorded: string[] = [];
+    vi.spyOn(client, "intercept").mockImplementation(async (params) => {
+      const activeSession = getCurrentSession();
+      if (activeSession) {
+        sessionIdsRecorded.push(activeSession.sessionId);
+      }
+      return mockEffect({ sessionId: params.sessionId ?? activeSession?.sessionId });
+    });
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const step1Tool = {
+      id: "step1_tool",
+      execute: vi.fn().mockResolvedValue("step1_done"),
+    };
+    const step2Tool = {
+      id: "step2_tool",
+      execute: vi.fn().mockResolvedValue("step2_done"),
+    };
+
+    const workflowAgent = {
+      tools: {
+        step1: step1Tool,
+        step2: step2Tool,
+      },
+      execute: async () => {
+        const r1 = await workflowAgent.tools.step1.execute({});
+        const r2 = await workflowAgent.tools.step2.execute({});
+        return [r1, r2];
+      },
+    };
+
+    expect(getCurrentSession()).toBeUndefined();
+    const wrapped = wrapMastraAgent(client, workflowAgent);
+    const results = await wrapped.execute();
+
+    expect(results).toEqual(["step1_done", "step2_done"]);
+    expect(sessionIdsRecorded.length).toBe(2);
+    expect(sessionIdsRecorded[0]).toBeDefined();
+    expect(sessionIdsRecorded[0]).toBe(sessionIdsRecorded[1]);
+    expect(getCurrentSession()).toBeUndefined();
+  });
+
+  it("reuses existing ambient session when executed inside runWithSession", async () => {
+    const ambientSession = new UndoLogSession();
+    let capturedSessionId: string | undefined;
+
+    vi.spyOn(client, "intercept").mockImplementation(async (params) => {
+      capturedSessionId = params.sessionId ?? getCurrentSession()?.sessionId;
+      return mockEffect({ sessionId: capturedSessionId });
+    });
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const tool = {
+      id: "ambient_mastra_tool",
+      execute: vi.fn().mockResolvedValue("ambient_val"),
+    };
+
+    const agent = {
+      tools: { tool },
+      execute: async () => tool.execute({}),
+    };
+
+    const wrapped = wrapMastraAgent(client, agent);
+    await runWithSession(ambientSession, async () => {
+      await wrapped.execute();
+    });
+
+    expect(capturedSessionId).toBe(ambientSession.sessionId);
+  });
+
+  it("surfaces pending approvals cleanly as workflow suspension states when suspendOnApproval is true", async () => {
+    vi.spyOn(client, "intercept").mockRejectedValue(
+      new AwaitingApprovalError(
+        "delete_database",
+        { db: "prod" },
+        "appr_pending_999",
+        "Action requires human approval",
+      ),
+    );
+    const execSpy = vi.fn();
+
+    const irreversibleTool = {
+      id: "delete_database",
+      execute: execSpy,
+    };
+
+    const agent = {
+      tools: { delete_database: irreversibleTool },
+      execute: async () => irreversibleTool.execute({ db: "prod" }),
+    };
+
+    const wrapped = wrapMastraAgent(client, agent, {
+      tiers: { delete_database: ToolTier.Irreversible },
+      suspendOnApproval: true,
+    });
+
+    const result = await wrapped.execute();
+
+    expect(isSuspensionState(result)).toBe(true);
+    if (isSuspensionState(result)) {
+      expect(result.status).toBe("suspended");
+      expect(result.suspended).toBe(true);
+      expect(result.reason).toBe("awaiting_approval");
+      expect(result.approvalId).toBe("appr_pending_999");
+      expect(result.toolName).toBe("delete_database");
+      expect(result.args).toEqual({ db: "prod" });
+      expect(result.error).toBeInstanceOf(AwaitingApprovalError);
+    }
+    expect(execSpy).not.toHaveBeenCalled();
+  });
+
+  it("propagates AwaitingApprovalError directly when suspendOnApproval is false", async () => {
+    vi.spyOn(client, "intercept").mockRejectedValue(
+      new AwaitingApprovalError("deploy_app", { env: "prod" }, "appr_123", "Approval required"),
+    );
+
+    const tool = {
+      id: "deploy_app",
+      execute: vi.fn(),
+    };
+
+    const agent = {
+      tools: { deploy_app: tool },
+      execute: async () => tool.execute({ env: "prod" }),
+    };
+
+    const wrapped = wrapMastraAgent(client, agent, {
+      tiers: { deploy_app: ToolTier.Irreversible },
+      suspendOnApproval: false,
+    });
+
+    await expect(wrapped.execute()).rejects.toThrow(AwaitingApprovalError);
+  });
+
+  it("throws MissingSessionError when autoSession is false and requireSession is true", async () => {
+    const tool = {
+      id: "guarded_tool",
+      execute: vi.fn().mockResolvedValue("ok"),
+    };
+
+    const agent = {
+      tools: { guarded_tool: tool },
+      execute: async () => tool.execute({}),
+    };
+
+    const wrapped = wrapMastraAgent(client, agent, {
+      autoSession: false,
+      requireSession: true,
+    });
+
+    expect(getCurrentSession()).toBeUndefined();
+    await expect(wrapped.execute()).rejects.toThrow(MissingSessionError);
+  });
+
+  it("supports wrapMastraTools for tool dictionaries and arrays", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const dictTools = {
+      t1: { id: "t1", execute: vi.fn().mockResolvedValue("r1") },
+      t2: { id: "t2", execute: vi.fn().mockResolvedValue("r2") },
+    };
+
+    const wrappedDict = wrapMastraTools(client, dictTools);
+    expect(wrappedDict.t1._undologWrapped).toBe(true);
+    expect(wrappedDict.t2._undologWrapped).toBe(true);
+
+    const arrayTools = [
+      { id: "a1", execute: vi.fn().mockResolvedValue("ar1") },
+    ];
+    const wrappedArray = wrapMastraTools(client, arrayTools);
+    expect(wrappedArray[0]?._undologWrapped).toBe(true);
+
+    // Idempotent re-wrapping
+    const rewrapped = wrapMastraTools(client, wrappedDict);
+    expect(rewrapped.t1).toBe(wrappedDict.t1);
+  });
+
+  it("supports wrapMastraAgent(agent, options) overload with client in options", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const tool = {
+      id: "overload_tool",
+      execute: vi.fn().mockResolvedValue("overload_done"),
+    };
+
+    const agent = {
+      tools: { overload_tool: tool },
+      stream: async () => tool.execute({}),
+    };
+
+    const wrapped = wrapMastraAgent(agent, { client });
+    const res = await wrapped.stream();
+    expect(res).toBe("overload_done");
+  });
+
+  it("instruments agents whose tools are stored in an array or Map", async () => {
+    vi.spyOn(client, "intercept").mockResolvedValue(mockEffect());
+    vi.spyOn(client, "commit").mockResolvedValue(mockEffect({ status: "committed" }));
+
+    const toolMap = new Map();
+    toolMap.set("m1", { id: "m1", execute: vi.fn().mockResolvedValue("map_val") });
+
+    const agentWithMap = {
+      tools: toolMap,
+      execute: async () => toolMap.get("m1").execute({}),
+    };
+
+    const wrapped = wrapMastraAgent(client, agentWithMap);
+    const res = await wrapped.execute();
+    expect(res).toBe("map_val");
+    expect(wrapped.tools.get("m1")?._undologWrapped).toBe(true);
   });
 });

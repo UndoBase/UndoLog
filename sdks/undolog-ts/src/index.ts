@@ -91,3 +91,20 @@ export type {
   LangChainAgentExecutorLike,
   WrappedLangChainAgent,
 } from "./integrations/langchain.js";
+
+export {
+  undologMastraTool,
+  wrapMastraAgent,
+  wrapMastraTools,
+  isSuspensionState,
+} from "./integrations/mastra.js";
+export type {
+  UndologMastraTool,
+  UndologMastraToolOptions,
+  WrapMastraAgentOptions,
+  MastraToolLike,
+  MastraAgentLike,
+  MastraSuspensionState,
+  WrappedMastraAgent,
+  WrappedMastraTool,
+} from "./integrations/mastra.js";
