@@ -108,3 +108,5 @@ export type {
   WrappedMastraAgent,
   WrappedMastraTool,
 } from "./integrations/mastra.js";
+
+export type * as mcp from "./mcp/index.js";
