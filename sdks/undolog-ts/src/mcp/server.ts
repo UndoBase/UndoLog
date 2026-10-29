@@ -1,265 +1,172 @@
 /** MCP (Model Context Protocol) server integration for UndoLog.
  *
- * Provides the ``createUndoLogMcpServer()`` factory that exposes
- * UndoLog-wrapped tools as MCP tools using the official
- * ``@modelcontextprotocol/sdk``. The returned server is pre-configured
- * with stdio transport support (call ``server.connect(transport)`` or
- * use the ``connectStdio()`` helper).
+ * Provides ``createUndoLogMcpServer()`` and ``registerUndologMcpTool()``
+ * to expose UndoLog-wrapped tools on MCP servers using the official
+ * ``@modelcontextprotocol/sdk``.
  *
  * @module
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { ServerOptions } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { UndoLogClient } from "../client.js";
 import { wrapTool } from "../decorators.js";
-import type { ToolDefinition } from "../decorators.js";
-import type { ToolTier, CompensationDescriptor } from "../tier.js";
+import { ToolTier, type CompensationDescriptor } from "../tier.js";
 import { AwaitingApprovalError } from "../errors.js";
 
-/**
- * A tool registration accepted by ``createUndoLogMcpServer()``.
- *
- * Mirrors the core ``ToolDefinition`` but carries an explicit
- * ``inputSchema`` in JSON Schema format that is advertised to the MCP
- * client during the ``tools/list`` handshake.
- */
+/** A tool registration accepted by MCP server registration functions. */
 export interface UndoLogMcpToolRegistration<
   TArgs extends Record<string, unknown> = Record<string, unknown>,
   TResult = unknown,
 > {
-  /** Tool name exposed to the MCP client (and used for UndoLog effect
-   *  registration). */
   readonly name: string;
-
-  /** Human-readable description of what the tool does. */
   readonly description?: string;
-
-  /** JSON Schema object describing the tool's input parameters.
-   *
-   * Defaults to ``{ type: "object" }`` (no properties) when omitted. */
   readonly inputSchema?: Record<string, unknown>;
-
-  /** Effect tier classification. */
+  readonly outputSchema?: Record<string, unknown>;
   readonly tier: ToolTier;
-
-  /** The actual tool implementation. */
   readonly execute: (args: TArgs) => TResult | Promise<TResult>;
-
-  /** Compensation descriptor for Compensable-tier tools. */
   readonly compensation?: CompensationDescriptor;
+  readonly annotations?: ToolAnnotations;
+  readonly _meta?: Record<string, unknown>;
+  readonly sessionId?: string;
+  readonly requireSession?: boolean;
 }
 
-/**
- * Options for creating an UndoLog MCP server.
- */
+/** Options for creating an UndoLog MCP server. */
 export interface UndoLogMcpServerOptions {
-  /** Server name advertised during initialization. Defaults to
-   *  ``"undolog-mcp"``. */
   readonly name?: string;
-
-  /** Server version advertised during initialization. Defaults to
-   *  ``"0.1.0"``. */
   readonly version?: string;
 }
 
-/**
- * Creates an MCP server that exposes UndoLog-wrapped tools.
- *
- * The returned ``Server`` instance handles ``tools/list`` and
- * ``tools/call`` requests. Each tool call is routed through the core
- * ``wrapTool()`` function, providing the full effect lifecycle:
- *
- * - **Safe** tier tools bypass effect registration entirely.
- * - **Compensable** tier tools register a compensation descriptor for
- *   later rollback.
- * - **Irreversible** tier tools require explicit human approval before
- *   execution (``AwaitingApprovalError`` is thrown if approval has not
- *   been granted).
- *
- * Connect to a transport (e.g. stdio) after creation:
- *
- * ```typescript
- * const transport = new StdioServerTransport();
- * await server.connect(transport);
- * ```
- *
- * @example
- * ```typescript
- * import { UndoLogClient, ToolTier } from "@undolog/sdk";
- * import { createUndoLogMcpServer } from "@undolog/sdk/mcp";
- * import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
- *
- * const client = new UndoLogClient({
- *   baseUrl: "http://localhost:8080",
- * });
- *
- * const server = createUndoLogMcpServer(client, [
- *   {
- *     name: "get_weather",
- *     description: "Get the current weather for a location",
- *     inputSchema: {
- *       type: "object",
- *       properties: {
- *         location: { type: "string" },
- *       },
- *       required: ["location"],
- *     },
- *     tier: ToolTier.Safe,
- *     execute: async ({ location }: { location: string }) => {
- *       return { temperature: 72, condition: "sunny", location };
- *     },
- *   },
- * ]);
- *
- * const transport = new StdioServerTransport();
- * await server.connect(transport);
- * ```
- *
- * @param client - Configured UndoLog client instance.
- * @param registrations - Array of tool registrations to expose.
- * @param options - Server metadata (name, version).
- * @returns A ready-to-use MCP ``Server`` instance.
- */
+/** Duck-typed MCP server interface supporting request handler registration. */
+export type McpServerInstance = {
+  setRequestHandler: Server["setRequestHandler"];
+  [key: string]: any;
+};
+
+const REG = Symbol.for("undolog.mcp.registry");
+
+interface ServerRegistry {
+  client: UndoLogClient;
+  tools: Map<string, UndoLogMcpToolRegistration>;
+}
+
+const isClient = (v: unknown): v is UndoLogClient =>
+  Boolean(v && typeof v === "object" && (v as any).intercept && (v as any).commit);
+
+const toServer = (s: any): McpServerInstance =>
+  s && "server" in s && s.server?.setRequestHandler ? s.server : s;
+
+const textResp = (text: string, isError?: boolean) => ({
+  content: [{ type: "text" as const, text }],
+  ...(isError ? { isError: true } : {}),
+});
+
+const buildDesc = (r: UndoLogMcpToolRegistration): Tool => ({
+  name: r.name,
+  description: r.description,
+  inputSchema: (r.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
+  outputSchema: r.outputSchema as any,
+  annotations: {
+    readOnlyHint: r.tier === ToolTier.Safe,
+    destructiveHint: r.tier === ToolTier.Irreversible,
+    idempotentHint: r.tier === ToolTier.Safe,
+    openWorldHint: false,
+    ...r.annotations,
+  },
+  _meta: {
+    tier: r.tier,
+    reversibility: r.tier,
+    compensation: r.compensation,
+    ...r._meta,
+  },
+});
+
+function initServer(server: McpServerInstance, client: UndoLogClient): ServerRegistry {
+  let reg: ServerRegistry = (server as any)[REG];
+  if (!reg) {
+    (server as any)[REG] = reg = { client, tools: new Map() };
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: Array.from(reg.tools.values()).map(buildDesc),
+    }));
+
+    server.setRequestHandler(CallToolRequestSchema, async (req) => {
+      const tool = reg.tools.get(req.params.name);
+      if (!tool) return textResp(`Unknown tool: ${req.params.name}`, true);
+
+      const wrapped = wrapTool(reg.client, { ...tool, fn: (a) => tool.execute(a as any) });
+      try {
+        const res = await wrapped((req.params.arguments ?? {}) as Record<string, unknown>);
+        return textResp(typeof res === "string" ? res : JSON.stringify(res));
+      } catch (err) {
+        return textResp(
+          err instanceof AwaitingApprovalError
+            ? JSON.stringify({
+                type: "approval_required",
+                toolName: err.toolName,
+                approvalId: err.approvalId,
+                message: err.message,
+              })
+            : err instanceof Error
+              ? err.message
+              : String(err),
+          true,
+        );
+      }
+    });
+  }
+  return reg;
+}
+
+/** Registers an UndoLog-protected tool directly on an MCP Server instance. */
+export function registerUndologMcpTool(
+  server: McpServerInstance,
+  client: UndoLogClient,
+  registration: UndoLogMcpToolRegistration,
+): void;
+
+export function registerUndologMcpTool(
+  client: UndoLogClient,
+  server: McpServerInstance,
+  registration: UndoLogMcpToolRegistration,
+): void;
+
+export function registerUndologMcpTool(
+  first: McpServerInstance | UndoLogClient,
+  second: McpServerInstance | UndoLogClient,
+  registration: UndoLogMcpToolRegistration,
+): void {
+  const client = isClient(first) ? first : (second as UndoLogClient);
+  const server = toServer(isClient(first) ? second : first);
+  if (!server?.setRequestHandler) {
+    throw new Error("registerUndologMcpTool requires a valid MCP Server instance");
+  }
+
+  const reg = initServer(server, client);
+  reg.tools.set(registration.name, registration);
+}
+
+/** Creates an MCP server pre-configured with UndoLog-wrapped tools. */
 export function createUndoLogMcpServer(
   client: UndoLogClient,
   registrations: readonly UndoLogMcpToolRegistration[],
   options?: UndoLogMcpServerOptions,
 ): Server {
-  const name = options?.name ?? "undolog-mcp";
-  const version = options?.version ?? "0.1.0";
-
-  const toolMap = new Map<string, UndoLogMcpToolRegistration>();
-  const toolDescriptors: Tool[] = [];
-
-  for (const reg of registrations) {
-    toolMap.set(reg.name, reg);
-    toolDescriptors.push({
-      name: reg.name,
-      description: reg.description,
-      inputSchema: (reg.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
-    });
-  }
-
-  const serverOptions: ServerOptions = {
-    capabilities: {
-      tools: {},
-    },
-  };
-
   const server = new Server(
-    { name, version },
-    serverOptions,
+    { name: options?.name ?? "undolog-mcp", version: options?.version ?? "0.1.0" },
+    { capabilities: { tools: {} } },
   );
-
-  server.setRequestHandler(
-    ListToolsRequestSchema,
-    async () => ({
-      tools: toolDescriptors,
-    }),
-  );
-
-  server.setRequestHandler(
-    CallToolRequestSchema,
-    async (request) => {
-      const { name: toolName, arguments: args } = request.params;
-      const registration = toolMap.get(toolName);
-
-      if (registration === undefined) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Unknown tool: ${toolName}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const toolDef: ToolDefinition<Record<string, unknown>, unknown> = {
-        name: registration.name,
-        description: registration.description,
-        tier: registration.tier,
-        fn: registration.execute as (
-          args: Record<string, unknown>,
-        ) => unknown | Promise<unknown>,
-        compensation: registration.compensation,
-      };
-
-      const wrappedFn = wrapTool(client, toolDef);
-
-      try {
-        const result = await wrappedFn(
-          (args ?? {}) as Record<string, unknown>,
-        );
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                typeof result === "string"
-                  ? result
-                  : JSON.stringify(result),
-            },
-          ],
-        };
-      } catch (err) {
-        if (err instanceof AwaitingApprovalError) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify({
-                  type: "approval_required",
-                  toolName: err.toolName,
-                  approvalId: err.approvalId,
-                  message: err.message,
-                }),
-              },
-            ],
-            isError: true,
-          };
-        }
-        const message =
-          err instanceof Error ? err.message : String(err);
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: message,
-            },
-          ],
-          isError: true,
-        };
-      }
-    },
-  );
-
+  initServer(server, client);
+  for (const r of registrations) registerUndologMcpTool(server, client, r);
   return server;
 }
 
-/**
- * Connects an MCP server to stdio transport in a single call.
- *
- * @example
- * ```typescript
- * const server = createUndoLogMcpServer(client, tools);
- * await connectStdio(server);
- * ```
- *
- * @param server - An MCP ``Server`` instance.
- * @returns A promise that resolves once the transport is connected.
- */
-export async function connectStdio(
-  server: Server,
-): Promise<void> {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
+/** Connects an MCP server to stdio transport in a single call. */
+export const connectStdio = (server: Server): Promise<void> =>
+  server.connect(new StdioServerTransport());

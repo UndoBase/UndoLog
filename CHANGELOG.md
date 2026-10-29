@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   executors, intercepting tool executions and preserving schema metadata.
 - SDK: added ``wrapMastraAgent`` for one-line instrumentation of Mastra
   agents, capturing tool execution effects into the UndoLog journal.
+- SDK: added ``registerUndologMcpTool`` in ``@undolog/sdk/mcp`` to
+  simplify exposing UndoLog-protected tools on Model Context Protocol
+  (MCP) servers.
 
 ### Changed
 

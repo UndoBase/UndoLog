@@ -1,14 +1,20 @@
 /**
  * MCP (Model Context Protocol) integration module.
  *
- * Provides the ``createUndoLogMcpServer()`` factory for exposing
- * UndoLog-wrapped tools as MCP tools over stdio transport.
+ * Provides the ``createUndoLogMcpServer()`` factory,
+ * ``registerUndologMcpTool()`` registration helper, and ``connectStdio()``
+ * transport utility for exposing UndoLog-wrapped tools on MCP servers.
  *
  * @module
  */
 
-export { createUndoLogMcpServer, connectStdio } from "./server.js";
+export {
+  createUndoLogMcpServer,
+  registerUndologMcpTool,
+  connectStdio,
+} from "./server.js";
 export type {
   UndoLogMcpToolRegistration,
   UndoLogMcpServerOptions,
+  McpServerInstance,
 } from "./server.js";
