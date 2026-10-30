@@ -35,6 +35,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       examples: ${{ steps.filter.outputs.examples }}
       infra: ${{ steps.filter.outputs.infra }}
+      fuzz: ${{ steps.filter.outputs.fuzz }}
     steps:
       - uses: actions/checkout@v4
 
@@ -80,6 +81,14 @@ jobs:
             infra:
               - 'infra/**'
               - 'Makefile'
+              - '.github/workflows/ci.yml'
+            fuzz:
+              - 'sdks/undolog-ts/scripts/verify_cross_language_fuzz.sh'
+              - 'sdks/undolog-ts/tests/unit/signature.test.ts'
+              - 'sdks/undolog-ts/src/signature.ts'
+              - 'sdks/undolog-py/undolog_sdk/signature.py'
+              - 'crates/undolog-types/src/effect.rs'
+              - 'services/undolog-proxy/internal/proxy/signature.go'
               - '.github/workflows/ci.yml'
 
   rust:
@@ -271,6 +280,51 @@ jobs:
       - name: Run mock-tool-server tests
         run: python -m pytest infra/mock-tool-server/tests/ -v --no-header
 
+  cross-language-fuzz:
+    needs: changes
+    if: needs.changes.outputs.fuzz == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: sdks/undolog-ts/package-lock.json
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sdks/undolog-py/pyproject.toml
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/undolog-proxy/go.mod
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-key: test
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e sdks/undolog-py blake3
+          (cd sdks/undolog-ts && npm ci && npm run build)
+
+      - name: Run cross-language fuzz verification matrix
+        run: |
+          chmod +x sdks/undolog-ts/scripts/verify_cross_language_fuzz.sh
+          ./sdks/undolog-ts/scripts/verify_cross_language_fuzz.sh /tmp/cross_language_fuzz_stream.json
+
   # Pull request metadata is checked on every pull request. The link check
   # runs only when the documentation itself changed.
   docs:
@@ -384,7 +438,7 @@ jobs:
   # when a change cannot reach them, so this job always runs and fails if
   # any selected job failed or was cancelled.
   check:
-    needs: [changes, rust, rust-test, go, python, www, examples, infra, docs]
+    needs: [changes, rust, rust-test, go, python, www, examples, infra, docs, cross-language-fuzz]
     if: always()
     permissions:
       contents: read
