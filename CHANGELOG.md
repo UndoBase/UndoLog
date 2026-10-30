@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - SDK: added ``registerUndologMcpTool`` in ``@undolog/sdk/mcp`` to
   simplify exposing UndoLog-protected tools on Model Context Protocol
   (MCP) servers.
+- Test: added cross-process canonical JSON fuzz verification matrix in
+  CI validating 5,000 randomized payloads across TypeScript, Python,
+  Go, and Rust runtimes.
 
 ### Changed
 
