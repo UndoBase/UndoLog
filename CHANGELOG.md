@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Test: added cross-process canonical JSON fuzz verification matrix in
   CI validating 5,000 randomized payloads across TypeScript, Python,
   Go, and Rust runtimes.
+- SDK: added ``docsUrl`` property to ``UndoLogError`` classes linking
+  each error code directly to its documentation troubleshooting runbook.
 
 ### Changed
 

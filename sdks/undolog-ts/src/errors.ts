@@ -7,6 +7,27 @@
  * @module
  */
 
+/** Base URL for troubleshooting runbooks. */
+export const ERROR_DOCS_BASE_URL = "https://undolog.dev/docs/troubleshooting/errors";
+
+/**
+ * Constructs the canonical troubleshooting runbook URL for an error code.
+ *
+ * @param code - Machine-readable error code (e.g. "AUTHENTICATION_FAILED").
+ * @returns Formatted URL linking to the error's section anchor.
+ */
+export function formatErrorDocsUrl(code: string): string {
+  if (!code) {
+    return ERROR_DOCS_BASE_URL;
+  }
+  const slug = code
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+  return slug ? `${ERROR_DOCS_BASE_URL}#${slug}` : ERROR_DOCS_BASE_URL;
+}
+
 /**
  * Base class for all UndoLog SDK errors.
  *
@@ -19,13 +40,36 @@ export class UndoLogError extends Error {
   readonly code: string;
   /** Timestamp (epoch ms) when the error was constructed. */
   readonly timestamp: number;
+  /** Direct link to troubleshooting documentation for this error. */
+  readonly docsUrl: string;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, docsUrl?: string) {
     super(message);
     this.name = "UndoLogError";
     this.code = code;
     this.timestamp = Date.now();
+    this.docsUrl = docsUrl ?? formatErrorDocsUrl(code);
     Object.setPrototypeOf(this, new.target.prototype);
+  }
+
+  /**
+   * Serializes error to a JSON-compatible object preserving code,
+   * message, docsUrl, timestamp, name, and any custom properties.
+   */
+  toJSON(): Record<string, unknown> {
+    const serialized: Record<string, unknown> = {
+      name: this.name,
+      code: this.code,
+      message: this.message,
+      docsUrl: this.docsUrl,
+      timestamp: this.timestamp,
+    };
+    for (const [key, value] of Object.entries(this)) {
+      if (!(key in serialized)) {
+        serialized[key] = value;
+      }
+    }
+    return serialized;
   }
 }
 
@@ -51,6 +95,9 @@ export const ErrorCodes = {
   VALIDATION_FAILED: "VALIDATION_FAILED",
 } as const;
 
+/** Union of all recognized UndoLog error codes. */
+export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
+
 /**
  * Authentication or authorization failed.
  *
@@ -61,9 +108,9 @@ export class AuthenticationError extends UndoLogError {
   /** The reason category: "missing", "invalid", "expired". */
   readonly reason: string;
 
-  constructor(reason: string, message?: string) {
+  constructor(reason: string, message?: string, docsUrl?: string) {
     const msg = message ?? `Authentication failed: ${reason}`;
-    super(ErrorCodes.AUTHENTICATION_FAILED, msg);
+    super(ErrorCodes.AUTHENTICATION_FAILED, msg, docsUrl);
     this.name = "AuthenticationError";
     this.reason = reason;
   }
@@ -84,9 +131,15 @@ export class AwaitingApprovalError extends UndoLogError {
   /** Unique approval request identifier. */
   readonly approvalId: string;
 
-  constructor(toolName: string, args: Record<string, unknown>, approvalId: string, message?: string) {
+  constructor(
+    toolName: string,
+    args: Record<string, unknown>,
+    approvalId: string,
+    message?: string,
+    docsUrl?: string
+  ) {
     const msg = message ?? `Tool "${toolName}" requires human approval (id: ${approvalId})`;
-    super(ErrorCodes.AWAITING_APPROVAL, msg);
+    super(ErrorCodes.AWAITING_APPROVAL, msg, docsUrl);
     this.name = "AwaitingApprovalError";
     this.toolName = toolName;
     this.args = args;
@@ -107,9 +160,9 @@ export class CompensationError extends UndoLogError {
   /** The underlying error that caused the failure, if available. */
   readonly cause?: Error;
 
-  constructor(fnName: string, message?: string, cause?: Error) {
+  constructor(fnName: string, message?: string, cause?: Error, docsUrl?: string) {
     const msg = message ?? `Compensation "${fnName}" failed after retries`;
-    super(ErrorCodes.COMPENSATION_FAILED, msg);
+    super(ErrorCodes.COMPENSATION_FAILED, msg, docsUrl);
     this.name = "CompensationError";
     this.fnName = fnName;
     this.cause = cause;
@@ -126,8 +179,8 @@ export class ConfigurationError extends UndoLogError {
   /** The configuration key that triggered the error. */
   readonly key?: string;
 
-  constructor(message: string, key?: string) {
-    super(ErrorCodes.CONFIGURATION_INVALID, message);
+  constructor(message: string, key?: string, docsUrl?: string) {
+    super(ErrorCodes.CONFIGURATION_INVALID, message, docsUrl);
     this.name = "ConfigurationError";
     this.key = key;
   }
@@ -147,9 +200,14 @@ export class EffectLogError extends UndoLogError {
    * @param operation - The storage backend operation that failed.
    * @param message - Human-readable error message.
    * @param code - Override the error code (used by subclasses).
+   * @param docsUrl - Optional troubleshooting runbook URL override.
    */
-  constructor(operation: string, message?: string, code?: string) {
-    super(code ?? ErrorCodes.EFFECT_LOG_FAILED, message ?? `Effect log ${operation} failed`);
+  constructor(operation: string, message?: string, code?: string, docsUrl?: string) {
+    super(
+      code ?? ErrorCodes.EFFECT_LOG_FAILED,
+      message ?? `Effect log ${operation} failed`,
+      docsUrl
+    );
     this.name = "EffectLogError";
     this.operation = operation;
   }
@@ -168,10 +226,16 @@ export class EffectLogConcurrencyError extends EffectLogError {
   /** The actual version found in storage. */
   readonly actualVersion: number;
 
-  constructor(operation: string, expectedVersion: number, actualVersion: number, message?: string) {
+  constructor(
+    operation: string,
+    expectedVersion: number,
+    actualVersion: number,
+    message?: string,
+    docsUrl?: string
+  ) {
     const msg =
       message ?? `Effect log ${operation} version mismatch: expected ${expectedVersion}, got ${actualVersion}`;
-    super(operation, msg, ErrorCodes.EFFECT_LOG_CONCURRENCY);
+    super(operation, msg, ErrorCodes.EFFECT_LOG_CONCURRENCY, docsUrl);
     this.name = "EffectLogConcurrencyError";
     this.expectedVersion = expectedVersion;
     this.actualVersion = actualVersion;
@@ -193,8 +257,9 @@ export class MissingSessionError extends UndoLogError {
   /**
    * @param messageOrToolName - Optional error message or tool name.
    * @param toolName - Optional tool name when message is provided as first argument.
+   * @param docsUrl - Optional troubleshooting runbook URL override.
    */
-  constructor(messageOrToolName?: string, toolName?: string) {
+  constructor(messageOrToolName?: string, toolName?: string, docsUrl?: string) {
     let resolvedMessage: string;
     let resolvedToolName: string | undefined;
 
@@ -216,7 +281,7 @@ export class MissingSessionError extends UndoLogError {
       resolvedToolName = undefined;
     }
 
-    super(ErrorCodes.MISSING_SESSION, resolvedMessage);
+    super(ErrorCodes.MISSING_SESSION, resolvedMessage, docsUrl);
     this.name = "MissingSessionError";
     this.toolName = resolvedToolName;
   }
@@ -239,9 +304,9 @@ export class NotFoundError extends UndoLogError {
   /** The identifier of the resource that was not found. */
   readonly resourceId: string;
 
-  constructor(resourceType: string, resourceId: string, message?: string) {
+  constructor(resourceType: string, resourceId: string, message?: string, docsUrl?: string) {
     const msg = message ?? `${resourceType} "${resourceId}" not found`;
-    super(ErrorCodes.NOT_FOUND, msg);
+    super(ErrorCodes.NOT_FOUND, msg, docsUrl);
     this.name = "NotFoundError";
     this.resourceType = resourceType;
     this.resourceId = resourceId;
@@ -261,9 +326,9 @@ export class SerializationError extends UndoLogError {
   /** The underlying error, if available. */
   readonly cause?: Error;
 
-  constructor(format: string, message?: string, cause?: Error) {
+  constructor(format: string, message?: string, cause?: Error, docsUrl?: string) {
     const msg = message ?? `Serialization failed for format "${format}"`;
-    super(ErrorCodes.SERIALIZATION_FAILED, msg);
+    super(ErrorCodes.SERIALIZATION_FAILED, msg, docsUrl);
     this.name = "SerializationError";
     this.format = format;
     this.cause = cause;
@@ -282,9 +347,9 @@ export class TimeoutError extends UndoLogError {
   /** The timeout duration in milliseconds. */
   readonly timeoutMs: number;
 
-  constructor(operation: string, timeoutMs: number, message?: string) {
+  constructor(operation: string, timeoutMs: number, message?: string, docsUrl?: string) {
     const msg = message ?? `Operation "${operation}" timed out after ${timeoutMs}ms`;
-    super(ErrorCodes.TIMEOUT, msg);
+    super(ErrorCodes.TIMEOUT, msg, docsUrl);
     this.name = "TimeoutError";
     this.operation = operation;
     this.timeoutMs = timeoutMs;
@@ -304,9 +369,9 @@ export class ToolRegistrationError extends UndoLogError {
   /** The specific reason for the failure. */
   readonly reason: string;
 
-  constructor(toolName: string, reason: string, message?: string) {
+  constructor(toolName: string, reason: string, message?: string, docsUrl?: string) {
     const msg = message ?? `Cannot register tool "${toolName}": ${reason}`;
-    super(ErrorCodes.TOOL_REGISTRATION_FAILED, msg);
+    super(ErrorCodes.TOOL_REGISTRATION_FAILED, msg, docsUrl);
     this.name = "ToolRegistrationError";
     this.toolName = toolName;
     this.reason = reason;
@@ -326,8 +391,8 @@ export class ValidationError extends UndoLogError {
   /** Human-readable constraint description. */
   readonly constraint?: string;
 
-  constructor(message: string, field?: string, constraint?: string) {
-    super(ErrorCodes.VALIDATION_FAILED, message);
+  constructor(message: string, field?: string, constraint?: string, docsUrl?: string) {
+    super(ErrorCodes.VALIDATION_FAILED, message, docsUrl);
     this.name = "ValidationError";
     this.field = field;
     this.constraint = constraint;
@@ -345,9 +410,9 @@ export class PermissionError extends UndoLogError {
   /** The permission that was required. */
   readonly permission: string;
 
-  constructor(permission: string, message?: string) {
+  constructor(permission: string, message?: string, docsUrl?: string) {
     const msg = message ?? `Permission denied: ${permission}`;
-    super(ErrorCodes.PERMISSION_DENIED, msg);
+    super(ErrorCodes.PERMISSION_DENIED, msg, docsUrl);
     this.name = "PermissionError";
     this.permission = permission;
   }
@@ -364,9 +429,9 @@ export class ToolNotRegisteredError extends UndoLogError {
   /** The tool name that was not found. */
   readonly toolName: string;
 
-  constructor(toolName: string, message?: string) {
+  constructor(toolName: string, message?: string, docsUrl?: string) {
     const msg = message ?? `Tool "${toolName}" is not registered`;
-    super(ErrorCodes.TOOL_NOT_REGISTERED, msg);
+    super(ErrorCodes.TOOL_NOT_REGISTERED, msg, docsUrl);
     this.name = "ToolNotRegisteredError";
     this.toolName = toolName;
   }
@@ -385,9 +450,14 @@ export class InvalidStateTransitionError extends UndoLogError {
   /** The attempted target state. */
   readonly targetState: string;
 
-  constructor(currentState: string, targetState: string, message?: string) {
+  constructor(
+    currentState: string,
+    targetState: string,
+    message?: string,
+    docsUrl?: string
+  ) {
     const msg = message ?? `Cannot transition from "${currentState}" to "${targetState}"`;
-    super(ErrorCodes.INVALID_STATE_TRANSITION, msg);
+    super(ErrorCodes.INVALID_STATE_TRANSITION, msg, docsUrl);
     this.name = "InvalidStateTransitionError";
     this.currentState = currentState;
     this.targetState = targetState;
@@ -405,9 +475,9 @@ export class ApprovalNotFoundError extends UndoLogError {
   /** The approval ID that was not found. */
   readonly approvalId: string;
 
-  constructor(approvalId: string, message?: string) {
+  constructor(approvalId: string, message?: string, docsUrl?: string) {
     const msg = message ?? `Approval "${approvalId}" not found`;
-    super(ErrorCodes.APPROVAL_NOT_FOUND, msg);
+    super(ErrorCodes.APPROVAL_NOT_FOUND, msg, docsUrl);
     this.name = "ApprovalNotFoundError";
     this.approvalId = approvalId;
   }
@@ -424,9 +494,9 @@ export class RateLimitError extends UndoLogError {
   /** The number of seconds to wait before retrying. */
   readonly retryAfterSeconds?: number;
 
-  constructor(message?: string, retryAfterSeconds?: number) {
+  constructor(message?: string, retryAfterSeconds?: number, docsUrl?: string) {
     const msg = message ?? "Rate limit exceeded";
-    super(ErrorCodes.RATE_LIMITED, msg);
+    super(ErrorCodes.RATE_LIMITED, msg, docsUrl);
     this.name = "RateLimitError";
     this.retryAfterSeconds = retryAfterSeconds;
   }
@@ -442,9 +512,9 @@ export class ServerError extends UndoLogError {
   /** The HTTP status code from the server. */
   readonly statusCode: number;
 
-  constructor(statusCode: number, message?: string) {
+  constructor(statusCode: number, message?: string, docsUrl?: string) {
     const msg = message ?? `Server error (${statusCode})`;
-    super(ErrorCodes.SERVER_ERROR, msg);
+    super(ErrorCodes.SERVER_ERROR, msg, docsUrl);
     this.name = "ServerError";
     this.statusCode = statusCode;
   }
