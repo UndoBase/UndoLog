@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
     "httpx>=0.27.0",
     "blake3>=0.4.0",
+    "certifi>=2026.10.19",
     "typing_extensions>=4.0; python_version < '3.11'",
 ]
 
