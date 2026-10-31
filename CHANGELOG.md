@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- Security: upgraded @hono/node-server to 2.1.3 in TypeScript SDK,
+  resolving serveStatic middleware authorization bypass vulnerability.
 - Security: upgraded fast-uri in TypeScript SDK overrides, resolving
   URI scheme spoofing, host confusion, and relative path traversal risks.
 - Security: upgraded Next.js and sharp in apps/www, resolving Windows
