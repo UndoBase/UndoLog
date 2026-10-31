@@ -164,7 +164,7 @@
     "uuid": "11.1.1",
     "@hono/node-server": "2.0.10",
     "esbuild": "0.28.1",
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "ip-address": "10.7.4",
     "hono": "4.13.13",
     "postcss": "8.5.27",
