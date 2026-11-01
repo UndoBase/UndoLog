@@ -25,6 +25,7 @@ from undolog_sdk.context import run_with_session
 from undolog_sdk.errors import (
     AuthenticationError,
     ConnectionError,
+    MissingSessionError,
     ServerError,
     TimeoutError,
 )
@@ -436,15 +437,34 @@ class TestAwaitingApproval:
 
 
 class TestSessionRequired:
-    """Missing session parameter raises RuntimeError."""
+    """Missing session parameter raises MissingSessionError."""
 
     async def test_missing_session_raises(self) -> None:
         @undolog_tool(tier=ToolTier.SAFE)
         async def needs_session() -> str:
             return "ok"
 
-        with pytest.raises(RuntimeError, match="requires a session"):
+        with pytest.raises(MissingSessionError) as exc_info:
             await needs_session()
+
+        assert exc_info.value.tool_name == "needs_session"
+        assert "needs_session" in str(exc_info.value)
+        assert "UndoLogSession" in str(exc_info.value)
+        assert isinstance(exc_info.value, RuntimeError)
+
+    async def test_missing_session_compensable_tool_raises(self) -> None:
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_action"),
+        )
+        async def compensable_tool() -> str:
+            return "ok"
+
+        with pytest.raises(MissingSessionError) as exc_info:
+            await compensable_tool()
+
+        assert exc_info.value.tool_name == "compensable_tool"
+        assert "compensable_tool" in str(exc_info.value)
 
     async def test_custom_session_param(self, session: UndoLogSession) -> None:
         @undolog_tool(tier=ToolTier.SAFE, session_param="ctx")
@@ -453,6 +473,17 @@ class TestSessionRequired:
 
         result = await custom_param(ctx=session)
         assert result == "ok"
+
+    async def test_missing_session_with_custom_param_raises(self) -> None:
+        @undolog_tool(tier=ToolTier.SAFE, session_param="custom_ctx")
+        async def needs_custom() -> str:
+            return "ok"
+
+        with pytest.raises(MissingSessionError) as exc_info:
+            await needs_custom()
+
+        assert exc_info.value.tool_name == "needs_custom"
+        assert "custom_ctx" in str(exc_info.value)
 
 
 # ── Network error simulation ──────────────────────────────────────────────

@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- SDK: added missing-session runtime guard raising ``MissingSessionError``
+  and synchronized step counter for concurrent calls in Python SDK.
 - SDK: added missing-session runtime guard throwing ``MissingSessionError``
   and synchronized step counter for concurrent tool invocations.
 
