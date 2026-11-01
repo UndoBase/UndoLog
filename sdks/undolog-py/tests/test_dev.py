@@ -17,6 +17,8 @@ import logging
 import re
 import socket
 import sqlite3
+import subprocess
+import sys
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, closing, suppress
 from pathlib import Path
@@ -639,7 +641,7 @@ class TestServerLifecycle:
             )
         }
         assert DEFAULT_HOST in resolved
-        assert DEFAULT_DB_PATH == "undolog-dev.db"
+        assert DEFAULT_DB_PATH == "./.undolog.db"
 
     async def test_url_reports_the_bound_port(self, tmp_path: Path) -> None:
         picked = DevServer(port=0, db_path=str(tmp_path / "ephemeral.db"))
@@ -1232,6 +1234,36 @@ class TestApprovals:
         assert response.status_code == 200
         assert response.json()["status"] == "executed"
 
+    async def test_auto_approve_approves_irreversible_call_immediately(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        server = DevServer(
+            port=0,
+            db_path=str(tmp_path / "auto.db"),
+            irreversible_patterns=("delete_*",),
+            auto_approve=True,
+        )
+        server.start()
+        try:
+            assert server.auto_approve is True
+            async with _http(server) as client:
+                response = await client.post(
+                    "/mcp/tool_call",
+                    json=_tool_call_body(tool_name="delete_database"),
+                )
+            assert response.status_code == 200
+            body = response.json()
+            assert body["status"] == "executed"
+            assert body["effect_id"]
+
+            approvals = server.journal.list_approvals(state="approved")
+            assert len(approvals) == 1
+            assert approvals[0]["tool_name"] == "delete_database"
+            assert approvals[0]["status"] == "approved"
+        finally:
+            server.stop()
+
     async def test_a_held_call_reports_the_same_approval(
         self,
         gated_server: DevServer,
@@ -1771,7 +1803,72 @@ class TestCommandLine:
         assert args.host == DEFAULT_HOST
         assert args.port == DEFAULT_PORT
         assert args.db == DEFAULT_DB_PATH
+        assert args.db == "./.undolog.db"
         assert args.irreversible == []
+        assert args.auto_approve is False
+
+    def test_auto_approve_flag(self) -> None:
+        args = build_parser().parse_args(["dev", "--auto-approve"])
+        assert args.auto_approve is True
+
+    def test_main_defaults_to_dev_command(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        holder, port = _occupied_port()
+        try:
+            with caplog.at_level(logging.ERROR, logger="undolog_sdk.dev"):
+                exit_code = main(
+                    ["--port", str(port), "--db", str(tmp_path / "default_dev.db")]
+                )
+        finally:
+            holder.close()
+        assert exit_code == 1
+        assert any("cannot listen on" in record.message for record in caplog.records)
+
+    def test_direct_module_execution(self, tmp_path: Path) -> None:
+        holder, port = _occupied_port()
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "undolog_sdk.dev",
+                    "--port",
+                    str(port),
+                    "--db",
+                    str(tmp_path / "occupied.db"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={"PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+            )
+        finally:
+            holder.close()
+        assert result.returncode == 1
+        assert "cannot listen on" in result.stderr
+
+    def test_main_startup_logs_url_and_db_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(DevServer, "serve_forever", lambda self: None)
+        db_file = str(tmp_path / "logged.db")
+        with caplog.at_level(logging.INFO, logger="undolog_sdk.dev"):
+            exit_code = main(["--port", "0", "--db", db_file, "--auto-approve"])
+        assert exit_code == 0
+        logged = [
+            record.message
+            for record in caplog.records
+            if "undolog dev listening on" in record.message
+        ]
+        assert len(logged) == 1
+        assert "journal: " + db_file in logged[0]
+        assert "auto_approve: True" in logged[0]
 
     def test_irreversible_patterns_accumulate(self) -> None:
         args = build_parser().parse_args(
