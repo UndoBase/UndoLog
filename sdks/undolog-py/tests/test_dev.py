@@ -21,6 +21,8 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, closing, suppress
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -120,6 +122,7 @@ async def _sdk(server: DevServer) -> AsyncIterator[UndoLogClient]:
 async def _event_stream(
     client: httpx.AsyncClient,
     expected: int,
+    path: str = "/events",
 ) -> AsyncIterator[list[dict[str, Any]]]:
     """Collect Server-Sent Events while the body of the block runs.
 
@@ -129,6 +132,7 @@ async def _event_stream(
     Parameters:
         client: HTTP client to stream with.
         expected: Number of events to collect before finishing.
+        path: Path and optional query parameters to request.
 
     Yields:
         A list that fills with decoded event envelopes.
@@ -137,7 +141,7 @@ async def _event_stream(
     connected = asyncio.Event()
 
     async def _reader() -> None:
-        async with client.stream("GET", "/events") as response:
+        async with client.stream("GET", path) as response:
             assert response.status_code == 200
             connected.set()
             async for line in response.aiter_lines():
@@ -611,6 +615,78 @@ class TestDevJournal:
         storage.close()
         storage.close()
 
+    def test_sqlite_journal_columns_and_views_mirror_production(
+        self, journal: DevJournal
+    ) -> None:
+        effect_id = journal.create_effect(
+            org_id=ORG,
+            session_id=SESSION_ID,
+            tool_name="test_tool",
+            step_index=1,
+            args={"key": "val"},
+            signature="sig_prod_1",
+            status="executing",
+            tool_version="2.1.0",
+            tier="compensable",
+        )
+        assert effect_id is not None
+
+        with closing(journal._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM undolog_effect_log WHERE effect_id = ?",
+                (effect_id,),
+            ).fetchone()
+            assert row is not None
+            assert row["org_id"] == ORG
+            assert row["session_id"] == SESSION_ID
+            assert row["tool_name"] == "test_tool"
+            assert row["tool_version"] == "2.1.0"
+            assert row["tier"] == "compensable"
+            assert row["step_index"] == 1
+            assert row["call_signature"] == "sig_prod_1"
+            assert json.loads(row["args_snapshot"]) == {"key": "val"}
+            assert row["state"] == "executing"
+            assert row["replay_count"] == 0
+            assert row["executed_at"].endswith("Z")
+
+            cur = conn.execute("PRAGMA table_info(effects)")
+            cols = {r["name"] for r in cur.fetchall()}
+            assert {
+                "tool_version",
+                "tier",
+                "replay_count",
+                "last_replayed_at",
+                "approval_id",
+            }.issubset(cols)
+
+    def test_sqlite_replay_count_and_status_transitions(
+        self, journal: DevJournal
+    ) -> None:
+        effect_id = journal.create_effect(
+            org_id=ORG,
+            session_id=SESSION_ID,
+            tool_name="replay_tool",
+            step_index=1,
+            args={"x": 1},
+            signature="sig_replay_1",
+            status="executing",
+        )
+        assert effect_id is not None
+
+        assert journal.record_commit(effect_id, {"success": True}) is True
+        row = journal.find_live_effect("sig_replay_1")
+        assert row is not None
+        assert row["status"] == "committed"
+        assert row["replay_count"] == 0
+        assert row["last_replayed_at"] is None
+
+        assert journal.record_replay(effect_id) is True
+        row = journal.find_live_effect("sig_replay_1")
+        assert row is not None
+        assert row["replay_count"] == 1
+        assert row["last_replayed_at"] is not None
+        assert row["last_replayed_at"].endswith("Z")
+
 
 # ── lifecycle ──────────────────────────────────────────────────────────────
 
@@ -714,7 +790,7 @@ class TestRouting:
 
         body = response.json()
         assert response.headers["X-Request-Id"] == body["request_id"]
-        assert body["timestamp"].endswith("+00:00")
+        assert body["timestamp"].endswith("Z")
 
     async def test_a_caller_supplied_request_id_is_ignored(
         self,
@@ -1481,7 +1557,7 @@ class TestEventStream:
         assert intercepted["session_id"] == SESSION_ID
         assert intercepted["payload"] == {"stage": "intercepted"}
         assert committed["effect_id"] == first.json()["effect_id"]
-        assert committed["timestamp"].endswith("+00:00")
+        assert committed["timestamp"].endswith("Z")
 
     async def test_a_replay_is_reported(self, server: DevServer) -> None:
         async with _http(server) as client:
@@ -1614,6 +1690,108 @@ class TestEventStream:
                 await task
 
         assert seen and seen[0]["type"] == "effect_intercepted"
+
+    async def test_standard_event_aliases_streaming(
+        self, gated_server: DevServer
+    ) -> None:
+        async with _http(gated_server) as client:
+            async with _event_stream(
+                client, expected=2, path="/events?aliases=true"
+            ) as events:
+                res = await client.post("/mcp/tool_call", json=_tool_call_body())
+                eff_id = res.json()["effect_id"]
+                await client.put(
+                    f"/effects/{eff_id}/commit",
+                    json={"session_id": SESSION_ID, "result": {"done": True}},
+                )
+            assert [e["type"] for e in events] == [
+                "effect_created",
+                "effect_committed",
+            ]
+
+            first_fail = await client.post(
+                "/mcp/tool_call",
+                json=_tool_call_body(step_index=2),
+            )
+            fail_id = first_fail.json()["effect_id"]
+            async with _event_stream(
+                client, expected=1, path="/events?aliases=true"
+            ) as events:
+                await client.put(
+                    f"/effects/{fail_id}/fail",
+                    json={"session_id": SESSION_ID, "error": "timeout"},
+                )
+            assert events[0]["type"] == "effect_failed"
+
+            async with _event_stream(
+                client, expected=2, path="/events?aliases=true"
+            ) as events:
+                held = await client.post(
+                    "/mcp/tool_call",
+                    json=_tool_call_body(step_index=3, tool_name="delete_database"),
+                )
+            assert events[-1]["type"] == "approval_requested"
+            appr_id = held.json()["approval_id"]
+
+            async with _event_stream(
+                client, expected=1, path="/events?aliases=true"
+            ) as events:
+                await client.post(f"/approvals/{appr_id}/approve", json={})
+            assert events[0]["type"] == "approval_resolved"
+
+    async def test_json_event_payload_keys_and_timestamps_match_proxy(
+        self, server: DevServer
+    ) -> None:
+        async with _http(server) as client:
+            async with _event_stream(client, expected=2) as events:
+                call = await client.post("/mcp/tool_call", json=_tool_call_body())
+                eff_id = call.json()["effect_id"]
+                await client.put(
+                    f"/effects/{eff_id}/commit",
+                    json={"session_id": SESSION_ID, "result": {"ok": 1}},
+                )
+
+        for event in events:
+            assert "type" in event
+            assert "timestamp" in event
+            assert "org_id" in event
+            assert event["timestamp"].endswith("Z")
+            datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00"))
+
+    async def test_dashboard_event_stream_consumption(self, server: DevServer) -> None:
+        @dataclass
+        class DashboardEvent:
+            type: str
+            timestamp: str
+            org_id: str
+            session_id: str = ""
+            effect_id: str = ""
+            approval_id: str = ""
+            payload: dict[str, Any] = field(default_factory=dict)
+
+        async with _http(server) as client:
+            async with _event_stream(client, expected=2) as raw_events:
+                res = await client.post("/mcp/tool_call", json=_tool_call_body())
+                await client.put(
+                    f"/effects/{res.json()['effect_id']}/commit",
+                    json={"session_id": SESSION_ID, "result": {}},
+                )
+
+        parsed_events = [
+            DashboardEvent(
+                type=item["type"],
+                timestamp=item["timestamp"],
+                org_id=item["org_id"],
+                session_id=item.get("session_id", ""),
+                effect_id=item.get("effect_id", ""),
+                approval_id=item.get("approval_id", ""),
+                payload=item.get("payload", {}),
+            )
+            for item in raw_events
+        ]
+        assert len(parsed_events) == 2
+        assert parsed_events[0].type == "effect_intercepted"
+        assert parsed_events[1].type == "effect_committed"
 
 
 # ── decorator lifecycle ────────────────────────────────────────────────────

@@ -120,25 +120,50 @@ _APPROVAL_PENDING = "pending"
 _APPROVAL_APPROVED = "approved"
 _APPROVAL_REJECTED = "rejected"
 
-_EFFECT_INTERCEPTED = "effect_intercepted"
-_EFFECT_COMMITTED_EVENT = "effect_committed"
-_EFFECT_REPLAYED = "effect_replayed"
-_EFFECT_FAILED_EVENT = "effect_failed"
-_APPROVAL_REQUIRED = "approval_required"
-_APPROVAL_APPROVED_EVENT = "approval_approved"
-_APPROVAL_REJECTED_EVENT = "approval_rejected"
+# Standard Go proxy SSE event names
+EVENT_EFFECT_INTERCEPTED = "effect_intercepted"
+EVENT_EFFECT_COMMITTED = "effect_committed"
+EVENT_EFFECT_REPLAYED = "effect_replayed"
+EVENT_EFFECT_FAILED = "effect_failed"
+EVENT_APPROVAL_REQUIRED = "approval_required"
+EVENT_APPROVAL_APPROVED = "approval_approved"
+EVENT_APPROVAL_REJECTED = "approval_rejected"
+
+# Compatible aliases for dashboard event stream consumers
+EVENT_EFFECT_CREATED = "effect_created"
+EVENT_APPROVAL_REQUESTED = "approval_requested"
+EVENT_APPROVAL_RESOLVED = "approval_resolved"
+
+STANDARD_EVENT_ALIASES: dict[str, str] = {
+    EVENT_EFFECT_INTERCEPTED: EVENT_EFFECT_CREATED,
+    EVENT_APPROVAL_REQUIRED: EVENT_APPROVAL_REQUESTED,
+    EVENT_APPROVAL_APPROVED: EVENT_APPROVAL_RESOLVED,
+    EVENT_APPROVAL_REJECTED: EVENT_APPROVAL_RESOLVED,
+}
+
+_EFFECT_INTERCEPTED = EVENT_EFFECT_INTERCEPTED
+_EFFECT_COMMITTED_EVENT = EVENT_EFFECT_COMMITTED
+_EFFECT_REPLAYED = EVENT_EFFECT_REPLAYED
+_EFFECT_FAILED_EVENT = EVENT_EFFECT_FAILED
+_APPROVAL_REQUIRED = EVENT_APPROVAL_REQUIRED
+_APPROVAL_APPROVED_EVENT = EVENT_APPROVAL_APPROVED
+_APPROVAL_REJECTED_EVENT = EVENT_APPROVAL_REJECTED
 
 _APPROVAL_ACTION_RE = re.compile(r"^/approvals/([^/]+)/(approve|reject)$")
 _EFFECT_ACTION_RE = re.compile(r"^/effects/([^/]+)/(commit|fail)$")
 
 
 def _utc_now() -> str:
-    """Return the current UTC time in RFC 3339 form.
+    """Return the current UTC time in RFC 3339 form with Z suffix.
 
     Returns:
-        Timestamp such as ``2026-10-09T08:41:12.512004+00:00``.
+        Timestamp such as ``2026-10-09T08:41:12.512004Z``.
     """
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _mock_tool_result(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -239,7 +264,7 @@ class DevJournal:
         return conn
 
     def _create_schema(self) -> None:
-        """Create the tables and indexes, safely re-run on every start.
+        """Create the tables, views, and indexes, safely re-run on every start.
 
         Every statement is ``IF NOT EXISTS``, so an existing journal is
         left untouched and the server can be started repeatedly against
@@ -253,12 +278,17 @@ class DevJournal:
                     org_id      TEXT NOT NULL,
                     session_id  TEXT NOT NULL,
                     tool_name   TEXT NOT NULL,
+                    tool_version TEXT NOT NULL DEFAULT '1.0.0',
+                    tier        TEXT NOT NULL DEFAULT 'compensable',
                     step_index  INTEGER NOT NULL,
                     signature   TEXT NOT NULL,
                     status      TEXT NOT NULL,
                     args        TEXT NOT NULL,
                     result      TEXT,
                     error       TEXT,
+                    replay_count INTEGER NOT NULL DEFAULT 0,
+                    last_replayed_at TEXT,
+                    approval_id TEXT,
                     created_at  TEXT NOT NULL,
                     updated_at  TEXT NOT NULL
                 );
@@ -285,8 +315,71 @@ class DevJournal:
 
                 CREATE INDEX IF NOT EXISTS approvals_status_idx
                     ON approvals (status, created_at);
+
+                CREATE VIEW IF NOT EXISTS undolog_effect_log AS
+                SELECT
+                    id AS effect_id,
+                    org_id,
+                    session_id,
+                    NULL AS tool_id,
+                    signature AS call_signature,
+                    tool_name,
+                    tool_version,
+                    tier,
+                    step_index,
+                    args AS args_snapshot,
+                    result AS result_snapshot,
+                    status AS state,
+                    NULL AS compensation_args,
+                    created_at AS executed_at,
+                    updated_at AS committed_at,
+                    NULL AS compensated_at,
+                    replay_count,
+                    last_replayed_at,
+                    approval_id AS approval_request_id
+                FROM effects;
+
+                CREATE VIEW IF NOT EXISTS undolog_approval_requests AS
+                SELECT
+                    id AS approval_request_id,
+                    org_id,
+                    session_id,
+                    effect_id,
+                    tool_name,
+                    'irreversible tool execution requires approval' AS irreversibility_reason,
+                    '[]' AS risk_tags,
+                    NULL AS estimated_impact,
+                    args AS proposed_args,
+                    '{}' AS agent_context,
+                    status AS state,
+                    created_at AS timeout_at,
+                    0 AS auto_approve_on_timeout,
+                    resolved_at,
+                    CASE WHEN status = 'approved' THEN 'user' ELSE NULL END AS resolved_by,
+                    CASE WHEN status = 'approved' THEN args ELSE NULL END AS approved_args,
+                    created_at
+                FROM approvals;
                 """
             )
+            cursor = conn.execute("PRAGMA table_info(effects)")
+            columns = {row["name"] for row in cursor.fetchall()}
+            if columns and "tool_version" not in columns:
+                conn.execute(
+                    "ALTER TABLE effects ADD COLUMN tool_version TEXT NOT NULL DEFAULT '1.0.0'"
+                )
+            if columns and "tier" not in columns:
+                conn.execute(
+                    "ALTER TABLE effects ADD COLUMN tier TEXT NOT NULL DEFAULT 'compensable'"
+                )
+            if columns and "replay_count" not in columns:
+                conn.execute(
+                    "ALTER TABLE effects ADD COLUMN replay_count INTEGER NOT NULL DEFAULT 0"
+                )
+            if columns and "last_replayed_at" not in columns:
+                conn.execute("ALTER TABLE effects ADD COLUMN last_replayed_at TEXT")
+            if columns and "approval_id" not in columns:
+                conn.execute("ALTER TABLE effects ADD COLUMN approval_id TEXT")
+            conn.commit()
 
     def create_effect(
         self,
@@ -299,6 +392,8 @@ class DevJournal:
         signature: str,
         status: str,
         approval_id: str | None = None,
+        tool_version: str = "1.0.0",
+        tier: str | None = None,
     ) -> str | None:
         """Journal a new call, optionally with its approval request.
 
@@ -318,6 +413,8 @@ class DevJournal:
             status: Initial status of the effect.
             approval_id: Identifier of the approval request to create
                 alongside the effect, for a call that must wait.
+            tool_version: Tool semantic version string.
+            tier: Reversibility tier ('safe', 'compensable', 'irreversible').
 
         Returns:
             The new effect identifier, or ``None`` when a live effect
@@ -325,24 +422,31 @@ class DevJournal:
         """
         effect_id = str(uuid.uuid4())
         created_at = _utc_now()
+        resolved_tier = tier or (
+            "irreversible" if status == _EFFECT_AWAITING_APPROVAL else "compensable"
+        )
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO effects (
-                    id, org_id, session_id, tool_name, step_index, signature,
-                    status, args, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, org_id, session_id, tool_name, tool_version, tier,
+                    step_index, signature, status, args, approval_id,
+                    replay_count, last_replayed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
                 """,
                 (
                     effect_id,
                     org_id,
                     session_id,
                     tool_name,
+                    tool_version,
+                    resolved_tier,
                     step_index,
                     signature,
                     status,
                     json.dumps(args),
+                    approval_id,
                     created_at,
                     created_at,
                 ),
@@ -418,6 +522,30 @@ class DevJournal:
         if updated:
             log.debug("effect_committed effect_id=%s", effect_id)
         return updated
+
+    def record_replay(self, effect_id: str) -> bool:
+        """Increment replay count and record timestamp for a replayed effect.
+
+        Parameters:
+            effect_id: Effect being replayed.
+
+        Returns:
+            ``True`` when the effect was found and updated.
+        """
+        now = _utc_now()
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE effects
+                SET replay_count = replay_count + 1,
+                    last_replayed_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, effect_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
     def record_fail(self, effect_id: str, error: str) -> bool:
         """Mark an effect failed, freeing its signature for a retry.
@@ -638,17 +766,17 @@ class _EventBroadcaster:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._subscribers: set[queue.Queue[str | None]] = set()
+        self._subscribers: set[queue.Queue[dict[str, Any] | None]] = set()
         self._closed = False
 
-    def subscribe(self) -> queue.Queue[str | None]:
+    def subscribe(self) -> queue.Queue[dict[str, Any] | None]:
         """Register a new subscriber.
 
         Returns:
-            The queue that will receive formatted event frames. A
-            ``None`` frame means the server is shutting down.
+            The queue that will receive event envelopes. A
+            ``None`` envelope means the server is shutting down.
         """
-        subscription: queue.Queue[str | None] = queue.Queue(_SSE_QUEUE_SIZE)
+        subscription: queue.Queue[dict[str, Any] | None] = queue.Queue(_SSE_QUEUE_SIZE)
         with self._lock:
             if self._closed:
                 subscription.put(None)
@@ -656,7 +784,7 @@ class _EventBroadcaster:
                 self._subscribers.add(subscription)
         return subscription
 
-    def unsubscribe(self, subscription: queue.Queue[str | None]) -> None:
+    def unsubscribe(self, subscription: queue.Queue[dict[str, Any] | None]) -> None:
         """Remove a subscriber.
 
         Parameters:
@@ -665,18 +793,17 @@ class _EventBroadcaster:
         with self._lock:
             self._subscribers.discard(subscription)
 
-    def emit(self, frame: str) -> None:
-        """Send one formatted event frame to every subscriber.
+    def emit(self, envelope: dict[str, Any]) -> None:
+        """Send one event envelope to every subscriber.
 
         Parameters:
-            frame: Complete Server-Sent Events frame, including the
-                trailing blank line.
+            envelope: Complete event envelope dictionary.
         """
         with self._lock:
             subscribers = tuple(self._subscribers)
         for subscription in subscribers:
             try:
-                subscription.put_nowait(frame)
+                subscription.put_nowait(envelope)
             except queue.Full:
                 log.debug("dropping event for a full subscriber queue")
 
@@ -690,7 +817,7 @@ class _EventBroadcaster:
             subscription.put(None)
 
 
-def _format_sse_frame(envelope: dict[str, Any]) -> str:
+def _format_sse_frame(envelope: dict[str, Any], alias: bool = False) -> str:
     """Format one event as a Server-Sent Events frame.
 
     The frame matches the proxy's wire format: an ``event`` line naming
@@ -699,15 +826,19 @@ def _format_sse_frame(envelope: dict[str, Any]) -> str:
 
     Parameters:
         envelope: Event envelope with at least a ``type`` key.
+        alias: When ``True``, translates event types into standard
+            compatible aliases (for example ``effect_created``).
 
     Returns:
         A complete frame terminated by a blank line.
     """
-    return (
-        f"event: {envelope['type']}\n"
-        f"id: {time.time_ns()}\n"
-        f"data: {json.dumps(envelope)}\n\n"
-    )
+    evt_type = envelope["type"]
+    if alias and evt_type in STANDARD_EVENT_ALIASES:
+        evt_type = STANDARD_EVENT_ALIASES[evt_type]
+        aliased_envelope = dict(envelope)
+        aliased_envelope["type"] = evt_type
+        envelope = aliased_envelope
+    return f"event: {evt_type}\nid: {time.time_ns()}\ndata: {json.dumps(envelope)}\n\n"
 
 
 class _RequestError(Exception):
@@ -854,7 +985,7 @@ class _DevHandler(BaseHTTPRequestHandler):
                 self._handle_health()
             elif path == "/events":
                 self._require_method("GET")
-                self._handle_events()
+                self._handle_events(parsed.query)
             elif path == "/approvals":
                 self._require_method("GET")
                 self._handle_list_approvals(parsed.query)
@@ -1186,14 +1317,20 @@ class _DevHandler(BaseHTTPRequestHandler):
             envelope["approval_id"] = approval_id
         if payload is not None:
             envelope["payload"] = payload
-        self.server.broadcaster.emit(_format_sse_frame(envelope))
+        self.server.broadcaster.emit(envelope)
 
     def _handle_health(self) -> None:
         """Report that the local server is listening."""
         self._send_json(200, {"status": "ok", "service": "undolog-dev"})
 
-    def _handle_events(self) -> None:
+    def _handle_events(self, query: str = "") -> None:
         """Stream lifecycle events until the client disconnects."""
+        params = parse_qs(query)
+        use_aliases = (
+            params.get("aliases", ["false"])[0].lower() in ("true", "1")
+            or params.get("naming", ["proxy"])[0].lower() in ("standard", "aliases")
+            or self.headers.get("X-Event-Naming", "").lower() in ("standard", "aliases")
+        )
         subscription = self.server.broadcaster.subscribe()
         try:
             self.send_response(200)
@@ -1204,13 +1341,14 @@ class _DevHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             while True:
                 try:
-                    frame = subscription.get(timeout=_SSE_HEARTBEAT_SECONDS)
+                    envelope = subscription.get(timeout=_SSE_HEARTBEAT_SECONDS)
                 except queue.Empty:
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
                     continue
-                if frame is None:
+                if envelope is None:
                     break
+                frame = _format_sse_frame(envelope, alias=use_aliases)
                 self.wfile.write(frame.encode("utf-8"))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
@@ -1277,6 +1415,8 @@ class _DevHandler(BaseHTTPRequestHandler):
         )
 
         existing = self.server.journal.find_live_effect(signature)
+        tool_version = str(body.get("tool_version", "1.0.0"))
+        tier = "irreversible" if self._requires_approval(tool_name) else "compensable"
         effect_id: str | None = None
         approval_id: str | None = None
         if existing is None:
@@ -1293,6 +1433,8 @@ class _DevHandler(BaseHTTPRequestHandler):
                         signature=signature,
                         status=_EFFECT_EXECUTING,
                         approval_id=approval_id,
+                        tool_version=tool_version,
+                        tier=tier,
                     )
                     if effect_id is not None:
                         self.server.journal.resolve_approval(
@@ -1333,6 +1475,8 @@ class _DevHandler(BaseHTTPRequestHandler):
                     signature=signature,
                     status=status,
                     approval_id=approval_id,
+                    tool_version=tool_version,
+                    tier=tier,
                 )
             if effect_id is None:
                 # A concurrent call claimed the signature first, so this
@@ -1382,6 +1526,7 @@ class _DevHandler(BaseHTTPRequestHandler):
         """
         status = effect["status"]
         if status == _EFFECT_COMMITTED:
+            self.server.journal.record_replay(effect["id"])
             self._emit(
                 _EFFECT_REPLAYED,
                 org_id=org_id,
