@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- SDK: added direct module execution entry point for ``undolog_sdk.dev``
+  and introduced ``--auto-approve`` flag for headless integration runs.
 - SDK: added ``createTestSaga`` harness in ``@undolog/sdk/testing`` to
   simulate multi-step saga compensation workflows, LIFO rollbacks, and
   irreversible approval gates in memory without external dependencies.

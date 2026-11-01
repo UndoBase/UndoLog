@@ -64,7 +64,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
 """The port the SDK's default client uses when ``UNDOLOG_PROXY_URL`` is unset."""
 
-DEFAULT_DB_PATH = "undolog-dev.db"
+DEFAULT_DB_PATH = "./.undolog.db"
 """Journal file created in the working directory."""
 
 DEFAULT_ORG_ID = "local"
@@ -757,10 +757,12 @@ class _DevHttpServer(ThreadingHTTPServer):
         journal: DevJournal,
         broadcaster: _EventBroadcaster,
         irreversible_patterns: Sequence[str],
+        auto_approve: bool = False,
     ) -> None:
         self.journal = journal
         self.broadcaster = broadcaster
         self.irreversible_patterns = tuple(irreversible_patterns)
+        self.auto_approve = auto_approve
         super().__init__(server_address, handler_class)
 
     def handle_error(
@@ -1280,18 +1282,58 @@ class _DevHandler(BaseHTTPRequestHandler):
         if existing is None:
             status = _EFFECT_EXECUTING
             if self._requires_approval(tool_name):
-                status = _EFFECT_AWAITING_APPROVAL
-                approval_id = str(uuid.uuid4())
-            effect_id = self.server.journal.create_effect(
-                org_id=org_id,
-                session_id=session_id,
-                tool_name=tool_name,
-                step_index=step_index,
-                args=args,
-                signature=signature,
-                status=status,
-                approval_id=approval_id,
-            )
+                if self.server.auto_approve:
+                    approval_id = str(uuid.uuid4())
+                    effect_id = self.server.journal.create_effect(
+                        org_id=org_id,
+                        session_id=session_id,
+                        tool_name=tool_name,
+                        step_index=step_index,
+                        args=args,
+                        signature=signature,
+                        status=_EFFECT_EXECUTING,
+                        approval_id=approval_id,
+                    )
+                    if effect_id is not None:
+                        self.server.journal.resolve_approval(
+                            approval_id, _APPROVAL_APPROVED
+                        )
+                        self._emit(
+                            _APPROVAL_REQUIRED,
+                            org_id=org_id,
+                            session_id=session_id,
+                            effect_id=effect_id,
+                            approval_id=approval_id,
+                            payload={"stage": "approval_required"},
+                        )
+                        self._emit(
+                            _APPROVAL_APPROVED_EVENT,
+                            org_id=org_id,
+                            session_id=session_id,
+                            effect_id=effect_id,
+                            approval_id=approval_id,
+                            payload=self._approval_payload(approval_id),
+                        )
+                        log.info(
+                            "approval_auto_approved approval_id=%s tool=%s",
+                            approval_id,
+                            tool_name,
+                        )
+                        approval_id = None
+                else:
+                    status = _EFFECT_AWAITING_APPROVAL
+                    approval_id = str(uuid.uuid4())
+            if effect_id is None:
+                effect_id = self.server.journal.create_effect(
+                    org_id=org_id,
+                    session_id=session_id,
+                    tool_name=tool_name,
+                    step_index=step_index,
+                    args=args,
+                    signature=signature,
+                    status=status,
+                    approval_id=approval_id,
+                )
             if effect_id is None:
                 # A concurrent call claimed the signature first, so this
                 # one answers from the row that call journaled.
@@ -1357,6 +1399,25 @@ class _DevHandler(BaseHTTPRequestHandler):
             )
             return
         if status == _EFFECT_AWAITING_APPROVAL:
+            if self.server.auto_approve:
+                approval = self.server.journal.find_pending_approval(effect["id"])
+                if approval is not None:
+                    self.server.journal.resolve_approval(
+                        approval["id"], _APPROVAL_APPROVED
+                    )
+                    self._emit(
+                        _APPROVAL_APPROVED_EVENT,
+                        org_id=org_id,
+                        session_id=effect["session_id"],
+                        effect_id=effect["id"],
+                        approval_id=approval["id"],
+                        payload=self._approval_payload(approval["id"]),
+                    )
+                self._send_json(
+                    200,
+                    {"status": "executed", "effect_id": effect["id"], "result": None},
+                )
+                return
             approval = self.server.journal.find_pending_approval(effect["id"])
             if approval is not None:
                 self._send_json(
@@ -1571,6 +1632,8 @@ class DevServer:
         irreversible_patterns: ``fnmatch`` patterns naming the tools
             that must wait for approval. Every other intercepted call
             executes.
+        auto_approve: When ``True``, automatically approves irreversible
+            tool calls without holding for approval.
     """
 
     def __init__(
@@ -1579,7 +1642,9 @@ class DevServer:
         port: int = DEFAULT_PORT,
         db_path: str = DEFAULT_DB_PATH,
         irreversible_patterns: Sequence[str] = (),
+        auto_approve: bool = False,
     ) -> None:
+        self._auto_approve = auto_approve
         self._journal = DevJournal(db_path)
         self._broadcaster = _EventBroadcaster()
         self._http = _DevHttpServer(
@@ -1588,11 +1653,22 @@ class DevServer:
             journal=self._journal,
             broadcaster=self._broadcaster,
             irreversible_patterns=irreversible_patterns,
+            auto_approve=auto_approve,
         )
         bound_host, bound_port = cast(tuple[str, int], self._http.server_address)
         self._url = f"http://{bound_host}:{bound_port}"
         self._thread: threading.Thread | None = None
         self._serving = False
+
+    @property
+    def auto_approve(self) -> bool:
+        """Whether irreversible calls are automatically approved."""
+        return self._auto_approve
+
+    @property
+    def journal(self) -> DevJournal:
+        """Path or in-memory SQLite journal backing this server."""
+        return self._journal
 
     @property
     def url(self) -> str:
@@ -1702,6 +1778,12 @@ def build_parser() -> argparse.ArgumentParser:
             "repeat for more than one tool"
         ),
     )
+    dev.add_argument(
+        "--auto-approve",
+        action="store_true",
+        default=False,
+        help="automatically approve irreversible tool calls for headless testing",
+    )
     return parser
 
 
@@ -1715,7 +1797,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ``0`` when the server shut down cleanly, ``1`` when it could
         not bind or could not open its journal.
     """
-    args = build_parser().parse_args(argv)
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if not raw_args or (raw_args[0] not in ("dev", "-h", "--help")):
+        raw_args.insert(0, "dev")
+
+    args = build_parser().parse_args(raw_args)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -1726,6 +1812,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             port=args.port,
             db_path=args.db,
             irreversible_patterns=tuple(args.irreversible),
+            auto_approve=args.auto_approve,
         )
     except sqlite3.Error as exc:
         log.error("cannot open the journal at %s: %s", args.db, exc)
@@ -1734,9 +1821,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         log.error("cannot listen on %s:%s: %s", args.host, args.port, exc)
         return 1
     log.info(
-        "undolog dev listening on %s (journal: %s)",
+        "undolog dev listening on %s (journal: %s, auto_approve: %s)",
         server.url,
         server.db_path,
+        server.auto_approve,
     )
     try:
         server.serve_forever()
@@ -1745,3 +1833,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         server.stop()
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
