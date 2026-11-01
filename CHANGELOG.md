@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- Security: upgraded minimatch to 11.0.1 in TypeScript SDK overrides,
+  resolving potential denial of service via globparts amplification.
 - Security: upgraded certifi to 2026.10.23 in Python SDK dependencies,
   removing compromised emSign intermediate CA keys from trust store.
 - Security: upgraded @hono/node-server to 2.1.3 in TypeScript SDK,
