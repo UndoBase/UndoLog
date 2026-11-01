@@ -17,6 +17,24 @@ class UndoLogError(Exception):
     """
 
 
+class MissingSessionError(UndoLogError, RuntimeError):
+    """Raised when an instrumented tool runs without an active session.
+
+    Provides the name of the calling tool and guidance to wrap the invocation
+    inside an active ``run_with_session()`` context or pass an explicit session.
+    """
+
+    def __init__(self, message: str, *, tool_name: str = "") -> None:
+        """Initialize MissingSessionError.
+
+        Parameters:
+            message: Explanation of the missing session error.
+            tool_name: Name of the tool invoked without an active session.
+        """
+        self.tool_name = tool_name
+        super().__init__(message)
+
+
 class ConnectionError(UndoLogError):
     """Raised when the SDK cannot reach the UndoLog proxy.
 

@@ -8,6 +8,8 @@ session object directly.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import uuid
 
 from undolog_sdk.session import UndoLogSession
@@ -84,3 +86,43 @@ class TestStepTracking:
         steps = [session.next_step() for _ in range(20)]
         for i in range(1, len(steps)):
             assert steps[i] > steps[i - 1]
+
+    async def test_concurrent_tasks_monotonic_unique_steps(self) -> None:
+        session = UndoLogSession(org_id="org")
+
+        async def worker() -> list[int]:
+            worker_steps: list[int] = []
+            for _ in range(50):
+                worker_steps.append(session.next_step())
+                await asyncio.sleep(0.001)
+            return worker_steps
+
+        results = await asyncio.gather(*(worker() for _ in range(10)))
+        all_steps = [s for sub in results for s in sub]
+        assert len(all_steps) == 500
+        assert len(set(all_steps)) == 500
+        assert min(all_steps) == 1
+        assert max(all_steps) == 500
+
+    def test_concurrent_threads_monotonic_unique_steps(self) -> None:
+        session = UndoLogSession(org_id="org")
+        all_steps: list[int] = []
+        lock = threading.Lock()
+
+        def worker() -> None:
+            local_steps: list[int] = []
+            for _ in range(100):
+                local_steps.append(session.next_step())
+            with lock:
+                all_steps.extend(local_steps)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(all_steps) == 1000
+        assert len(set(all_steps)) == 1000
+        assert min(all_steps) == 1
+        assert max(all_steps) == 1000

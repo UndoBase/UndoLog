@@ -10,7 +10,13 @@ import asyncio
 
 import pytest
 
-from undolog_sdk import ToolTier, run_with_session, undolog_tool
+from undolog_sdk import (
+    MissingSessionError,
+    ToolTier,
+    UndoLogError,
+    run_with_session,
+    undolog_tool,
+)
 from undolog_sdk.context import get_current_session, require_current_session
 from undolog_sdk.session import UndoLogSession
 
@@ -42,8 +48,11 @@ class TestRequireCurrentSession:
     """``require_current_session`` returns the session or raises."""
 
     async def test_raises_outside_context(self) -> None:
-        with pytest.raises(RuntimeError, match="No UndoLog session"):
+        with pytest.raises(MissingSessionError) as exc_info:
             require_current_session()
+        assert isinstance(exc_info.value, RuntimeError)
+        assert isinstance(exc_info.value, UndoLogError)
+        assert "No UndoLog session" in str(exc_info.value)
 
     async def test_returns_session_inside_context(self) -> None:
         session = UndoLogSession(org_id="org")
@@ -120,8 +129,11 @@ class TestDecoratorContextVar:
         async def read_data() -> str:
             return "data"
 
-        with pytest.raises(RuntimeError, match="requires a session"):
+        with pytest.raises(MissingSessionError) as exc_info:
             await read_data()
+        assert exc_info.value.tool_name == "read_data"
+        assert isinstance(exc_info.value, RuntimeError)
+        assert isinstance(exc_info.value, UndoLogError)
 
     async def test_concurrent_tasks_have_independent_contexts(self) -> None:
         @undolog_tool(tier=ToolTier.SAFE)

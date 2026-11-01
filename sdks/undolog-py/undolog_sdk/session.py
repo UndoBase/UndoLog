@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import sys
+import threading
 import types
 import uuid
 from dataclasses import dataclass, field
@@ -32,7 +33,7 @@ class UndoLogSession:
     The session is the source of truth for organisation identity, session
     identity, and step ordering within a single agent run.
 
-    Args:
+    Parameters:
         org_id: Organisation identifier that scopes all intercepted tool calls.
     """
 
@@ -43,6 +44,9 @@ class UndoLogSession:
 
     _step_index: int = field(default=0, repr=False)
     """Internal step counter. Incremented by ``next_step()``."""
+
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    """Lock ensuring thread-safe monotonic step index increments."""
 
     async def __aenter__(self) -> Self:
         return self
@@ -58,8 +62,13 @@ class UndoLogSession:
     def next_step(self) -> int:
         """Advance and return the next step index.
 
-        The first call returns 1, then 2, 3, … - this ensures step indices
-        are human-friendly (1-based) while matching Rust's ``u32`` domain.
+        The first call returns 1, then 2, 3, and so on. This ensures step
+        indices are human-friendly (1-based) while matching the engine domain.
+        Thread-safe across concurrent async tasks and threads.
+
+        Returns:
+            Next strictly positive monotonic step sequence number.
         """
-        self._step_index += 1
-        return self._step_index
+        with self._lock:
+            self._step_index += 1
+            return self._step_index

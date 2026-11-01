@@ -1,4 +1,4 @@
-"""UndoLog Python SDK - effect-tracking and exactly-once execution for LLM tools.
+"""UndoLog Python SDK: effect-tracking and exactly-once execution for LLM tools.
 
 The SDK works with any async-Python orchestration framework.
 
@@ -11,6 +11,8 @@ Key exports:
         Async context manager that tracks org, session, and step state.
     ``run_with_session``
         Async context manager that sets the session context var.
+    ``MissingSessionError``
+        Exception raised when an instrumented tool executes without a session.
     ``ToolTier``
         Enum classifying a tool's execution behaviour (Safe, Compensable, Irreversible).
     ``CompensationTestHarness``
@@ -37,6 +39,7 @@ from undolog_sdk.decorators import AwaitingApprovalError, undolog_tool
 from undolog_sdk.errors import (
     AuthenticationError,
     ConnectionError,
+    MissingSessionError,
     ServerError,
     TimeoutError,
     UndoLogError,
@@ -67,6 +70,7 @@ __all__ = [
     "CompensationTestHarness",
     "ConnectionError",
     "EffectDescriptor",
+    "MissingSessionError",
     "SagaReport",
     "SagaTestHarness",
     "ServerError",

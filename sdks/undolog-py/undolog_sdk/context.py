@@ -32,6 +32,7 @@ else:
     from typing_extensions import Self
 
 from undolog_sdk.client import _close_default_client
+from undolog_sdk.errors import MissingSessionError
 from undolog_sdk.session import UndoLogSession
 
 log = logging.getLogger(__name__)
@@ -52,18 +53,18 @@ def get_current_session() -> UndoLogSession | None:
 
 
 def require_current_session() -> UndoLogSession:
-    """Return the current ``UndoLogSession`` or raise ``RuntimeError``.
+    """Return the current ``UndoLogSession`` or raise ``MissingSessionError``.
 
     Returns:
         The session set by ``run_with_session``.
 
     Raises:
-        RuntimeError: If no session is active in the current context.
+        MissingSessionError: If no session is active in the current context.
     """
     session = _session_var.get()
     if session is None:
-        raise RuntimeError(
-            "No UndoLog session in context. "
+        raise MissingSessionError(
+            "No UndoLog session in context; requires a session. "
             "Wrap your code with `async with run_with_session(session):` "
             "or pass _session=session explicitly."
         )

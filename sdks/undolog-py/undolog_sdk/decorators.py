@@ -32,6 +32,7 @@ from typing import Any
 
 from undolog_sdk.client import UndoLogClient, _get_default_client
 from undolog_sdk.context import get_current_session
+from undolog_sdk.errors import MissingSessionError
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.tier import CompensationDescriptor, ToolTier
 
@@ -47,7 +48,7 @@ def undolog_tool(
 ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     """Decorator that wraps an async function with UndoLog interception.
 
-    Args:
+    Parameters:
         tier: The tool's classification (Safe, Compensable, or Irreversible).
         compensation: Required if tier is ``Compensable``.
         client: An ``UndoLogClient`` instance. If omitted, a module-level
@@ -56,10 +57,13 @@ def undolog_tool(
             ``UndoLogSession`` at call time. If not provided, the
             decorator falls back to the session set by ``run_with_session``.
 
+    Returns:
+        Decorator wrapping the target async function with UndoLog interception.
+
     Raises:
         ValueError: If ``Compensable`` tier is used without a compensation
             descriptor.
-        RuntimeError: If no session is found via explicit parameter or
+        MissingSessionError: If no session is found via explicit parameter or
             context var.
         AwaitingApprovalError: If the intercept outcome requires human
             approval and execution is suspended.
@@ -67,7 +71,7 @@ def undolog_tool(
     Flow before function execution:
         1. Compute the ``call_signature`` from session, step, name, and args.
         2. Call ``UndoLogClient.intercept(...)``.
-        3. Branch on the outcome…
+        3. Branch on the outcome.
 
     Outcomes:
         ``Execute``
@@ -78,7 +82,7 @@ def undolog_tool(
             receives the tool's natural return type: identical to the
             Execute outcome.
         ``AwaitingApproval``
-            Raise ``AwaitingApprovalError`` with the approval identifier -
+            Raise ``AwaitingApprovalError`` with the approval identifier:
             the function body is **not** executed.
     """
     if tier is ToolTier.COMPENSABLE and compensation is None:
@@ -96,15 +100,15 @@ def undolog_tool(
             if session is None:
                 session = get_current_session()
             if session is None:
-                raise RuntimeError(
-                    f"Tool '{tool_name}' requires a session. "
-                    f"Pass {session_param}=session to the call or wrap "
-                    f"with run_with_session(session)."
+                raise MissingSessionError(
+                    f"Tool '{tool_name}' was called without an active UndoLogSession; requires a session. "
+                    f"Pass {session_param}=session to the call or wrap with run_with_session(session).",
+                    tool_name=tool_name,
                 )
 
             cl = client if client is not None else _get_default_client()
 
-            # Safe tier: bypass the proxy entirely - execute freely.
+            # Safe tier: bypass the proxy entirely; execute freely.
             if tier is ToolTier.SAFE:
                 log.debug(
                     "tool_execute tool=%s session=%s (safe tier, bypass proxy)",
