@@ -20,6 +20,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
@@ -30,6 +31,50 @@ log = logging.getLogger(__name__)
 _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_SESSION_RESULT = "compensated"
 _HALTED_SESSION_RESULT = "halted"
+
+
+class NetworkDropoutError(Exception):
+    """Simulated network connection failure or timeout during compensation."""
+
+
+class RateLimitError(Exception):
+    """Simulated upstream rate limit (HTTP 429) during compensation.
+
+    Attributes:
+        retry_after_ms: Recommended retry wait duration in milliseconds.
+    """
+
+    def __init__(
+        self,
+        message: str = "Rate limit exceeded (HTTP 429)",
+        *,
+        retry_after_ms: int = 1000,
+    ) -> None:
+        super().__init__(message)
+        self.retry_after_ms = retry_after_ms
+
+
+def calculate_backoff(
+    attempt: int,
+    base_backoff_ms: int = 100,
+    multiplier: float = 2.0,
+    max_backoff_ms: int = 5000,
+) -> int:
+    """Calculate exponential backoff duration capped at max_backoff_ms.
+
+    Args:
+        attempt: Zero-based retry attempt number (0 for the first retry).
+        base_backoff_ms: Initial backoff delay in milliseconds.
+        multiplier: Factor by which backoff increases each retry.
+        max_backoff_ms: Maximum backoff delay in milliseconds.
+
+    Returns:
+        Computed delay in milliseconds, guaranteed not to exceed max_backoff_ms.
+    """
+    if base_backoff_ms <= 0 or attempt < 0:
+        return 0
+    calculated = int(base_backoff_ms * (multiplier**attempt))
+    return min(calculated, max_backoff_ms)
 
 
 @dataclass
@@ -249,6 +294,8 @@ class StepResult:
         attempts: Number of times the compensation was invoked.
         state: ``"compensated"`` or ``"failed"``.
         error: The last exception message when ``state == "failed"``.
+        args: Arguments delivered to the compensation function.
+        dead_letter: True if retries were exhausted without success.
     """
 
     tool_name: str
@@ -256,6 +303,8 @@ class StepResult:
     attempts: int
     state: str
     error: str | None = None
+    args: dict[str, Any] = field(default_factory=dict)
+    dead_letter: bool = False
 
 
 @dataclass(frozen=True)
@@ -267,11 +316,13 @@ class SagaReport:
             compensated, ``"halted"`` when one failed permanently.
         steps: Per-entry outcomes in rollback (LIFO) execution order.
         compensation_order: Tool names in the order they were invoked.
+        dead_letters: Step results that exhausted retries without success.
     """
 
     session_result: str
     steps: tuple[StepResult, ...]
     compensation_order: tuple[str, ...]
+    dead_letters: tuple[StepResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -286,6 +337,8 @@ class CompensationReport:
             every attempt raised.
         result: The return value of the successful attempt.
         error: The last exception message when ``final_state == "failed"``.
+        dead_letter: True if retries were exhausted without success.
+        backoff_intervals_ms: Backoff intervals calculated for each retry.
     """
 
     fn_name: str
@@ -294,6 +347,8 @@ class CompensationReport:
     final_state: str
     result: Any = None
     error: str | None = None
+    dead_letter: bool = False
+    backoff_intervals_ms: tuple[int, ...] = ()
 
 
 class SagaTestHarness:
@@ -363,6 +418,17 @@ class SagaTestHarness:
             attempts = 0
             error: str | None = None
             compensated = False
+            step_args: dict[str, Any] = {}
+            if effect.kwargs:
+                step_args.update(effect.kwargs)
+            if effect.args:
+                if len(effect.args) == 1 and isinstance(effect.args[0], dict):
+                    step_args.update(effect.args[0])
+                elif not effect.kwargs:
+                    step_args["args"] = effect.args
+                else:
+                    step_args["_args"] = effect.args
+
             while attempts < budget:
                 attempts += 1
                 try:
@@ -386,6 +452,8 @@ class SagaTestHarness:
                         stack_position=effect.stack_position,
                         attempts=attempts,
                         state="compensated",
+                        args=step_args,
+                        dead_letter=False,
                     )
                 )
                 continue
@@ -401,6 +469,8 @@ class SagaTestHarness:
                     attempts=attempts,
                     state="failed",
                     error=error,
+                    args=step_args,
+                    dead_letter=True,
                 )
             )
             halted = True
@@ -411,6 +481,7 @@ class SagaTestHarness:
             ),
             steps=tuple(steps),
             compensation_order=tuple(order),
+            dead_letters=tuple(s for s in steps if s.dead_letter),
         )
         self._last_report = report
         return report
@@ -432,7 +503,13 @@ class SagaTestHarness:
 async def test_compensation(
     fn: Callable[..., Coroutine[Any, Any, Any]],
     *args: Any,
-    retries: int = 1,
+    retries: int | None = None,
+    fail_count: int = 0,
+    backoff_ms: int = 100,
+    backoff_multiplier: float = 2.0,
+    max_backoff_ms: int = 30000,
+    simulate_delay: bool = False,
+    failure_exception: Exception | None = None,
     **kwargs: Any,
 ) -> CompensationReport:
     """Test one compensation function without a running engine.
@@ -442,43 +519,94 @@ async def test_compensation(
     results. The first and second executions must both succeed and
     agree for ``final_state`` to be ``"compensated"``.
 
+    Supports transient network failure simulation, backoff interval
+    tracking, and dead-letter state recording.
+
     Args:
         fn: The async compensation function under test.
         *args: Positional arguments for the compensation call.
-        retries: Extra attempts allowed beyond the first call.
+        retries: Extra attempts allowed beyond the first call. When None,
+            defaults to ``max(1, fail_count)``.
+        fail_count: Number of simulated transient failures to inject
+            before permitting successful execution.
+        backoff_ms: Initial backoff interval in milliseconds.
+        backoff_multiplier: Multiplier applied per retry attempt.
+        max_backoff_ms: Maximum backoff ceiling in milliseconds.
+        simulate_delay: When True, awaits actual backoff delay via asyncio.sleep.
+        failure_exception: Custom exception raised for injected failures.
         **kwargs: Keyword arguments for the compensation call.
 
     Returns:
-        A :class:`CompensationReport` with counts, final state, and the
-        result value.
+        A :class:`CompensationReport` with counts, final state, backoff intervals,
+        and dead-letter status.
     """
+    effective_retries = max(1, fail_count) if retries is None else retries
+    max_attempts = effective_retries + 1
     harness = CompensationTestHarness(fn)
     result: Any = None
     attempts = 0
     final_state = "failed"
     error: str | None = None
-    for _ in range(retries + 1):
+    injected_failures = 0
+    backoff_intervals: list[int] = []
+
+    for _ in range(max_attempts):
         attempts += 1
+        if injected_failures < fail_count:
+            injected_failures += 1
+            exc = failure_exception or NetworkDropoutError(
+                f"Simulated transient network failure (attempt {attempts}/{max_attempts})"
+            )
+            error = str(exc)
+            log.debug("test_compensation simulated failure %d: %s", attempts, exc)
+            if attempts < max_attempts:
+                interval = calculate_backoff(
+                    attempts - 1,
+                    base_backoff_ms=backoff_ms,
+                    multiplier=backoff_multiplier,
+                    max_backoff_ms=max_backoff_ms,
+                )
+                backoff_intervals.append(interval)
+                if simulate_delay and interval > 0:
+                    await asyncio.sleep(interval / 1000.0)
+            continue
+
         try:
             result = await harness.execute(*args, **kwargs)
         except Exception as exc:
             error = str(exc)
             log.debug("test_compensation attempt %d failed: %s", attempts, exc)
+            if attempts < max_attempts:
+                interval = calculate_backoff(
+                    attempts - 1,
+                    base_backoff_ms=backoff_ms,
+                    multiplier=backoff_multiplier,
+                    max_backoff_ms=max_backoff_ms,
+                )
+                backoff_intervals.append(interval)
+                if simulate_delay and interval > 0:
+                    await asyncio.sleep(interval / 1000.0)
         else:
             final_state = "compensated"
             break
+
     retry_count = max(attempts - 1, 0)
-    if final_state == "compensated" and retries > 0:
+    dead_letter = final_state == "failed"
+
+    if final_state == "compensated" and effective_retries > 0:
         second: Any = None
         try:
             second = await harness.execute(*args, **kwargs)
         except Exception as exc:
             error = str(exc)
             final_state = "failed"
+            dead_letter = True
         else:
             if second != result:
                 final_state = "failed"
+                dead_letter = True
                 error = f"idempotency violation: first={result!r}, second={second!r}"
+
     return CompensationReport(
         fn_name=getattr(fn, "__name__", "?"),
         execution_count=harness.call_count,
@@ -486,11 +614,160 @@ async def test_compensation(
         final_state=final_state,
         result=result,
         error=error,
+        dead_letter=dead_letter,
+        backoff_intervals_ms=tuple(backoff_intervals),
     )
 
 
 # Not a pytest test: the test_ name is mandated by the public API contract.
 setattr(test_compensation, "__test__", False)
+
+
+def _assert_payload_parity(
+    idx: int,
+    tool_name: str,
+    actual_args: dict[str, Any],
+    expected_payload: Any,
+) -> None:
+    """Verify argument payload equality between actual step and expectation."""
+    if isinstance(expected_payload, dict):
+        if actual_args == expected_payload:
+            return
+        if all(actual_args.get(k) == v for k, v in expected_payload.items()):
+            return
+        raise AssertionError(
+            f"Step {idx} ('{tool_name}') payload mismatch: expected {expected_payload!r}, got {actual_args!r}"
+        )
+    if isinstance(expected_payload, (tuple, list)):
+        expected_tuple = tuple(expected_payload)
+        if (
+            actual_args.get("args") == expected_tuple
+            or actual_args.get("_args") == expected_tuple
+        ):
+            return
+        if tuple(actual_args.values()) == expected_tuple:
+            return
+        if len(expected_tuple) == 1 and expected_tuple[0] == actual_args:
+            return
+        raise AssertionError(
+            f"Step {idx} ('{tool_name}') payload mismatch: expected {expected_payload!r}, got {actual_args!r}"
+        )
+    if len(actual_args) == 1 and next(iter(actual_args.values())) == expected_payload:
+        return
+    if actual_args.get("args") == (expected_payload,):
+        return
+    raise AssertionError(
+        f"Step {idx} ('{tool_name}') payload mismatch: expected {expected_payload!r}, got {actual_args!r}"
+    )
+
+
+def assert_saga_rolled_back(
+    session: SagaReport | SagaTestHarness | Any,
+    expected_compensations: Sequence[
+        str | tuple[str, Any] | dict[str, Any] | EffectDescriptor | StepResult
+    ],
+) -> None:
+    """Assert that a saga session rolled back completely in LIFO order.
+
+    Validates that:
+        1. Rollback concluded with session_result == "compensated".
+        2. No steps were routed to dead-letter state.
+        3. Compensations executed in strict descending stack position (LIFO) order.
+        4. Step count matches expected_compensations.
+        5. Each executed compensation matches expected tool name and payload.
+
+    Args:
+        session: A :class:`SagaReport`, :class:`SagaTestHarness`, or any session
+            object exposing a report method or report attribute.
+        expected_compensations: Sequence of expected compensations. Each entry can be:
+            - A string tool name (e.g. "email")
+            - A tuple of (tool_name, expected_args)
+            - A dict with "tool_name" and optional "args"
+            - An :class:`EffectDescriptor` or :class:`StepResult`
+
+    Raises:
+        AssertionError: If session result is not compensated, dead letters exist,
+            step count mismatches, execution order is not LIFO, or payload parity fails.
+    """
+    report: SagaReport
+    if isinstance(session, SagaReport):
+        report = session
+    elif isinstance(session, SagaTestHarness):
+        report = session.report()
+    elif hasattr(session, "report") and callable(session.report):
+        report = session.report()
+    elif hasattr(session, "report") and isinstance(session.report, SagaReport):
+        report = session.report
+    elif hasattr(session, "steps") and hasattr(session, "session_result"):
+        report = session
+    else:
+        raise AssertionError(
+            f"Expected a SagaReport or SagaTestHarness, got {type(session).__name__}"
+        )
+
+    if report.session_result != "compensated":
+        raise AssertionError(
+            f"Expected saga rollback to succeed ('compensated'), but got '{report.session_result}'"
+        )
+    if report.dead_letters:
+        dead_tools = [s.tool_name for s in report.dead_letters]
+        raise AssertionError(
+            f"Expected no dead-letter steps in rollback, but found: {dead_tools}"
+        )
+
+    steps = report.steps
+    if len(steps) != len(expected_compensations):
+        actual_names = [s.tool_name for s in steps]
+        raise AssertionError(
+            f"Expected {len(expected_compensations)} rolled back step(s), but got {len(steps)}: {actual_names}"
+        )
+
+    for idx, (step, expected) in enumerate(zip(steps, expected_compensations)):
+        if idx > 0 and step.stack_position >= steps[idx - 1].stack_position:
+            raise AssertionError(
+                f"LIFO order violation at step {idx}: stack_position {step.stack_position} "
+                f"must be less than preceding step position {steps[idx - 1].stack_position}"
+            )
+
+        expected_tool: str
+        expected_payload: Any = None
+        has_payload_expectation = False
+
+        if isinstance(expected, str):
+            expected_tool = expected
+        elif isinstance(expected, (tuple, list)):
+            if len(expected) >= 1:
+                expected_tool = str(expected[0])
+            if len(expected) >= 2:
+                expected_payload = expected[1]
+                has_payload_expectation = True
+        elif isinstance(expected, dict):
+            expected_tool = str(expected.get("tool_name") or expected.get("name") or "")
+            if "args" in expected:
+                expected_payload = expected["args"]
+                has_payload_expectation = True
+        elif hasattr(expected, "tool_name"):
+            expected_tool = str(getattr(expected, "tool_name"))
+            if hasattr(expected, "args"):
+                expected_payload = getattr(expected, "args")
+                has_payload_expectation = True
+        else:
+            raise AssertionError(
+                f"Unsupported expected compensation specification: {expected!r}"
+            )
+
+        if step.tool_name != expected_tool:
+            raise AssertionError(
+                f"Step {idx} order mismatch: expected tool '{expected_tool}', got '{step.tool_name}'"
+            )
+
+        if step.state != "compensated":
+            raise AssertionError(
+                f"Step {idx} ('{step.tool_name}') failed during rollback with error: {step.error}"
+            )
+
+        if has_payload_expectation:
+            _assert_payload_parity(idx, step.tool_name, step.args, expected_payload)
 
 
 async def test_saga(
