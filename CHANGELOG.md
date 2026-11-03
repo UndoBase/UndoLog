@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- SDK: extended compensation test harness with network failure injection,
+  exponential backoff assertions, and dead-letter state recording.
+
 - SDK: added direct module execution entry point for ``undolog_sdk.dev``
   and introduced ``--auto-approve`` flag for headless integration runs.
 - SDK: added ``createTestSaga`` harness in ``@undolog/sdk/testing`` to

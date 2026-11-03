@@ -24,9 +24,13 @@ import pytest
 
 from undolog_sdk import (
     EffectDescriptor,
+    NetworkDropoutError,
+    RateLimitError,
     SagaReport,
     SagaTestHarness,
     StepResult,
+    assert_saga_rolled_back,
+    calculate_backoff,
     test_compensation,
     test_saga,
 )
@@ -578,3 +582,291 @@ class TestReportSemantics:
         )
 
         assert isinstance(report, SagaReport)
+
+
+# ── calculate_backoff unit tests ─────────────────────────────────────────────
+
+
+class TestCalculateBackoff:
+    """``calculate_backoff`` calculates exponential growth with caps."""
+
+    def test_exponential_growth(self) -> None:
+        assert calculate_backoff(0, base_backoff_ms=100, multiplier=2.0) == 100
+        assert calculate_backoff(1, base_backoff_ms=100, multiplier=2.0) == 200
+        assert calculate_backoff(2, base_backoff_ms=100, multiplier=2.0) == 400
+        assert calculate_backoff(3, base_backoff_ms=100, multiplier=2.0) == 800
+
+    def test_caps_at_max_backoff(self) -> None:
+        assert (
+            calculate_backoff(
+                10, base_backoff_ms=100, multiplier=2.0, max_backoff_ms=5000
+            )
+            == 5000
+        )
+
+    def test_negative_attempt_returns_zero(self) -> None:
+        assert calculate_backoff(-1, base_backoff_ms=100) == 0
+
+    def test_zero_or_negative_base_returns_zero(self) -> None:
+        assert calculate_backoff(0, base_backoff_ms=0) == 0
+        assert calculate_backoff(1, base_backoff_ms=-50) == 0
+
+    def test_custom_multiplier(self) -> None:
+        assert calculate_backoff(0, base_backoff_ms=50, multiplier=3.0) == 50
+        assert calculate_backoff(1, base_backoff_ms=50, multiplier=3.0) == 150
+        assert calculate_backoff(2, base_backoff_ms=50, multiplier=3.0) == 450
+
+
+# ── Error class unit tests ───────────────────────────────────────────────────
+
+
+class TestErrorClasses:
+    """``NetworkDropoutError`` and ``RateLimitError`` exception types."""
+
+    def test_network_dropout_error(self) -> None:
+        err = NetworkDropoutError("Connection timed out")
+        assert isinstance(err, Exception)
+        assert str(err) == "Connection timed out"
+
+    def test_rate_limit_error_defaults(self) -> None:
+        err = RateLimitError()
+        assert isinstance(err, Exception)
+        assert str(err) == "Rate limit exceeded (HTTP 429)"
+        assert err.retry_after_ms == 1000
+
+    def test_rate_limit_error_custom(self) -> None:
+        err = RateLimitError("Too Many Requests", retry_after_ms=3000)
+        assert str(err) == "Too Many Requests"
+        assert err.retry_after_ms == 3000
+
+
+# ── Network failure simulation tests ─────────────────────────────────────────
+
+
+class TestNetworkFailureSimulation:
+    """``test_compensation`` simulates transient failures and tracks backoff."""
+
+    async def test_recovery_after_transient_failures(self) -> None:
+        report = await test_compensation(
+            undo_transfer,
+            "tx-99",
+            fail_count=2,
+            backoff_ms=100,
+            backoff_multiplier=2.0,
+        )
+
+        assert report.final_state == "compensated"
+        assert report.retry_count == 2
+        assert report.dead_letter is False
+        assert report.backoff_intervals_ms == (100, 200)
+        assert report.result == {"undone": "tx-99"}
+        assert report.execution_count == 2
+
+    async def test_failures_exceeding_max_retries_record_dead_letter(self) -> None:
+        report = await test_compensation(
+            undo_transfer,
+            "tx-99",
+            fail_count=3,
+            retries=2,
+            backoff_ms=50,
+        )
+
+        assert report.final_state == "failed"
+        assert report.dead_letter is True
+        assert report.retry_count == 2
+        assert report.execution_count == 0
+        assert "Simulated transient network failure" in (report.error or "")
+        assert report.backoff_intervals_ms == (50, 100)
+
+    async def test_custom_failure_exception_injected(self) -> None:
+        custom_err = RateLimitError("Upstream rate limited", retry_after_ms=500)
+        report = await test_compensation(
+            undo_transfer,
+            "tx-1",
+            fail_count=1,
+            failure_exception=custom_err,
+        )
+
+        assert report.final_state == "compensated"
+        assert report.retry_count == 1
+        assert report.dead_letter is False
+
+    async def test_simulate_delay_awaits_backoff(self) -> None:
+        report = await test_compensation(
+            undo_transfer,
+            "tx-1",
+            fail_count=1,
+            backoff_ms=1,
+            simulate_delay=True,
+        )
+
+        assert report.final_state == "compensated"
+        assert len(report.backoff_intervals_ms) == 1
+        assert report.backoff_intervals_ms[0] == 1
+
+
+# ── Dead-letter state recording in sagas ──────────────────────────────────────
+
+
+class TestDeadLetterSaga:
+    """Permanent rollback failures record dead-letter status in the report."""
+
+    async def test_saga_dead_letter_on_retry_exhaustion(self) -> None:
+        report = await test_saga(
+            [EffectDescriptor("charge", always_fails, stack_position=1, max_retries=2)]
+        )
+
+        assert report.session_result == "halted"
+        assert len(report.dead_letters) == 1
+        assert report.dead_letters[0].tool_name == "charge"
+        assert report.dead_letters[0].dead_letter is True
+        assert report.dead_letters[0].state == "failed"
+        assert "permanent failure" in (report.dead_letters[0].error or "")
+
+    async def test_saga_clean_rollback_has_no_dead_letters(self) -> None:
+        report = await test_saga(
+            [
+                EffectDescriptor(
+                    "charge", undo_transfer, stack_position=1, kwargs={"tx_id": "tx-1"}
+                )
+            ]
+        )
+
+        assert report.session_result == "compensated"
+        assert report.dead_letters == ()
+        assert report.steps[0].dead_letter is False
+
+
+# ── assert_saga_rolled_back pytest helper ────────────────────────────────────
+
+
+class TestAssertSagaRolledBack:
+    """``assert_saga_rolled_back`` validates LIFO rollback and payload parity."""
+
+    async def test_assert_saga_rolled_back_string_names(self) -> None:
+        report = await test_saga(
+            [
+                EffectDescriptor(
+                    "charge",
+                    undo_transfer,
+                    stack_position=1,
+                    kwargs={"tx_id": "tx-1"},
+                ),
+                EffectDescriptor(
+                    "email",
+                    undo_send_email,
+                    stack_position=2,
+                    kwargs={"to": "a@x.com"},
+                ),
+            ]
+        )
+
+        assert_saga_rolled_back(report, ["email", "charge"])
+
+    async def test_assert_saga_rolled_back_tuples_with_args(self) -> None:
+        report = await test_saga(
+            [
+                EffectDescriptor(
+                    "charge",
+                    undo_transfer,
+                    stack_position=1,
+                    kwargs={"tx_id": "tx-1"},
+                ),
+                EffectDescriptor(
+                    "email",
+                    undo_send_email,
+                    stack_position=2,
+                    kwargs={"to": "a@x.com"},
+                ),
+            ]
+        )
+
+        assert_saga_rolled_back(
+            report,
+            [
+                ("email", {"to": "a@x.com"}),
+                ("charge", {"tx_id": "tx-1"}),
+            ],
+        )
+
+    async def test_assert_saga_rolled_back_dicts(self) -> None:
+        report = await test_saga(
+            [
+                EffectDescriptor(
+                    "charge",
+                    undo_transfer,
+                    stack_position=1,
+                    kwargs={"tx_id": "tx-1"},
+                ),
+            ]
+        )
+
+        assert_saga_rolled_back(
+            report,
+            [{"tool_name": "charge", "args": {"tx_id": "tx-1"}}],
+        )
+
+    async def test_assert_saga_rolled_back_accepts_harness_instance(self) -> None:
+        harness = SagaTestHarness(
+            [
+                EffectDescriptor(
+                    "charge",
+                    undo_transfer,
+                    stack_position=1,
+                    kwargs={"tx_id": "tx-1"},
+                ),
+            ]
+        )
+        await harness.rollback()
+
+        assert_saga_rolled_back(harness, ["charge"])
+
+    async def test_assert_saga_rolled_back_fails_on_halted_session(self) -> None:
+        report = await test_saga(
+            [EffectDescriptor("charge", always_fails, stack_position=1, max_retries=1)]
+        )
+
+        with pytest.raises(AssertionError, match="Expected saga rollback to succeed"):
+            assert_saga_rolled_back(report, ["charge"])
+
+    async def test_assert_saga_rolled_back_fails_on_order_mismatch(self) -> None:
+        report = await test_saga(
+            [
+                EffectDescriptor(
+                    "charge", undo_transfer, stack_position=1, kwargs={"tx_id": "t1"}
+                ),
+                EffectDescriptor(
+                    "email", undo_send_email, stack_position=2, kwargs={"to": "a@x"}
+                ),
+            ]
+        )
+
+        with pytest.raises(AssertionError, match="order mismatch"):
+            assert_saga_rolled_back(report, ["charge", "email"])
+
+    async def test_assert_saga_rolled_back_fails_on_payload_mismatch(self) -> None:
+        report = await test_saga(
+            [
+                EffectDescriptor(
+                    "email", undo_send_email, stack_position=1, kwargs={"to": "a@x"}
+                ),
+            ]
+        )
+
+        with pytest.raises(AssertionError, match="payload mismatch"):
+            assert_saga_rolled_back(report, [("email", {"to": "wrong@x"})])
+
+    async def test_assert_saga_rolled_back_fails_on_count_mismatch(self) -> None:
+        report = await test_saga(
+            [
+                EffectDescriptor(
+                    "charge", undo_transfer, stack_position=1, kwargs={"tx_id": "t1"}
+                ),
+                EffectDescriptor(
+                    "email", undo_send_email, stack_position=2, kwargs={"to": "a@x"}
+                ),
+            ]
+        )
+
+        with pytest.raises(AssertionError, match="Expected 1 rolled back step"):
+            assert_saga_rolled_back(report, ["email"])
