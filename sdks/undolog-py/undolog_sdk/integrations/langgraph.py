@@ -41,6 +41,7 @@ Example::
 from __future__ import annotations
 
 import copy
+import functools
 import logging
 import os
 from collections.abc import Awaitable, Callable, Sequence
@@ -70,12 +71,133 @@ STATE_AWAITING_KEY = "awaiting_approval"
 STATE_APPROVAL_KEY = "approval_request"
 """Graph-state key carrying the pending approval details."""
 
+STATE_INTERRUPT_KEY = "__interrupt__"
+"""Graph-state key carrying framework-native interruption events."""
+
+CONFIG_SESSION_KEY = "undolog_session"
+"""RunnableConfig configurable key holding the active UndoLogSession."""
+
+
+class GraphInterrupt(Exception):
+    """Framework-native interruption exception for LangGraph workflows.
+
+    Attributes:
+        interrupts: Tuple of interrupt event payloads triggering the pause.
+    """
+
+    def __init__(self, *interrupts: Any) -> None:
+        self.interrupts = interrupts
+        super().__init__(f"Graph interrupted: {interrupts}")
+
+
+_SAFE_PREFIXES = (
+    "get_",
+    "read_",
+    "fetch_",
+    "list_",
+    "search_",
+    "lookup_",
+    "query_",
+    "check_",
+    "describe_",
+    "view_",
+    "find_",
+    "calculate_",
+    "is_",
+    "has_",
+    "show_",
+)
+
+_IRREVERSIBLE_PREFIXES = (
+    "delete_",
+    "drop_",
+    "destroy_",
+    "remove_",
+    "purge_",
+    "terminate_",
+    "publish_",
+    "execute_",
+    "kill_",
+    "wipe_",
+    "charge_",
+    "pay_",
+    "transfer_",
+    "send_",
+)
+
+
+def classify_tool(tool: Any) -> ToolTier:
+    """Classify an un-annotated tool into a ToolTier using name heuristics.
+
+    Read-only operations (get, read, fetch, list, search, query, etc.)
+    classify as ``ToolTier.SAFE``.
+    Modifying or destructive operations (delete, drop, send, charge, etc.)
+    classify as ``ToolTier.IRREVERSIBLE``.
+    Other tools default to ``ToolTier.SAFE``.
+
+    Args:
+        tool: An async callable or tool object.
+
+    Returns:
+        The deduced :class:`ToolTier`.
+    """
+    existing_tier = getattr(tool, "_undolog_tier", None)
+    if isinstance(existing_tier, ToolTier):
+        return existing_tier
+
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", "")
+    lower_name = str(name).lower()
+
+    for prefix in _SAFE_PREFIXES:
+        if lower_name.startswith(prefix):
+            return ToolTier.SAFE
+
+    for prefix in _IRREVERSIBLE_PREFIXES:
+        if lower_name.startswith(prefix):
+            return ToolTier.IRREVERSIBLE
+
+    return ToolTier.SAFE
+
+
+def audit_tool(
+    tool: Callable[..., Awaitable[Any]],
+    tier: ToolTier | None = None,
+    compensation_name: str | None = None,
+    client: UndoLogClient | None = None,
+) -> Callable[..., Awaitable[Any]]:
+    """Wrap an un-annotated tool, classifying it and logging a warning at invocation.
+
+    Args:
+        tool: Un-annotated async tool callable.
+        tier: Explicit ToolTier, or None to deduce via :func:`classify_tool`.
+        compensation_name: Optional compensation name.
+        client: Optional UndoLogClient.
+
+    Returns:
+        Instrumented callable that logs a warning and executes under the classified tier.
+    """
+    resolved_tier = tier or classify_tool(tool)
+    name = getattr(tool, "__name__", str(tool))
+    log.warning(
+        "Un-annotated tool %r detected; classified as %s",
+        name,
+        resolved_tier.value,
+    )
+    return wrap_tool(
+        tool,
+        tier=resolved_tier,
+        compensation_name=compensation_name,
+        client=client,
+        is_unannotated=True,
+    )
+
 
 def wrap_tool(
     tool: Callable[..., Awaitable[Any]],
     tier: ToolTier = ToolTier.COMPENSABLE,
     compensation_name: str | None = None,
     client: UndoLogClient | None = None,
+    is_unannotated: bool = False,
 ) -> Callable[..., Awaitable[Any]]:
     """Wrap one async tool with the ``@undolog_tool`` interceptor.
 
@@ -85,6 +207,8 @@ def wrap_tool(
         compensation_name: Name of the compensation registered in the
             engine registry. Required when ``tier`` is ``COMPENSABLE``.
         client: Optional explicit ``UndoLogClient``.
+        is_unannotated: When True, logs a warning on invocation indicating
+            that an un-annotated tool was detected and classified.
 
     Returns:
         The instrumented tool, or ``tool`` unchanged when it already
@@ -114,7 +238,30 @@ def wrap_tool(
     descriptor = (
         CompensationDescriptor.new(compensation_name) if compensation_name else None
     )
-    return undolog_tool(tier, compensation=descriptor, client=client)(tool)
+    wrapped_fn = undolog_tool(tier, compensation=descriptor, client=client)(tool)
+
+    if not is_unannotated:
+        return wrapped_fn
+
+    @functools.wraps(tool)
+    async def audited_wrapper(*args: Any, **kwargs: Any) -> Any:
+        tool_name = getattr(tool, "__name__", str(tool))
+        log.warning(
+            "Un-annotated tool %r invoked within graph node; classified as %s",
+            tool_name,
+            tier.value,
+        )
+        return await wrapped_fn(*args, **kwargs)
+
+    for attr in (
+        "_undolog_tool_name",
+        "_undolog_tier",
+        "_undolog_compensation",
+        "_undolog_client",
+    ):
+        if hasattr(wrapped_fn, attr):
+            setattr(audited_wrapper, attr, getattr(wrapped_fn, attr))
+    return audited_wrapper
 
 
 def wrap_tools(
@@ -199,24 +346,33 @@ class WrappedGraph:
     other attribute resolves on the wrapped graph. ``ainvoke``
     creates or resumes an ``UndoLogSession``, runs the graph inside
     ``run_with_session`` so wrapped tools resolve the session from
-    the context var, and mirrors the session identity and the
-    position the run started from into the output state. Only
-    ``ainvoke`` opens a session: delegated async entry points such as
-    ``astream`` run without one, so an instrumented non-SAFE tool
-    raises ``RuntimeError`` there unless the caller opened
-    ``run_with_session``.
+    the context var, injects the session into ``RunnableConfig``,
+    and mirrors the session identity and the position the run started
+    from into the output state. Only ``ainvoke`` opens a session:
+    delegated async entry points such as ``astream`` run without one,
+    so an instrumented non-SAFE tool raises ``RuntimeError`` there
+    unless the caller opened ``run_with_session``.
     """
 
-    def __init__(self, graph: Any, org_id: str) -> None:
+    def __init__(
+        self,
+        graph: Any,
+        org_id: str,
+        *,
+        raise_interrupt: bool = False,
+    ) -> None:
         """Bind the facade to a graph.
 
         Args:
             graph: Any object exposing ``ainvoke`` (a compiled
                 LangGraph app).
             org_id: Organisation identifier for new sessions.
+            raise_interrupt: When True, raises :class:`GraphInterrupt` on
+                approvals instead of returning state with interruption metadata.
         """
         self._graph = graph
         self._org_id = org_id
+        self._raise_interrupt = raise_interrupt
 
     @property
     def org_id(self) -> str:
@@ -249,25 +405,25 @@ class WrappedGraph:
 
         A ``session_id`` in the input resumes that session across
         checkpoint restores; otherwise a fresh session is created.
-        The four UndoLog keys in the return value belong to this
+        The UndoLog keys in the return value belong to this
         wrapper: it overwrites them in every returned dict.
 
         Args:
             input: Graph input state. May carry ``session_id`` and
                 ``undolog_step_index`` from a previous invocation.
-            config: LangGraph runnable config, forwarded unchanged.
+            config: LangGraph runnable config. Injected with active session.
             **kwargs: Extra keyword arguments, forwarded to ``ainvoke``.
 
         Returns:
             The graph output state, augmented with ``session_id``,
-            ``undolog_step_index``, ``awaiting_approval``, and
-            ``approval_request``. When approval is pending, the
-            returned state also repeats the input, so the caller can
-            re-invoke with it unchanged once the approval resolves.
-            ``undolog_step_index`` holds the position this invocation
-            started from, which is what makes that re-invoke reproduce
-            the same steps and replay them. Output that is not a dict
-            is returned as it is, without the UndoLog keys.
+            ``undolog_step_index``, ``awaiting_approval``,
+            ``approval_request``, and ``__interrupt__``. When approval
+            is pending, the returned state also repeats the input, so
+            the caller can re-invoke with it unchanged once the approval
+            resolves. ``undolog_step_index`` holds the position this
+            invocation started from, which is what makes that re-invoke
+            reproduce the same steps and replay them. Output that is not
+            a dict is returned as it is, without the UndoLog keys.
         """
         session_id = input.get(STATE_SESSION_KEY)
         start_step = int(input.get(STATE_STEP_KEY, 0) or 0)
@@ -277,9 +433,17 @@ class WrappedGraph:
                 session.session_id = str(session_id)
             # Carry the step origin echoed by the previous invocation.
             session._step_index = start_step
+
+            effective_config = dict(config) if config is not None else {}
+            configurable = dict(effective_config.get("configurable") or {})
+            configurable[CONFIG_SESSION_KEY] = session
+            effective_config["configurable"] = configurable
+
             try:
                 async with run_with_session(session):
-                    result = await self._graph.ainvoke(input, config=config, **kwargs)
+                    result = await self._graph.ainvoke(
+                        input, config=effective_config, **kwargs
+                    )
             except AwaitingApprovalError as exc:
                 log.info(
                     "undolog ainvoke: approval required tool=%s step=%d "
@@ -289,6 +453,15 @@ class WrappedGraph:
                     exc.approval_id,
                     session.session_id,
                 )
+                interrupt_event = {
+                    "approval_id": exc.approval_id,
+                    "tool_name": exc.tool_name,
+                    "step_index": exc.step_index,
+                    "type": "approval_required",
+                }
+                if self._raise_interrupt:
+                    raise GraphInterrupt(interrupt_event) from exc
+
                 # Echo this run's origin rather than how far it got:
                 # re-invoking with this state has to reproduce the same
                 # step positions, so completed calls replay and this
@@ -303,6 +476,12 @@ class WrappedGraph:
                         "tool_name": exc.tool_name,
                         "step_index": exc.step_index,
                     },
+                    STATE_INTERRUPT_KEY: (
+                        {
+                            "value": interrupt_event,
+                            "resumable": True,
+                        },
+                    ),
                 }
             if not isinstance(result, dict):
                 log.debug(
@@ -318,12 +497,15 @@ class WrappedGraph:
             enriched[STATE_STEP_KEY] = start_step
             enriched[STATE_AWAITING_KEY] = False
             enriched[STATE_APPROVAL_KEY] = None
+            enriched[STATE_INTERRUPT_KEY] = None
         return enriched
 
 
 def wrap_langgraph(
     graph: Any,
     org_id: str | None = None,
+    *,
+    raise_interrupt: bool = False,
 ) -> WrappedGraph:
     """Run a LangGraph app inside an UndoLog session, in one call.
 
@@ -332,6 +514,8 @@ def wrap_langgraph(
             ``ainvoke``).
         org_id: Organisation identifier for sessions. Defaults to the
             ``UNDOLOG_ORG_ID`` environment variable, then ``org_demo``.
+        raise_interrupt: When True, raises :class:`GraphInterrupt` on
+            approvals instead of returning state with interruption metadata.
 
     Returns:
         A ``WrappedGraph`` facade; the original graph is not mutated.
@@ -348,4 +532,4 @@ def wrap_langgraph(
             app = wrap_langgraph(build_graph(), org_id="org_demo")
     """
     resolved_org = org_id or os.environ.get("UNDOLOG_ORG_ID", "org_demo")
-    return WrappedGraph(graph, resolved_org)
+    return WrappedGraph(graph, resolved_org, raise_interrupt=raise_interrupt)
