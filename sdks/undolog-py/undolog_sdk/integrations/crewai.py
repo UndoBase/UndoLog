@@ -41,8 +41,11 @@ Example::
 
 from __future__ import annotations
 
+import copy
+import functools
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from undolog_sdk import (
@@ -53,11 +56,7 @@ from undolog_sdk import (
 )
 from undolog_sdk.context import run_with_session
 from undolog_sdk.integrations._instrument import require_async_tool
-
-# wrap_tools is the shared instrumenter: its container rules (a
-# callable, or an object exposing ``coroutine``) are the surface both
-# wrappers meet, so CrewAI calls it rather than repeating them.
-from undolog_sdk.integrations.langgraph import wrap_tools
+from undolog_sdk.integrations.langgraph import wrap_tool
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +81,177 @@ def _require_async_tool(tool: Any) -> None:
             promised interception that never happens.
     """
     require_async_tool(tool, "wrap_crewai", "StructuredTool")
+
+
+_SAFE_PREFIXES = (
+    "get_",
+    "read_",
+    "fetch_",
+    "list_",
+    "search_",
+    "lookup_",
+    "query_",
+    "check_",
+    "describe_",
+    "view_",
+    "find_",
+    "calculate_",
+    "is_",
+    "has_",
+    "show_",
+)
+
+_IRREVERSIBLE_PREFIXES = (
+    "delete_",
+    "drop_",
+    "destroy_",
+    "remove_",
+    "purge_",
+    "terminate_",
+    "publish_",
+    "execute_",
+    "kill_",
+    "wipe_",
+    "charge_",
+    "pay_",
+    "transfer_",
+    "send_",
+)
+
+
+def classify_tool(tool: Any) -> ToolTier:
+    """Classify an un-annotated tool into a ToolTier using name heuristics.
+
+    Read-only operations (get, read, fetch, list, search, query, etc.)
+    classify as ``ToolTier.SAFE``.
+    Modifying or destructive operations (delete, drop, send, charge, etc.)
+    classify as ``ToolTier.IRREVERSIBLE``.
+    Other tools default to ``ToolTier.COMPENSABLE``.
+
+    Parameters:
+        tool: An async callable or tool object.
+
+    Returns:
+        The deduced :class:`ToolTier`.
+    """
+    existing_tier = getattr(tool, "_undolog_tier", None)
+    if isinstance(existing_tier, ToolTier):
+        return existing_tier
+
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", "")
+    lower_name = str(name).lower()
+
+    for prefix in _SAFE_PREFIXES:
+        if lower_name.startswith(prefix):
+            return ToolTier.SAFE
+
+    for prefix in _IRREVERSIBLE_PREFIXES:
+        if lower_name.startswith(prefix):
+            return ToolTier.IRREVERSIBLE
+
+    return ToolTier.COMPENSABLE
+
+
+def audit_agent_tool(
+    tool: Callable[..., Awaitable[Any]],
+    tier: ToolTier | None = None,
+    compensation_name: str | None = None,
+    client: UndoLogClient | None = None,
+) -> Callable[..., Awaitable[Any]]:
+    """Wrap an un-annotated agent tool, classifying it and logging warnings.
+
+    Parameters:
+        tool: Un-annotated async tool callable.
+        tier: Explicit ToolTier, or None to deduce via :func:`classify_tool`.
+        compensation_name: Optional compensation name.
+        client: Optional UndoLogClient.
+
+    Returns:
+        Instrumented callable that logs a warning and executes under the
+        classified tier.
+    """
+    resolved_tier = tier or classify_tool(tool)
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
+    log.warning(
+        "Un-annotated tool %r detected; classified as %s",
+        name,
+        resolved_tier.value,
+    )
+    wrapped = wrap_tool(
+        tool,
+        tier=resolved_tier,
+        compensation_name=compensation_name,
+        client=client,
+    )
+
+    @functools.wraps(tool)
+    async def audited_agent_wrapper(*args: Any, **kwargs: Any) -> Any:
+        tool_name = getattr(tool, "__name__", str(tool))
+        log.warning(
+            "Un-annotated tool %r invoked within crew agent; classified as %s",
+            tool_name,
+            resolved_tier.value,
+        )
+        return await wrapped(*args, **kwargs)
+
+    for attr in (
+        "_undolog_tool_name",
+        "_undolog_tier",
+        "_undolog_compensation",
+        "_undolog_client",
+    ):
+        if hasattr(wrapped, attr):
+            setattr(audited_agent_wrapper, attr, getattr(wrapped, attr))
+    return audited_agent_wrapper
+
+
+def _instrument_agent_tool(
+    tool: Any,
+    tiers: dict[str, ToolTier],
+    compensations: dict[str, str],
+    client: UndoLogClient | None,
+) -> Any:
+    """Instrument a single tool object or container."""
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
+    target = tool
+    container: Any = None
+    inner = getattr(tool, "coroutine", None)
+    if inner is not None and callable(inner):
+        target = inner
+        container = tool
+
+    if not callable(target) or not name or not hasattr(target, "__name__"):
+        raise ValueError(
+            f"wrap_crewai cannot instrument {name or tool!r}: UndoLog "
+            "needs an async callable with a name, or an object exposing "
+            "an async 'coroutine' attribute."
+        )
+
+    if getattr(target, "_undolog_tool_name", None) is not None:
+        return tool
+
+    if name and name in tiers:
+        tier = tiers[name]
+        instrumented = wrap_tool(
+            target,
+            tier=tier,
+            compensation_name=compensations.get(name),
+            client=client,
+        )
+    else:
+        resolved_tier = classify_tool(target)
+        instrumented = audit_agent_tool(
+            target,
+            tier=resolved_tier,
+            compensation_name=compensations.get(name) if name else None,
+            client=client,
+        )
+
+    if container is not None:
+        replica = copy.copy(tool)
+        setattr(replica, "coroutine", instrumented)
+        return replica
+    return instrumented
 
 
 def _prepare_agents(
@@ -111,16 +281,29 @@ def _prepare_agents(
         tools = list(agent.tools or [])
         for tool in tools:
             _require_async_tool(tool)
-        plans.append(
-            (
-                agent,
-                wrap_tools(
-                    tools, tiers=tiers, compensations=compensations, client=client
-                ),
-            )
-        )
+        wrapped_tools = [
+            _instrument_agent_tool(tool, tiers, compensations, client) for tool in tools
+        ]
+        plans.append((agent, wrapped_tools))
+
+    task_plans: list[tuple[Any, list[Any]]] = []
+    tasks = getattr(crew, "tasks", None)
+    if tasks:
+        for task in tasks:
+            t_tools = getattr(task, "tools", None)
+            if t_tools:
+                for tool in t_tools:
+                    _require_async_tool(tool)
+                wrapped_t_tools = [
+                    _instrument_agent_tool(tool, tiers, compensations, client)
+                    for tool in t_tools
+                ]
+                task_plans.append((task, wrapped_t_tools))
+
     for agent, wrapped in plans:
         agent.tools = wrapped
+    for task, wrapped in task_plans:
+        task.tools = wrapped
 
 
 class WrappedCrew:
@@ -301,7 +484,8 @@ def wrap_crewai(
         org_id: Organisation identifier for sessions. Defaults to the
             ``UNDOLOG_ORG_ID`` environment variable, then ``org_demo``.
         tiers: Per-tool tier overrides keyed by tool name. Tools not
-            listed default to ``COMPENSABLE``.
+            listed are classified via name heuristics into SAFE,
+            IRREVERSIBLE, or default to COMPENSABLE.
         compensations: Per-tool compensation registry names keyed by
             tool name. Required for any ``COMPENSABLE`` tool that is
             not already decorated with ``@undolog_tool``.

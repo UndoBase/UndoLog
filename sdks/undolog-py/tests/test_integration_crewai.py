@@ -33,6 +33,7 @@ from undolog_sdk import (
 from undolog_sdk.client import InterceptResponse
 from undolog_sdk.context import get_current_session
 from undolog_sdk.integrations import WrappedCrew, wrap_crewai
+from undolog_sdk.integrations.crewai import classify_tool
 
 # ── Fakes ───────────────────────────────────────────────────────────────────
 
@@ -52,9 +53,11 @@ class FakeCrew:
         tools: list[Any] | None = None,
         result: Any = None,
         role: str = "support",
+        tasks: list[Any] | None = None,
     ) -> None:
         self.agents: list[Any] = [FakeAgent(tools if tools is not None else [])]
         self.role = role
+        self.tasks: list[Any] = tasks if tasks is not None else []
         self.invocations: list[dict[str, Any]] = []
         self._result = "crew output" if result is None else result
 
@@ -91,6 +94,39 @@ class ToolCrew(FakeCrew):
             call_args = {k: v for k, v in self.tool_args.items() if k in accepted}
             results.append(await tool(**call_args))
         return results
+
+
+class MultiAgentToolCrew:
+    """A crew executing tools across all agents."""
+
+    def __init__(
+        self,
+        agents: list[FakeAgent],
+        tool_args: dict[str, Any] | None = None,
+    ) -> None:
+        self.agents = agents
+        self.tool_args = tool_args or {}
+        self.invocations: list[dict[str, Any]] = []
+
+    async def kickoff_async(
+        self, inputs: dict[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        self.invocations.append({"inputs": inputs, **kwargs})
+        results = []
+        for agent in self.agents:
+            for tool in agent.tools:
+                target = getattr(tool, "coroutine", None) or tool
+                accepted = inspect.signature(target).parameters
+                call_args = {k: v for k, v in self.tool_args.items() if k in accepted}
+                results.append(await tool(**call_args))
+        return results
+
+
+class FakeTask:
+    """Minimal stand-in for a CrewAI task with tools."""
+
+    def __init__(self, tools: list[Any]) -> None:
+        self.tools = tools
 
 
 # ── Session lifecycle ───────────────────────────────────────────────────────
@@ -694,3 +730,245 @@ def _positions(client: AsyncMock) -> list[int]:
         The ``step_index`` each call was made with.
     """
     return [call.kwargs["step_index"] for call in client.intercept.call_args_list]
+
+
+# ── Agent tool discovery ────────────────────────────────────────────────────
+
+
+class TestAgentToolDiscovery:
+    """wrap_crewai discovers and binds tools across all agents and tasks."""
+
+    async def test_discovers_and_binds_tools_across_multiple_agents(self) -> None:
+        async def fetch_profile(user_id: str) -> str:
+            return f"profile:{user_id}"
+
+        async def check_permissions(user_id: str) -> bool:
+            return True
+
+        async def list_groups(user_id: str) -> list[str]:
+            return ["admin"]
+
+        agent1 = FakeAgent([fetch_profile, check_permissions])
+        agent2 = FakeAgent([list_groups])
+        agent3 = FakeAgent([])
+
+        crew = MultiAgentToolCrew(
+            [agent1, agent2, agent3],
+            tool_args={"user_id": "u-1"},
+        )
+        wrapped = wrap_crewai(
+            crew,
+            org_id="org_test",
+            tiers={
+                "fetch_profile": ToolTier.SAFE,
+                "check_permissions": ToolTier.SAFE,
+                "list_groups": ToolTier.SAFE,
+            },
+        )
+
+        results = await wrapped.kickoff_async()
+        assert results == ["profile:u-1", True, ["admin"]]
+        assert agent1.tools[0]._undolog_tool_name == "fetch_profile"
+        assert agent1.tools[1]._undolog_tool_name == "check_permissions"
+        assert agent2.tools[0]._undolog_tool_name == "list_groups"
+        assert agent3.tools == []
+
+    async def test_discovers_tools_on_tasks_when_present(self) -> None:
+        async def read_summary(task_id: str) -> str:
+            return f"summary:{task_id}"
+
+        crew = FakeCrew(tools=[])
+        task = FakeTask([read_summary])
+        crew.tasks = [task]
+
+        wrapped = wrap_crewai(
+            crew,
+            org_id="org_test",
+            tiers={"read_summary": ToolTier.SAFE},
+        )
+        await wrapped.kickoff_async()
+
+        assert task.tools[0]._undolog_tool_name == "read_summary"
+
+
+# ── Un-annotated tool categorization and logging ────────────────────────────
+
+
+class TestUnannotatedToolCategorizationAndLogging:
+    """Un-annotated agent tools are categorized and logged with warnings."""
+
+    async def test_unannotated_safe_tool_categorized_and_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _client(InterceptResponse(outcome="Execute", effect_id="eff-safe-1"))
+
+        async def fetch_user_data(user_id: str) -> dict[str, str]:
+            return {"user": user_id}
+
+        crew = ToolCrew({"user_id": "u-100"}, tools=[fetch_user_data])
+        wrapped = wrap_crewai(crew, org_id="org_test", client=client)
+
+        with caplog.at_level("WARNING"):
+            out = await wrapped.kickoff_async()
+
+        assert out == [{"user": "u-100"}]
+        client.intercept.assert_not_awaited()
+        assert any(
+            "Un-annotated tool 'fetch_user_data' invoked within crew agent; classified as safe"
+            in record.message
+            and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+
+    def test_classify_tool_heuristics(self) -> None:
+        async def get_account(id: str) -> None:
+            pass
+
+        async def read_configuration() -> None:
+            pass
+
+        async def fetch_records() -> None:
+            pass
+
+        async def list_items() -> None:
+            pass
+
+        async def search_query() -> None:
+            pass
+
+        async def delete_account(id: str) -> None:
+            pass
+
+        async def drop_schema() -> None:
+            pass
+
+        async def charge_customer(amt: int) -> None:
+            pass
+
+        async def send_invoice() -> None:
+            pass
+
+        async def custom_operation() -> None:
+            pass
+
+        assert classify_tool(get_account) == ToolTier.SAFE
+        assert classify_tool(read_configuration) == ToolTier.SAFE
+        assert classify_tool(fetch_records) == ToolTier.SAFE
+        assert classify_tool(list_items) == ToolTier.SAFE
+        assert classify_tool(search_query) == ToolTier.SAFE
+
+        assert classify_tool(delete_account) == ToolTier.IRREVERSIBLE
+        assert classify_tool(drop_schema) == ToolTier.IRREVERSIBLE
+        assert classify_tool(charge_customer) == ToolTier.IRREVERSIBLE
+        assert classify_tool(send_invoice) == ToolTier.IRREVERSIBLE
+
+        assert classify_tool(custom_operation) == ToolTier.COMPENSABLE
+
+    def test_classify_tool_preserves_existing_annotation(self) -> None:
+        @undolog_tool(tier=ToolTier.IRREVERSIBLE)
+        async def fetch_with_side_effect() -> None:
+            pass
+
+        assert classify_tool(fetch_with_side_effect) == ToolTier.IRREVERSIBLE
+
+
+# ── Irreversible tool approval suspension ───────────────────────────────────
+
+
+class TestIrreversibleToolApprovalSuspension:
+    """Un-annotated irreversible tools suspend crew execution awaiting approval."""
+
+    async def test_unannotated_irreversible_tool_suspends_for_approval(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _client(
+            InterceptResponse(outcome="AwaitingApproval", approval_id="ap-crew-irrev")
+        )
+
+        async def delete_customer_record(record_id: str) -> dict[str, str]:
+            return {"deleted": record_id}
+
+        crew = ToolCrew({"record_id": "rec-42"}, tools=[delete_customer_record])
+        wrapped = wrap_crewai(crew, org_id="org_test", client=client)
+
+        with caplog.at_level("WARNING"):
+            with pytest.raises(AwaitingApprovalError) as exc_info:
+                await wrapped.kickoff_async()
+
+        assert exc_info.value.approval_id == "ap-crew-irrev"
+        assert exc_info.value.tool_name == "delete_customer_record"
+        assert wrapped.awaiting_approval is True
+        assert wrapped.approval_request == {
+            "approval_id": "ap-crew-irrev",
+            "tool_name": "delete_customer_record",
+            "step_index": 1,
+        }
+        assert wrapped.session_id is not None
+        assert any(
+            "Un-annotated tool 'delete_customer_record' invoked within crew agent; classified as irreversible"
+            in record.message
+            and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+
+
+# ── Stateful replay ─────────────────────────────────────────────────────────
+
+
+class TestStatefulReplay:
+    """Replay restores checkpoint state without duplicating committed effects."""
+
+    async def test_stateful_replay_skips_reexecution_for_committed_effects(
+        self,
+    ) -> None:
+        tool_invocations: list[str] = []
+        client = _client(
+            InterceptResponse(outcome="Execute", effect_id="eff-rep-1"),
+            InterceptResponse(outcome="AwaitingApproval", approval_id="ap-rep-2"),
+            InterceptResponse(
+                outcome="Replay",
+                effect_id="eff-rep-1",
+                cached_result={"output": {"status": "recorded", "user_id": "usr-10"}},
+            ),
+            InterceptResponse(outcome="Execute", effect_id="eff-rep-2"),
+        )
+
+        async def record_user_action(user_id: str) -> dict[str, Any]:
+            tool_invocations.append(f"record:{user_id}")
+            return {"status": "recorded", "user_id": user_id}
+
+        async def delete_user_status(user_id: str) -> dict[str, Any]:
+            tool_invocations.append(f"delete:{user_id}")
+            return {"status": "deleted", "user_id": user_id}
+
+        crew = ToolCrew(
+            {"user_id": "usr-10"},
+            tools=[record_user_action, delete_user_status],
+        )
+        wrapped = wrap_crewai(
+            crew,
+            org_id="org_test",
+            client=client,
+            compensations={"record_user_action": "undo_record"},
+        )
+
+        with pytest.raises(AwaitingApprovalError):
+            await wrapped.kickoff_async()
+
+        assert wrapped.awaiting_approval is True
+        assert tool_invocations == ["record:usr-10"]
+        session_id = wrapped.session_id
+        assert session_id is not None
+
+        second_run = await wrapped.kickoff_async({"session_id": session_id})
+        assert client.intercept.call_count == 4
+        assert tool_invocations == ["record:usr-10", "delete:usr-10"], (
+            "committed tool body must not re-execute on stateful replay"
+        )
+        assert second_run == [
+            {"status": "recorded", "user_id": "usr-10"},
+            {"status": "deleted", "user_id": "usr-10"},
+        ]
+        assert wrapped.awaiting_approval is False
+        assert wrapped.approval_request is None
+        assert wrapped.session_id == session_id
