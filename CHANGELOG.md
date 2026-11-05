@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- SDK: enhanced LangGraph auto-instrumentation with RunnableConfig session
+  injection, interrupt event mapping, and un-annotated tool logging.
+
 - SDK: extended compensation test harness with network failure injection,
   exponential backoff assertions, and dead-letter state recording.
 

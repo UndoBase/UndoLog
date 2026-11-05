@@ -40,6 +40,13 @@ from undolog_sdk.integrations import (
     wrap_tool,
     wrap_tools,
 )
+from undolog_sdk.integrations.langgraph import (
+    CONFIG_SESSION_KEY,
+    STATE_INTERRUPT_KEY,
+    GraphInterrupt,
+    audit_tool,
+    classify_tool,
+)
 
 # ── Fakes ───────────────────────────────────────────────────────────────────
 
@@ -170,7 +177,11 @@ class TestSessionLifecycle:
             stream_mode="updates",
         )
 
-        assert graph.invocations[0]["config"] == {"configurable": {"thread_id": "t1"}}
+        assert graph.invocations[0]["config"]["configurable"]["thread_id"] == "t1"
+        assert (
+            graph.invocations[0]["config"]["configurable"][CONFIG_SESSION_KEY]
+            is not None
+        )
         assert graph.invocations[0]["stream_mode"] == "updates"
 
 
@@ -498,6 +509,275 @@ class TestWrapLanggraphOrgResolution:
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+class TestConfigSessionInjection:
+    """``wrap_langgraph`` injects the active session into ``RunnableConfig``."""
+
+    async def test_session_injected_into_configurable(self) -> None:
+        captured_session: Any = None
+
+        class ConfigNodeGraph:
+            async def ainvoke(
+                self,
+                input: dict[str, Any],
+                config: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> dict[str, Any]:
+                nonlocal captured_session
+                if config and "configurable" in config:
+                    captured_session = config["configurable"].get(CONFIG_SESSION_KEY)
+                return {"done": True}
+
+        graph = wrap_langgraph(ConfigNodeGraph(), org_id="org_test")
+        out = await graph.ainvoke(
+            {"q": "hi"},
+            config={"configurable": {"thread_id": "thread-123"}},
+        )
+
+        assert captured_session is not None
+        assert isinstance(captured_session, UndoLogSession)
+        assert captured_session.session_id == out["session_id"]
+        assert captured_session.org_id == "org_test"
+
+    async def test_config_created_when_none_provided(self) -> None:
+        captured_config: Any = None
+
+        class ConfigNodeGraph:
+            async def ainvoke(
+                self,
+                input: dict[str, Any],
+                config: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> dict[str, Any]:
+                nonlocal captured_config
+                captured_config = config
+                return {"done": True}
+
+        graph = wrap_langgraph(ConfigNodeGraph(), org_id="org_test")
+        out = await graph.ainvoke({"q": "hi"})
+
+        assert captured_config is not None
+        assert "configurable" in captured_config
+        injected = captured_config["configurable"].get(CONFIG_SESSION_KEY)
+        assert isinstance(injected, UndoLogSession)
+        assert injected.session_id == out["session_id"]
+
+
+class TestNativeInterruptMapping:
+    """``AwaitingApprovalError`` translates into framework-native interruptions."""
+
+    async def test_approval_maps_to_native_interrupt_state(self) -> None:
+        client = _client(
+            InterceptResponse(outcome="AwaitingApproval", approval_id="appr-42")
+        )
+
+        @undolog_tool(tier=ToolTier.IRREVERSIBLE, client=client)
+        async def delete_database(db_name: str) -> dict[str, str]:
+            return {"deleted": db_name}
+
+        class NodeGraph:
+            async def ainvoke(
+                self,
+                input: dict[str, Any],
+                config: Any = None,
+                **kwargs: Any,
+            ) -> dict[str, Any]:
+                await delete_database(db_name="prod_db")
+                return {"done": True}
+
+        graph = wrap_langgraph(NodeGraph(), org_id="org_test")
+        out = await graph.ainvoke({"db_name": "prod_db"})
+
+        assert out["awaiting_approval"] is True
+        assert STATE_INTERRUPT_KEY in out
+        interrupts = out[STATE_INTERRUPT_KEY]
+        assert isinstance(interrupts, tuple)
+        assert len(interrupts) == 1
+        interrupt_entry = interrupts[0]
+        assert interrupt_entry["resumable"] is True
+        assert interrupt_entry["value"]["approval_id"] == "appr-42"
+        assert interrupt_entry["value"]["tool_name"] == "delete_database"
+        assert interrupt_entry["value"]["type"] == "approval_required"
+
+    async def test_raise_interrupt_raises_graph_interrupt(self) -> None:
+        client = _client(
+            InterceptResponse(outcome="AwaitingApproval", approval_id="appr-99")
+        )
+
+        @undolog_tool(tier=ToolTier.IRREVERSIBLE, client=client)
+        async def drop_table(table_name: str) -> dict[str, str]:
+            return {"dropped": table_name}
+
+        class NodeGraph:
+            async def ainvoke(
+                self,
+                input: dict[str, Any],
+                config: Any = None,
+                **kwargs: Any,
+            ) -> dict[str, Any]:
+                await drop_table(table_name="orders")
+                return {"done": True}
+
+        graph = wrap_langgraph(
+            NodeGraph(),
+            org_id="org_test",
+            raise_interrupt=True,
+        )
+
+        with pytest.raises(GraphInterrupt) as excinfo:
+            await graph.ainvoke({"table_name": "orders"})
+
+        assert len(excinfo.value.interrupts) == 1
+        interrupt_val = excinfo.value.interrupts[0]
+        assert interrupt_val["approval_id"] == "appr-99"
+        assert interrupt_val["tool_name"] == "drop_table"
+        assert interrupt_val["type"] == "approval_required"
+
+    async def test_successful_run_clears_interrupt_state(self) -> None:
+        graph = wrap_langgraph(FakeGraph(), org_id="org_test")
+        out = await graph.ainvoke(
+            {
+                "q": "hi",
+                STATE_INTERRUPT_KEY: ({"value": "stale"},),
+            }
+        )
+
+        assert out[STATE_INTERRUPT_KEY] is None
+
+
+class TestUnannotatedToolCategorizationAndLogging:
+    """Un-annotated tools are detected, classified, and logged with warning."""
+
+    async def test_unannotated_tool_invoked_in_graph_node_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _client(InterceptResponse(outcome="Execute", effect_id="eff-audit-1"))
+
+        async def fetch_user_data(user_id: str) -> dict[str, str]:
+            return {"user": user_id}
+
+        audited_tool = audit_tool(fetch_user_data, client=client)
+
+        class NodeGraph:
+            async def ainvoke(
+                self,
+                input: dict[str, Any],
+                config: Any = None,
+                **kwargs: Any,
+            ) -> dict[str, Any]:
+                res = await audited_tool(user_id="user-123")
+                return {"done": True, "res": res}
+
+        graph = wrap_langgraph(NodeGraph(), org_id="org_test")
+
+        with caplog.at_level("WARNING"):
+            out = await graph.ainvoke({"user_id": "user-123"})
+
+        assert out["done"] is True
+        assert out["res"] == {"user": "user-123"}
+        assert any(
+            "Un-annotated tool 'fetch_user_data' invoked within graph node"
+            in record.message
+            and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+
+    def test_classify_tool_heuristics(self) -> None:
+        async def get_account(id: str) -> None:
+            pass
+
+        async def read_configuration() -> None:
+            pass
+
+        async def fetch_records() -> None:
+            pass
+
+        async def list_items() -> None:
+            pass
+
+        async def search_query() -> None:
+            pass
+
+        async def delete_account(id: str) -> None:
+            pass
+
+        async def drop_schema() -> None:
+            pass
+
+        async def charge_customer(amt: int) -> None:
+            pass
+
+        async def send_invoice() -> None:
+            pass
+
+        assert classify_tool(get_account) == ToolTier.SAFE
+        assert classify_tool(read_configuration) == ToolTier.SAFE
+        assert classify_tool(fetch_records) == ToolTier.SAFE
+        assert classify_tool(list_items) == ToolTier.SAFE
+        assert classify_tool(search_query) == ToolTier.SAFE
+
+        assert classify_tool(delete_account) == ToolTier.IRREVERSIBLE
+        assert classify_tool(drop_schema) == ToolTier.IRREVERSIBLE
+        assert classify_tool(charge_customer) == ToolTier.IRREVERSIBLE
+        assert classify_tool(send_invoice) == ToolTier.IRREVERSIBLE
+
+    def test_classify_tool_preserves_existing_annotation(self) -> None:
+        @undolog_tool(tier=ToolTier.IRREVERSIBLE)
+        async def fetch_with_side_effect() -> None:
+            pass
+
+        assert classify_tool(fetch_with_side_effect) == ToolTier.IRREVERSIBLE
+
+
+class TestStatefulReplay:
+    """Replay restores checkpoint state without duplicating committed effects."""
+
+    async def test_stateful_replay_skips_reexecution_for_committed_effects(
+        self,
+    ) -> None:
+        tool_invocations: list[str] = []
+        client = _client(
+            InterceptResponse(outcome="Execute", effect_id="eff-rep-1"),
+            InterceptResponse(
+                outcome="Replay",
+                effect_id="eff-rep-1",
+                cached_result={"output": {"status": "committed", "tx_id": "tx-999"}},
+            ),
+        )
+
+        @undolog_tool(
+            tier=ToolTier.COMPENSABLE,
+            compensation=CompensationDescriptor.new("undo_step"),
+            client=client,
+        )
+        async def record_payment(tx_id: str) -> dict[str, Any]:
+            tool_invocations.append(tx_id)
+            return {"status": "committed", "tx_id": tx_id}
+
+        class NodeGraph:
+            async def ainvoke(
+                self,
+                input: dict[str, Any],
+                config: Any = None,
+                **kwargs: Any,
+            ) -> dict[str, Any]:
+                res = await record_payment(tx_id="tx-999")
+                return {"result": res}
+
+        graph = wrap_langgraph(NodeGraph(), org_id="org_test")
+
+        first_run = await graph.ainvoke({"q": "pay"})
+        assert first_run["result"] == {"status": "committed", "tx_id": "tx-999"}
+        assert first_run["session_id"]
+
+        replayed_run = await graph.ainvoke(first_run)
+        assert client.intercept.call_count == 2
+        assert tool_invocations == ["tx-999"], (
+            "tool body must not re-execute on stateful replay"
+        )
+        assert replayed_run["result"] == {"status": "committed", "tx_id": "tx-999"}
+        assert replayed_run["session_id"] == first_run["session_id"]
 
 
 def _client(*outcomes: InterceptResponse) -> AsyncMock:
