@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- SDK: enhanced Semantic Kernel auto-instrumentation with plugin function
+  discovery, un-annotated tool categorization, and approval handling.
+
 - SDK: enhanced LlamaIndex auto-instrumentation with agent tool binding,
   un-annotated tool categorization, and approval event handling.
 

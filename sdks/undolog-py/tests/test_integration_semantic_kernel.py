@@ -33,8 +33,17 @@ from undolog_sdk import (
 from undolog_sdk.client import InterceptResponse
 from undolog_sdk.context import get_current_session
 from undolog_sdk.integrations import WrappedKernel, wrap_semantic_kernel
+from undolog_sdk.integrations.semantic_kernel import classify_tool
 
 # ── Fakes ───────────────────────────────────────────────────────────────────
+
+
+class FakePlugin:
+    """Plugin object exposing functions as a mapping or list."""
+
+    def __init__(self, name: str, functions: Any) -> None:
+        self.name = name
+        self.functions = functions
 
 
 class FakeKernel:
@@ -46,7 +55,7 @@ class FakeKernel:
     """
 
     def __init__(self, result: Any = None) -> None:
-        self.plugins: dict[str, dict[str, Any]] = {}
+        self.plugins: dict[str, Any] = {}
         self.invocations: list[dict[str, Any]] = []
         self._result = "kernel output" if result is None else result
 
@@ -605,11 +614,15 @@ class TestFunctionRegistration:
     async def test_an_unmapped_compensable_function_is_rejected(self) -> None:
         """A default-tier function with no compensation would run with
         no journal and no approval gate."""
+
+        async def update_customer(customer_id: str) -> dict[str, str]:
+            return {"customer_id": customer_id}
+
         kernel = FakeKernel()
         wrapped = wrap_semantic_kernel(kernel, org_id="org_test")
 
         with pytest.raises(ValueError, match="compensation"):
-            wrapped.add_function("support", "lookup_customer", _lookup_customer)
+            wrapped.add_function("support", "update_customer", update_customer)
 
     async def test_the_tier_decides_whether_the_proxy_is_reached(self) -> None:
         """A SAFE function bypasses the proxy, so no intercept may occur."""
@@ -852,3 +865,284 @@ class _sealed:
 
     def pop(self, key: str, default: Any = None) -> Any:
         raise TypeError("mapping is read-only")
+
+
+# ── Plugin binding ──────────────────────────────────────────────────────────
+
+
+class TestPluginBinding:
+    """wrap_semantic_kernel inspects and binds functions across kernel plugins."""
+
+    async def test_wraps_functions_on_kernel_plugins_dict_at_wrap_time(self) -> None:
+        async def fetch_profile(user_id: str) -> dict[str, str]:
+            return {"user_id": user_id}
+
+        kernel = FakeKernel()
+        kernel.plugins["users"] = {"fetch_profile": fetch_profile}
+        wrapped = wrap_semantic_kernel(kernel, org_id="org_test")
+
+        bound_func = kernel.plugins["users"]["fetch_profile"]
+        assert getattr(bound_func, "_undolog_tool_name", None) == "fetch_profile"
+        assert getattr(bound_func, "_undolog_tier", None) == ToolTier.SAFE
+
+        result = await wrapped.invoke(bound_func, arguments={"user_id": "u123"})
+        assert result == {"user_id": "u123"}
+        assert wrapped.session_id is not None
+
+    async def test_wraps_functions_on_plugin_object_with_functions_mapping(
+        self,
+    ) -> None:
+        async def get_stats() -> dict[str, int]:
+            return {"count": 42}
+
+        kernel = FakeKernel()
+        kernel.plugins["analytics"] = FakePlugin("analytics", {"get_stats": get_stats})
+        wrapped = wrap_semantic_kernel(kernel, org_id="org_test")
+
+        bound_func = kernel.plugins["analytics"].functions["get_stats"]
+        assert getattr(bound_func, "_undolog_tool_name", None) == "get_stats"
+        assert getattr(bound_func, "_undolog_tier", None) == ToolTier.SAFE
+
+        result = await wrapped.invoke(bound_func)
+        assert result == {"count": 42}
+
+    async def test_wraps_functions_on_plugin_object_with_functions_list(self) -> None:
+        async def read_manifest() -> str:
+            return "v1.0"
+
+        kernel = FakeKernel()
+        kernel.plugins["system"] = FakePlugin("system", [read_manifest])
+        wrapped = wrap_semantic_kernel(kernel, org_id="org_test")
+
+        bound_func = kernel.plugins["system"].functions[0]
+        assert getattr(bound_func, "_undolog_tool_name", None) == "read_manifest"
+        assert getattr(bound_func, "_undolog_tier", None) == ToolTier.SAFE
+
+        result = await wrapped.invoke(bound_func)
+        assert result == "v1.0"
+
+    async def test_wraps_subsequently_added_plugins_before_invocation(self) -> None:
+        kernel = FakeKernel()
+        wrapped = wrap_semantic_kernel(kernel, org_id="org_test")
+
+        async def query_metric(metric: str) -> str:
+            return f"val_{metric}"
+
+        kernel.plugins["metrics"] = {"query_metric": query_metric}
+        result = await wrapped.invoke(
+            kernel.plugins["metrics"]["query_metric"],
+            arguments={"metric": "cpu"},
+        )
+        assert result == "val_cpu"
+        assert (
+            getattr(
+                kernel.plugins["metrics"]["query_metric"],
+                "_undolog_tool_name",
+                None,
+            )
+            == "query_metric"
+        )
+
+    async def test_rejected_function_in_plugin_leaves_plugin_untouched(self) -> None:
+        kernel = FakeKernel()
+        kernel.plugins["broken"] = {"sync_search": _sync_search}
+
+        with pytest.raises(ValueError, match="async"):
+            wrap_semantic_kernel(kernel, org_id="org_test")
+
+        assert getattr(_sync_search, "_undolog_tool_name", None) is None
+
+
+# ── Un-annotated function categorization and logging ────────────────────────
+
+
+class TestUnannotatedFunctionCategorizationAndLogging:
+    """Un-annotated kernel functions emit structured audit logs."""
+
+    async def test_unannotated_safe_function_emits_structured_audit_logs(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async def fetch_knowledge_base(query: str) -> dict[str, str]:
+            return {"result": f"kb:{query}"}
+
+        kernel = FakeKernel()
+        kernel.plugins["kb"] = {"fetch_knowledge_base": fetch_knowledge_base}
+        wrapped = wrap_semantic_kernel(kernel, org_id="org_test")
+
+        with caplog.at_level("WARNING"):
+            out = await wrapped.invoke(
+                kernel.plugins["kb"]["fetch_knowledge_base"],
+                arguments={"query": "safety"},
+            )
+
+        assert out == {"result": "kb:safety"}
+        assert any(
+            "Un-annotated tool 'fetch_knowledge_base' invoked within kernel; classified as safe"
+            in record.message
+            and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+
+    def test_classify_tool_heuristics(self) -> None:
+        async def get_user() -> None:
+            pass
+
+        async def read_file() -> None:
+            pass
+
+        async def fetch_record() -> None:
+            pass
+
+        async def list_items() -> None:
+            pass
+
+        async def search_catalog() -> None:
+            pass
+
+        async def delete_user() -> None:
+            pass
+
+        async def drop_table() -> None:
+            pass
+
+        async def purge_logs() -> None:
+            pass
+
+        async def send_email() -> None:
+            pass
+
+        async def update_settings() -> None:
+            pass
+
+        assert classify_tool(get_user) == ToolTier.SAFE
+        assert classify_tool(read_file) == ToolTier.SAFE
+        assert classify_tool(fetch_record) == ToolTier.SAFE
+        assert classify_tool(list_items) == ToolTier.SAFE
+        assert classify_tool(search_catalog) == ToolTier.SAFE
+
+        assert classify_tool(delete_user) == ToolTier.IRREVERSIBLE
+        assert classify_tool(drop_table) == ToolTier.IRREVERSIBLE
+        assert classify_tool(purge_logs) == ToolTier.IRREVERSIBLE
+        assert classify_tool(send_email) == ToolTier.IRREVERSIBLE
+
+        assert classify_tool(update_settings) == ToolTier.COMPENSABLE
+
+    def test_classify_tool_preserves_existing_annotation(self) -> None:
+        @undolog_tool(tier=ToolTier.IRREVERSIBLE)
+        async def get_secure_credential() -> None:
+            pass
+
+        assert classify_tool(get_secure_credential) == ToolTier.IRREVERSIBLE
+
+
+# ── Approval suspension ─────────────────────────────────────────────────────
+
+
+class TestApprovalSuspension:
+    """AwaitingApprovalError cleanly suspends execution and surfaces approval state."""
+
+    async def test_irreversible_function_cleanly_suspends_and_surfaces_approval(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _client(
+            InterceptResponse(outcome="AwaitingApproval", approval_id="ap-sk-1")
+        )
+
+        async def delete_database_entry(entry_id: str) -> dict[str, str]:
+            return {"deleted": entry_id}
+
+        kernel = FakeKernel()
+        kernel.plugins["db"] = {"delete_database_entry": delete_database_entry}
+        wrapped = wrap_semantic_kernel(kernel, org_id="org_test", client=client)
+
+        with caplog.at_level("WARNING"):
+            with pytest.raises(AwaitingApprovalError) as exc_info:
+                await wrapped.invoke(
+                    kernel.plugins["db"]["delete_database_entry"],
+                    arguments={"entry_id": "entry-9"},
+                )
+
+        assert exc_info.value.approval_id == "ap-sk-1"
+        assert exc_info.value.tool_name == "delete_database_entry"
+        assert wrapped.awaiting_approval is True
+        assert wrapped.approval_request == {
+            "approval_id": "ap-sk-1",
+            "tool_name": "delete_database_entry",
+            "step_index": 1,
+        }
+        assert wrapped.session_id is not None
+        assert any(
+            "Un-annotated tool 'delete_database_entry' invoked within kernel; classified as irreversible"
+            in record.message
+            and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+
+
+# ── Stateful replay ─────────────────────────────────────────────────────────
+
+
+class TestStatefulReplay:
+    """Committed function results are replayed idempotently upon kernel re-invocation."""
+
+    async def test_committed_function_replayed_idempotently_upon_reinvocation(
+        self,
+    ) -> None:
+        tool_invocations: list[str] = []
+        client = _client(
+            InterceptResponse(outcome="Execute", effect_id="eff-turn-1"),
+            InterceptResponse(outcome="AwaitingApproval", approval_id="ap-turn-2"),
+            InterceptResponse(
+                outcome="Replay",
+                effect_id="eff-turn-1",
+                cached_result={"output": {"status": "saved", "id": "doc-1"}},
+            ),
+            InterceptResponse(outcome="Execute", effect_id="eff-turn-2"),
+        )
+
+        async def record_document(doc_id: str) -> dict[str, str]:
+            tool_invocations.append(f"record:{doc_id}")
+            return {"status": "saved", "id": doc_id}
+
+        async def delete_document(doc_id: str) -> dict[str, str]:
+            tool_invocations.append(f"delete:{doc_id}")
+            return {"status": "deleted", "id": doc_id}
+
+        kernel = FakeKernel()
+        kernel.plugins["docs"] = {
+            "record_document": record_document,
+            "delete_document": delete_document,
+        }
+
+        wrapped = wrap_semantic_kernel(
+            kernel,
+            org_id="org_test",
+            client=client,
+            compensations={"record_document": "undo_save"},
+        )
+
+        # First run: record executes, delete awaits approval.
+        with pytest.raises(AwaitingApprovalError):
+            async with wrapped.session():
+                await kernel.plugins["docs"]["record_document"](doc_id="doc-1")
+                await kernel.plugins["docs"]["delete_document"](doc_id="doc-1")
+
+        assert wrapped.awaiting_approval is True
+        assert tool_invocations == ["record:doc-1"]
+        session_id = wrapped.session_id
+        assert session_id is not None
+
+        # Re-invoke under session_id: record_document replays cached, delete executes.
+        async with wrapped.session(session_id=session_id):
+            out1 = await kernel.plugins["docs"]["record_document"](doc_id="doc-1")
+            out2 = await kernel.plugins["docs"]["delete_document"](doc_id="doc-1")
+
+        assert client.intercept.call_count == 4
+        assert tool_invocations == ["record:doc-1", "delete:doc-1"], (
+            "committed function body must not re-execute on stateful replay"
+        )
+        assert out1 == {"status": "saved", "id": "doc-1"}
+        assert out2 == {"status": "deleted", "id": "doc-1"}
+        assert wrapped.awaiting_approval is False
+        assert wrapped.approval_request is None
+        assert wrapped.session_id == session_id
