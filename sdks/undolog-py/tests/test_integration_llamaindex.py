@@ -35,6 +35,7 @@ from undolog_sdk import (
 from undolog_sdk.client import InterceptResponse
 from undolog_sdk.context import get_current_session
 from undolog_sdk.integrations import WrappedIndex, wrap_llamaindex
+from undolog_sdk.integrations.llamaindex import classify_tool
 
 # ── Fakes ───────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,42 @@ class ToolIndex(FakeIndex):
             call_args = {k: v for k, v in self.tool_args.items() if k in accepted}
             results.append(await target(**call_args))
         return results
+
+
+class FakeAgentRunner:
+    """Mimics a LlamaIndex agent runner with achat, aquery, tools, and tool_specs."""
+
+    def __init__(
+        self,
+        tools: list[Any] | None = None,
+        tool_specs: list[Any] | None = None,
+        tool_args: dict[str, Any] | None = None,
+    ) -> None:
+        if tools is not None:
+            self.tools: list[Any] | None = tools
+        if tool_specs is not None:
+            self.tool_specs: list[Any] | None = tool_specs
+        self.tool_args = tool_args or {}
+        self.chat_history: list[dict[str, Any]] = []
+
+    async def aquery(self, query: Any, **kwargs: Any) -> Any:
+        return await self._execute(query, **kwargs)
+
+    async def achat(self, message: Any, **kwargs: Any) -> Any:
+        self.chat_history.append({"message": message, **kwargs})
+        return await self._execute(message, **kwargs)
+
+    async def _execute(self, prompt: Any, **kwargs: Any) -> Any:
+        results = []
+        all_tools = list(getattr(self, "tools", None) or []) + list(
+            getattr(self, "tool_specs", None) or []
+        )
+        for tool in all_tools:
+            target = getattr(tool, "coroutine", None) or tool
+            accepted = inspect.signature(target).parameters
+            call_args = {k: v for k, v in self.tool_args.items() if k in accepted}
+            results.append(await target(**call_args))
+        return results if results else f"response to {prompt}"
 
 
 # ── Session lifecycle ───────────────────────────────────────────────────────
@@ -861,3 +898,279 @@ def _positions(client: AsyncMock) -> list[int]:
         The ``step_index`` each call was made with.
     """
     return [call.kwargs["step_index"] for call in client.intercept.call_args_list]
+
+
+# ── Agent tool binding ──────────────────────────────────────────────────────
+
+
+class TestAgentToolBinding:
+    """wrap_llamaindex discovers and binds tools on tools and tool_specs."""
+
+    async def test_wraps_tools_on_agent_tool_specs(self) -> None:
+        async def fetch_summary(topic: str) -> str:
+            return f"summary of {topic}"
+
+        runner = FakeAgentRunner(
+            tool_specs=[fetch_summary],
+            tool_args={"topic": "ai"},
+        )
+        wrapped = wrap_llamaindex(
+            runner,
+            org_id="org_test",
+            tiers={"fetch_summary": ToolTier.SAFE},
+        )
+
+        results = await wrapped.aquery("give me ai summary")
+        assert results == ["summary of ai"]
+        assert runner.tool_specs is not None
+        assert runner.tool_specs[0]._undolog_tool_name == "fetch_summary"
+
+    async def test_wraps_tools_on_agent_tools_and_tool_specs_simultaneously(
+        self,
+    ) -> None:
+        async def read_notes(note_id: str) -> str:
+            return f"note:{note_id}"
+
+        async def fetch_data(data_id: str) -> str:
+            return f"data:{data_id}"
+
+        runner = FakeAgentRunner(
+            tools=[read_notes],
+            tool_specs=[fetch_data],
+            tool_args={"note_id": "n1", "data_id": "d1"},
+        )
+        wrapped = wrap_llamaindex(
+            runner,
+            org_id="org_test",
+            tiers={"read_notes": ToolTier.SAFE, "fetch_data": ToolTier.SAFE},
+        )
+
+        results = await wrapped.aquery("get all")
+        assert results == ["note:n1", "data:d1"]
+        assert runner.tools is not None
+        assert runner.tools[0]._undolog_tool_name == "read_notes"
+        assert runner.tool_specs is not None
+        assert runner.tool_specs[0]._undolog_tool_name == "fetch_data"
+
+    async def test_missing_both_tools_and_tool_specs_raises_attribute_error(
+        self,
+    ) -> None:
+        class BareAgent:
+            pass
+
+        wrapped = wrap_llamaindex(BareAgent(), org_id="org_test")
+        with pytest.raises(AttributeError, match="tools' or 'tool_specs"):
+            await wrapped.aquery("test")
+
+
+# ── Un-annotated tool categorization and logging ────────────────────────────
+
+
+class TestUnannotatedToolCategorizationAndLogging:
+    """Un-annotated agent tools emit structured audit logs."""
+
+    async def test_unannotated_safe_tool_emits_structured_audit_logs(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async def fetch_knowledge_base(query: str) -> dict[str, str]:
+            return {"result": f"kb:{query}"}
+
+        runner = FakeAgentRunner(
+            tools=[fetch_knowledge_base],
+            tool_args={"query": "safety"},
+        )
+        wrapped = wrap_llamaindex(runner, org_id="org_test")
+
+        with caplog.at_level("WARNING"):
+            out = await wrapped.aquery("find safety info")
+
+        assert out == [{"result": "kb:safety"}]
+        assert any(
+            "Un-annotated tool 'fetch_knowledge_base' invoked within agent runner; classified as safe"
+            in record.message
+            and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+
+    def test_classify_tool_heuristics(self) -> None:
+        async def get_document(id: str) -> None:
+            pass
+
+        async def read_metadata() -> None:
+            pass
+
+        async def fetch_embeddings() -> None:
+            pass
+
+        async def list_sources() -> None:
+            pass
+
+        async def search_index() -> None:
+            pass
+
+        async def delete_document(id: str) -> None:
+            pass
+
+        async def drop_index() -> None:
+            pass
+
+        async def purge_cache() -> None:
+            pass
+
+        async def send_digest() -> None:
+            pass
+
+        async def update_ranking() -> None:
+            pass
+
+        assert classify_tool(get_document) == ToolTier.SAFE
+        assert classify_tool(read_metadata) == ToolTier.SAFE
+        assert classify_tool(fetch_embeddings) == ToolTier.SAFE
+        assert classify_tool(list_sources) == ToolTier.SAFE
+        assert classify_tool(search_index) == ToolTier.SAFE
+
+        assert classify_tool(delete_document) == ToolTier.IRREVERSIBLE
+        assert classify_tool(drop_index) == ToolTier.IRREVERSIBLE
+        assert classify_tool(purge_cache) == ToolTier.IRREVERSIBLE
+        assert classify_tool(send_digest) == ToolTier.IRREVERSIBLE
+
+        assert classify_tool(update_ranking) == ToolTier.COMPENSABLE
+
+    def test_classify_tool_preserves_existing_annotation(self) -> None:
+        @undolog_tool(tier=ToolTier.IRREVERSIBLE)
+        async def get_secure_key() -> None:
+            pass
+
+        assert classify_tool(get_secure_key) == ToolTier.IRREVERSIBLE
+
+
+# ── Approval suspension ─────────────────────────────────────────────────────
+
+
+class TestApprovalSuspension:
+    """AwaitingApprovalError cleanly suspends execution and surfaces approval state."""
+
+    async def test_irreversible_tool_cleanly_suspends_and_surfaces_approval_state(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _client(
+            InterceptResponse(outcome="AwaitingApproval", approval_id="ap-llama-1")
+        )
+
+        async def delete_index_node(node_id: str) -> dict[str, str]:
+            return {"deleted": node_id}
+
+        runner = FakeAgentRunner(
+            tools=[delete_index_node],
+            tool_args={"node_id": "node-7"},
+        )
+        wrapped = wrap_llamaindex(runner, org_id="org_test", client=client)
+
+        with caplog.at_level("WARNING"):
+            with pytest.raises(AwaitingApprovalError) as exc_info:
+                await wrapped.aquery("drop node")
+
+        assert exc_info.value.approval_id == "ap-llama-1"
+        assert exc_info.value.tool_name == "delete_index_node"
+        assert wrapped.awaiting_approval is True
+        assert wrapped.approval_request == {
+            "approval_id": "ap-llama-1",
+            "tool_name": "delete_index_node",
+            "step_index": 1,
+        }
+        assert wrapped.session_id is not None
+        assert any(
+            "Un-annotated tool 'delete_index_node' invoked within agent runner; classified as irreversible"
+            in record.message
+            and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+
+
+# ── Multi-turn session lifecycle ────────────────────────────────────────────
+
+
+class TestMultiTurnSessionLifecycle:
+    """Session lifecycle is automatically managed across multi-turn conversations."""
+
+    async def test_session_lifecycle_managed_across_multiturn_conversations(
+        self,
+    ) -> None:
+        runner = FakeAgentRunner(tools=[])
+        wrapped = wrap_llamaindex(runner, org_id="org_test")
+
+        await wrapped.achat("hello from turn 1")
+        session_1 = wrapped.session_id
+        assert session_1 is not None
+
+        await wrapped.achat("follow-up question turn 2")
+        session_2 = wrapped.session_id
+
+        assert session_1 == session_2, (
+            "multi-turn chat must automatically maintain the same session id"
+        )
+
+    async def test_explicit_session_id_overrides_multiturn_default(self) -> None:
+        runner = FakeAgentRunner(tools=[])
+        wrapped = wrap_llamaindex(runner, org_id="org_test")
+
+        await wrapped.achat("turn 1")
+        first_session = wrapped.session_id
+        assert first_session is not None
+
+        await wrapped.achat("turn 2", session_id="custom-override-id")
+        assert wrapped.session_id == "custom-override-id"
+
+    async def test_stateful_replay_across_multiturn_conversation(self) -> None:
+        tool_invocations: list[str] = []
+        client = _client(
+            InterceptResponse(outcome="Execute", effect_id="eff-turn-1"),
+            InterceptResponse(outcome="AwaitingApproval", approval_id="ap-turn-2"),
+            InterceptResponse(
+                outcome="Replay",
+                effect_id="eff-turn-1",
+                cached_result={"output": {"status": "saved", "id": "doc-1"}},
+            ),
+            InterceptResponse(outcome="Execute", effect_id="eff-turn-2"),
+        )
+
+        async def record_document(doc_id: str) -> dict[str, Any]:
+            tool_invocations.append(f"record:{doc_id}")
+            return {"status": "saved", "id": doc_id}
+
+        async def delete_document(doc_id: str) -> dict[str, Any]:
+            tool_invocations.append(f"delete:{doc_id}")
+            return {"status": "deleted", "id": doc_id}
+
+        runner = FakeAgentRunner(
+            tools=[record_document, delete_document],
+            tool_args={"doc_id": "doc-1"},
+        )
+        wrapped = wrap_llamaindex(
+            runner,
+            org_id="org_test",
+            client=client,
+            compensations={"record_document": "undo_save"},
+        )
+
+        with pytest.raises(AwaitingApprovalError):
+            await wrapped.achat("record then delete")
+
+        assert wrapped.awaiting_approval is True
+        assert tool_invocations == ["record:doc-1"]
+        session_id = wrapped.session_id
+        assert session_id is not None
+
+        # Resume under session_id; record_document replays cached, delete_document executes.
+        second_turn = await wrapped.achat("continue", session_id=session_id)
+        assert client.intercept.call_count == 4
+        assert tool_invocations == ["record:doc-1", "delete:doc-1"], (
+            "committed tool body must not re-execute on stateful replay"
+        )
+        assert second_turn == [
+            {"status": "saved", "id": "doc-1"},
+            {"status": "deleted", "id": "doc-1"},
+        ]
+        assert wrapped.awaiting_approval is False
+        assert wrapped.approval_request is None
+        assert wrapped.session_id == session_id

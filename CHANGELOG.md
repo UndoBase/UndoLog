@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- SDK: enhanced LlamaIndex auto-instrumentation with agent tool binding,
+  un-annotated tool categorization, and approval event handling.
+
 - SDK: enhanced CrewAI auto-instrumentation with automated agent toolset
   discovery, un-annotated tool categorization, and approval handling.
 
