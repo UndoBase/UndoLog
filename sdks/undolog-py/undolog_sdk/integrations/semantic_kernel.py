@@ -5,9 +5,17 @@ and runs each invocation inside an ``UndoLogSession``, so every call is
 journaled and eligible for replay or approval.
 
 Design notes:
-    *   **Duck-typed, no Semantic Kernel import.** The facade needs
-        ``add_function``, ``invoke``, and ``invoke_prompt``; attributes
-        it does not define resolve on the kernel.
+    *   **Duck-typed, no Semantic Kernel import.** The facade works with
+        kernels providing ``add_function``, ``invoke``, and ``invoke_prompt``;
+        attributes it does not define resolve on the kernel.
+    *   **Plugin function discovery and binding.** All functions across
+        registered kernel plugins are inspected and bound with UndoLog
+        interception. Functions already registered on ``kernel.plugins``
+        are instrumented atomically at wrap and invocation time.
+    *   **Un-annotated function categorization and auditing.** Un-annotated
+        functions are classified using name heuristics (safe read-only
+        operations, irreversible destructive operations, or compensable)
+        and audited with structured warning logs on detection and invocation.
     *   **Functions are instrumented at registration.** A registered
         plugin function keeps its own reference to the callable it
         wraps, so the same reasoning as ``wrap_langgraph`` applies: the
@@ -26,11 +34,10 @@ Design notes:
         rather than at the first call.
     *   **Approvals propagate.** ``AwaitingApprovalError`` escapes the
         invocation with the run's identity already recorded on the
-        facade, which is the flow ``docs/guides/integrating-
-        semantic-kernel.md`` documents. The caller resolves the approval
-        and invokes again with ``session_id``, which restarts the
-        counter so steps that already completed replay instead of
-        running again.
+        facade, which is the flow ``docs/guides/integrating-semantic-kernel.md``
+        documents. The caller resolves the approval and invokes again
+        with ``session_id``, which restarts the counter so steps that
+        already completed replay instead of running again.
     *   **The session travels through the context var.** Functions
         called inside the invocation resolve it from
         ``run_with_session``. Only async functions are instrumented,
@@ -58,6 +65,8 @@ Example::
 
 from __future__ import annotations
 
+import copy
+import functools
 import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping
@@ -85,6 +94,261 @@ INPUT_SESSION_KEY = "session_id"
 
 INPUT_STEP_KEY = "undolog_step_index"
 """Invocation argument key carrying the live step counter."""
+
+_SAFE_PREFIXES = (
+    "get_",
+    "read_",
+    "fetch_",
+    "list_",
+    "search_",
+    "lookup_",
+    "query_",
+    "check_",
+    "describe_",
+    "view_",
+    "find_",
+    "calculate_",
+    "is_",
+    "has_",
+    "show_",
+)
+
+_IRREVERSIBLE_PREFIXES = (
+    "delete_",
+    "drop_",
+    "destroy_",
+    "remove_",
+    "purge_",
+    "terminate_",
+    "publish_",
+    "execute_",
+    "kill_",
+    "wipe_",
+    "charge_",
+    "pay_",
+    "transfer_",
+    "send_",
+)
+
+
+def classify_tool(tool: Any, name: str | None = None) -> ToolTier:
+    """Classify an un-annotated tool or function into a ToolTier using name heuristics.
+
+    Read-only operations (get, read, fetch, list, search, query, etc.)
+    classify as ``ToolTier.SAFE``.
+    Modifying or destructive operations (delete, drop, send, charge, etc.)
+    classify as ``ToolTier.IRREVERSIBLE``.
+    Other tools default to ``ToolTier.COMPENSABLE``.
+
+    Parameters:
+        tool: An async callable or function object.
+        name: Optional function or tool name override.
+
+    Returns:
+        The deduced :class:`ToolTier`.
+    """
+    existing_tier = getattr(tool, "_undolog_tier", None)
+    if isinstance(existing_tier, ToolTier):
+        return existing_tier
+
+    tool_name = name or getattr(tool, "name", None) or getattr(tool, "__name__", "")
+    lower_name = str(tool_name).lower()
+    clean_name = lower_name.lstrip("_")
+
+    for prefix in _SAFE_PREFIXES:
+        if lower_name.startswith(prefix) or clean_name.startswith(prefix):
+            return ToolTier.SAFE
+
+    for prefix in _IRREVERSIBLE_PREFIXES:
+        if lower_name.startswith(prefix) or clean_name.startswith(prefix):
+            return ToolTier.IRREVERSIBLE
+
+    return ToolTier.COMPENSABLE
+
+
+classify_function = classify_tool
+
+
+def audit_kernel_function(
+    function: Callable[..., Awaitable[Any]],
+    tier: ToolTier | None = None,
+    compensation_name: str | None = None,
+    client: UndoLogClient | None = None,
+    tool_name: str | None = None,
+) -> Callable[..., Awaitable[Any]]:
+    """Wrap an un-annotated function, classifying it and logging warnings.
+
+    Parameters:
+        function: Un-annotated async function callable.
+        tier: Explicit ToolTier, or None to deduce via :func:`classify_tool`.
+        compensation_name: Optional compensation name.
+        client: Optional UndoLogClient.
+        tool_name: Optional explicit function/tool name.
+
+    Returns:
+        Instrumented callable that logs a warning and executes under the
+        classified tier.
+    """
+    resolved_tier = tier or classify_tool(function, name=tool_name)
+    name = (
+        tool_name
+        or getattr(function, "name", None)
+        or getattr(function, "__name__", str(function))
+    )
+    log.warning(
+        "Un-annotated tool %r detected; classified as %s",
+        name,
+        resolved_tier.value,
+    )
+    wrapped = wrap_tool(
+        function,
+        tier=resolved_tier,
+        compensation_name=compensation_name,
+        client=client,
+    )
+
+    @functools.wraps(function)
+    async def audited_kernel_wrapper(*args: Any, **kwargs: Any) -> Any:
+        func_name = getattr(function, "__name__", str(name))
+        log.warning(
+            "Un-annotated tool %r invoked within kernel; classified as %s",
+            func_name,
+            resolved_tier.value,
+        )
+        return await wrapped(*args, **kwargs)
+
+    for attr in (
+        "_undolog_tool_name",
+        "_undolog_tier",
+        "_undolog_compensation",
+        "_undolog_client",
+    ):
+        if hasattr(wrapped, attr):
+            setattr(audited_kernel_wrapper, attr, getattr(wrapped, attr))
+    return audited_kernel_wrapper
+
+
+audit_plugin_function = audit_kernel_function
+
+
+def _instrument_plugin_function(
+    name: str,
+    function: Any,
+    tiers: dict[str, ToolTier],
+    compensations: dict[str, str],
+    client: UndoLogClient | None,
+) -> Any:
+    """Instrument a single plugin function or container."""
+    target = function
+    container: Any = None
+    inner = getattr(function, "coroutine", None) or getattr(function, "function", None)
+    if inner is not None and callable(inner):
+        target = inner
+        container = function
+
+    if not callable(target) or not name or not hasattr(target, "__name__"):
+        raise ValueError(
+            f"wrap_semantic_kernel cannot instrument {name or function!r}: UndoLog "
+            "needs an async callable with a name, because it awaits the "
+            "function it wraps."
+        )
+
+    require_async_tool(target, "wrap_semantic_kernel", None)
+
+    if getattr(target, "_undolog_tool_name", None) is not None:
+        return function
+
+    if name in tiers:
+        instrumented = wrap_tool(
+            target,
+            tier=tiers[name],
+            compensation_name=compensations.get(name),
+            client=client,
+        )
+    else:
+        resolved_tier = classify_tool(target, name=name)
+        instrumented = audit_kernel_function(
+            target,
+            tier=resolved_tier,
+            compensation_name=compensations.get(name),
+            client=client,
+            tool_name=name,
+        )
+
+    if container is not None:
+        replica = copy.copy(container)
+        if getattr(container, "coroutine", None) is inner:
+            setattr(replica, "coroutine", instrumented)
+        elif getattr(container, "function", None) is inner:
+            setattr(replica, "function", instrumented)
+        return replica
+
+    return instrumented
+
+
+def _bind_plugin_functions(
+    plugin: Any,
+    tiers: dict[str, ToolTier],
+    compensations: dict[str, str],
+    client: UndoLogClient | None,
+) -> None:
+    """Instrument and bind functions in a single plugin atomically."""
+    if isinstance(plugin, MutableMapping):
+        wrapped = {
+            str(fname): _instrument_plugin_function(
+                str(fname), f, tiers, compensations, client
+            )
+            for fname, f in plugin.items()
+        }
+        plugin.update(wrapped)
+        return
+
+    funcs = getattr(plugin, "functions", None)
+    if isinstance(funcs, MutableMapping):
+        wrapped_map = {
+            str(fname): _instrument_plugin_function(
+                str(fname), f, tiers, compensations, client
+            )
+            for fname, f in funcs.items()
+        }
+        funcs.update(wrapped_map)
+    elif isinstance(funcs, list):
+        wrapped_list = [
+            _instrument_plugin_function(
+                getattr(f, "name", None)
+                or getattr(f, "__name__", None)
+                or f"func_{idx}",
+                f,
+                tiers,
+                compensations,
+                client,
+            )
+            for idx, f in enumerate(funcs)
+        ]
+        funcs[:] = wrapped_list
+
+
+def _prepare_plugins(
+    kernel: Any,
+    tiers: dict[str, ToolTier],
+    compensations: dict[str, str],
+    client: UndoLogClient | None,
+) -> None:
+    """Instrument every plugin function on ``kernel`` before invocation."""
+    plugins = getattr(kernel, "plugins", None)
+    if plugins is None:
+        return
+
+    plugin_items: list[tuple[str, Any]] = []
+    if isinstance(plugins, Mapping):
+        plugin_items = list(plugins.items())
+    elif hasattr(plugins, "values") and callable(plugins.values):
+        plugin_items = [(getattr(p, "name", str(p)), p) for p in plugins.values()]
+    elif isinstance(plugins, (list, tuple, set)):
+        plugin_items = [(getattr(p, "name", str(p)), p) for p in plugins]
+
+    for _pname, plugin in plugin_items:
+        _bind_plugin_functions(plugin, tiers, compensations, client)
 
 
 def _require_instrumentable(function: Any) -> None:
@@ -194,6 +458,7 @@ class WrappedKernel:
         self._step_index: int = 0
         self._awaiting_approval: bool = False
         self._approval_request: dict[str, Any] | None = None
+        _prepare_plugins(self._kernel, self._tiers, self._compensations, self._client)
 
     @property
     def org_id(self) -> str:
@@ -328,11 +593,12 @@ class WrappedKernel:
             ValueError: If the function cannot be instrumented.
         """
         _require_instrumentable(function)
-        return wrap_tool(
+        return _instrument_plugin_function(
+            name,
             function,
-            tier=self._tiers.get(name, ToolTier.COMPENSABLE),
-            compensation_name=self._compensations.get(name),
-            client=self._client,
+            self._tiers,
+            self._compensations,
+            self._client,
         )
 
     async def invoke(self, *args: Any, **kwargs: Any) -> Any:
@@ -516,6 +782,7 @@ class WrappedKernel:
             AwaitingApprovalError: When the proxy suspends an irreversible
                 function inside the block, after the run has been recorded.
         """
+        _prepare_plugins(self._kernel, self._tiers, self._compensations, self._client)
         async with self._open_session(session_id, start_step) as session:
             yield session
 
@@ -540,6 +807,7 @@ class WrappedKernel:
                 irreversible function, after the run has been recorded
                 on the facade.
         """
+        _prepare_plugins(self._kernel, self._tiers, self._compensations, self._client)
         async with self._open_session(session_id, start_step):
             return await call()
 
@@ -559,7 +827,7 @@ def wrap_semantic_kernel(
         org_id: Organisation identifier for sessions. Defaults to the
             ``UNDOLOG_ORG_ID`` environment variable, then ``org_demo``.
         tiers: Per-function tier overrides keyed by function name.
-            Functions not listed default to ``COMPENSABLE``.
+            Functions not listed default to heuristics categorization.
         compensations: Per-function compensation registry names keyed by
             function name. Required for any ``COMPENSABLE`` function
             that is not already decorated with ``@undolog_tool``.
@@ -567,19 +835,19 @@ def wrap_semantic_kernel(
 
     Returns:
         A ``WrappedKernel`` facade. The original kernel is not replaced;
-        functions registered through the facade are instrumented on
-        their way in, and every other attribute resolves on the kernel.
+        functions registered through the facade or already held on
+        ``kernel.plugins`` are instrumented, and every other attribute
+        resolves on the kernel.
 
     Raises:
-        ValueError: At registration time, if a function cannot be
+        ValueError: At registration or wrap time, if a function cannot be
             instrumented.
 
     Note:
-        Register functions through the facade rather than the kernel:
-        a function the kernel already holds cannot be instrumented
-        afterwards, because it keeps its own reference to the callable
-        it wraps. Functions already decorated with ``@undolog_tool``
-        need no tier or compensation mapping.
+        Functions already registered on ``kernel.plugins`` or registered
+        through the facade are automatically instrumented. Functions
+        already decorated with ``@undolog_tool`` need no tier or
+        compensation mapping.
 
     Example:
         Single-line integration::
