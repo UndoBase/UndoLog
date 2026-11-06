@@ -1,18 +1,18 @@
 """LlamaIndex auto-instrumentation for the UndoLog SDK.
 
-``wrap_llamaindex`` runs an index's ``aquery`` inside an
+``wrap_llamaindex`` runs an index's ``aquery`` or agent's ``achat`` inside an
 ``UndoLogSession``, so tool calls made through the index reach the
 proxy: every call is journaled and eligible for replay or approval.
 
 Design notes:
-    *   **Duck-typed, no LlamaIndex import.** The facade needs
-        ``aquery`` and ``tools``; attributes it does not define
-        resolve on the index.
-    *   **Only ``aquery`` opens a session and wraps the tools.** The
-        other async entry points (``achat``, ``astream``, ``arun``)
-        get neither, so an instrumented non-SAFE tool raises
-        ``RuntimeError`` for the missing session; open
-        ``run_with_session`` around one of them yourself.
+    *   **Duck-typed, no LlamaIndex import.** The facade works with indices
+        or agents providing ``aquery`` or ``achat``, and tools through
+        ``tools`` or ``tool_specs``; attributes it does not define
+        resolve on the wrapped object.
+    *   **``aquery`` and ``achat`` open sessions and wrap tools.** ``achat``
+        automatically maintains session continuity across multi-turn
+        conversations. Other async entry points (``astream``, ``arun``)
+        rely on an enclosing ``run_with_session``.
     *   **Tools are instrumented at invocation.** The index's tool list
         is reassigned to instrumented copies before each query. The
         wrap is idempotent, so a second query neither re-wraps nor
@@ -20,13 +20,13 @@ Design notes:
         list is reassigned, so a rejected tool leaves the index
         untouched.
     *   **Approvals propagate.** ``AwaitingApprovalError`` escapes
-        ``aquery`` with the run's identity already recorded on the
+        ``aquery`` or ``achat`` with the run's identity already recorded on the
         facade, which is the flow ``docs/guides/integrating-llamaindex.md``
         documents. The caller resolves the approval and queries again
         with ``session_id``, which restarts the counter so steps that
         already completed replay instead of running again.
     *   **The session travels through the context var.** Tools called
-        inside ``aquery`` resolve it from ``run_with_session``. Only
+        inside ``aquery`` or ``achat`` resolve it from ``run_with_session``. Only
         async tools are prepared, because ``undolog_tool`` awaits its
         target: a sync tool would fail at its first call, so it is
         rejected instead.
@@ -41,8 +41,11 @@ Example::
 
 from __future__ import annotations
 
+import copy
+import functools
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from undolog_sdk import (
@@ -53,12 +56,7 @@ from undolog_sdk import (
 )
 from undolog_sdk.context import run_with_session
 from undolog_sdk.integrations._instrument import require_async_tool
-
-# wrap_tools is the shared instrumenter: its container rules (a
-# callable, or an object exposing ``coroutine``) are the surface the
-# LlamaIndex FunctionTool meets, so this module calls it rather than
-# repeating them.
-from undolog_sdk.integrations.langgraph import wrap_tools
+from undolog_sdk.integrations.langgraph import wrap_tool
 
 log = logging.getLogger(__name__)
 
@@ -69,55 +67,238 @@ INPUT_STEP_KEY = "undolog_step_index"
 """``aquery`` keyword carrying the live step counter."""
 
 
+_SAFE_PREFIXES = (
+    "get_",
+    "read_",
+    "fetch_",
+    "list_",
+    "search_",
+    "lookup_",
+    "query_",
+    "check_",
+    "describe_",
+    "view_",
+    "find_",
+    "calculate_",
+    "is_",
+    "has_",
+    "show_",
+)
+
+_IRREVERSIBLE_PREFIXES = (
+    "delete_",
+    "drop_",
+    "destroy_",
+    "remove_",
+    "purge_",
+    "terminate_",
+    "publish_",
+    "execute_",
+    "kill_",
+    "wipe_",
+    "charge_",
+    "pay_",
+    "transfer_",
+    "send_",
+)
+
+
+def classify_tool(tool: Any) -> ToolTier:
+    """Classify an un-annotated tool into a ToolTier using name heuristics.
+
+    Read-only operations (get, read, fetch, list, search, query, etc.)
+    classify as ``ToolTier.SAFE``.
+    Modifying or destructive operations (delete, drop, send, charge, etc.)
+    classify as ``ToolTier.IRREVERSIBLE``.
+    Other tools default to ``ToolTier.COMPENSABLE``.
+
+    Parameters:
+        tool: An async callable or tool object.
+
+    Returns:
+        The deduced :class:`ToolTier`.
+    """
+    existing_tier = getattr(tool, "_undolog_tier", None)
+    if isinstance(existing_tier, ToolTier):
+        return existing_tier
+
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", "")
+    lower_name = str(name).lower()
+
+    for prefix in _SAFE_PREFIXES:
+        if lower_name.startswith(prefix):
+            return ToolTier.SAFE
+
+    for prefix in _IRREVERSIBLE_PREFIXES:
+        if lower_name.startswith(prefix):
+            return ToolTier.IRREVERSIBLE
+
+    return ToolTier.COMPENSABLE
+
+
+def audit_index_tool(
+    tool: Callable[..., Awaitable[Any]],
+    tier: ToolTier | None = None,
+    compensation_name: str | None = None,
+    client: UndoLogClient | None = None,
+) -> Callable[..., Awaitable[Any]]:
+    """Wrap an un-annotated tool, classifying it and logging warnings.
+
+    Parameters:
+        tool: Un-annotated async tool callable.
+        tier: Explicit ToolTier, or None to deduce via :func:`classify_tool`.
+        compensation_name: Optional compensation name.
+        client: Optional UndoLogClient.
+
+    Returns:
+        Instrumented callable that logs a warning and executes under the
+        classified tier.
+    """
+    resolved_tier = tier or classify_tool(tool)
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
+    log.warning(
+        "Un-annotated tool %r detected; classified as %s",
+        name,
+        resolved_tier.value,
+    )
+    wrapped = wrap_tool(
+        tool,
+        tier=resolved_tier,
+        compensation_name=compensation_name,
+        client=client,
+    )
+
+    @functools.wraps(tool)
+    async def audited_index_wrapper(*args: Any, **kwargs: Any) -> Any:
+        tool_name = getattr(tool, "__name__", str(tool))
+        log.warning(
+            "Un-annotated tool %r invoked within agent runner; classified as %s",
+            tool_name,
+            resolved_tier.value,
+        )
+        return await wrapped(*args, **kwargs)
+
+    for attr in (
+        "_undolog_tool_name",
+        "_undolog_tier",
+        "_undolog_compensation",
+        "_undolog_client",
+    ):
+        if hasattr(wrapped, attr):
+            setattr(audited_index_wrapper, attr, getattr(wrapped, attr))
+    return audited_index_wrapper
+
+
+def _instrument_index_tool(
+    tool: Any,
+    tiers: dict[str, ToolTier],
+    compensations: dict[str, str],
+    client: UndoLogClient | None,
+) -> Any:
+    """Instrument a single tool object or container."""
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
+    target = tool
+    container: Any = None
+    inner = getattr(tool, "coroutine", None)
+    if inner is not None and callable(inner):
+        target = inner
+        container = tool
+
+    if not callable(target) or not name or not hasattr(target, "__name__"):
+        raise ValueError(
+            f"wrap_llamaindex cannot instrument {name or tool!r}: UndoLog "
+            "needs an async callable with a name, or an object exposing "
+            "an async 'coroutine' attribute."
+        )
+
+    if getattr(target, "_undolog_tool_name", None) is not None:
+        return tool
+
+    if name and name in tiers:
+        tier = tiers[name]
+        instrumented = wrap_tool(
+            target,
+            tier=tier,
+            compensation_name=compensations.get(name),
+            client=client,
+        )
+    else:
+        resolved_tier = classify_tool(target)
+        instrumented = audit_index_tool(
+            target,
+            tier=resolved_tier,
+            compensation_name=compensations.get(name) if name else None,
+            client=client,
+        )
+
+    if container is not None:
+        replica = copy.copy(tool)
+        setattr(replica, "coroutine", instrumented)
+        return replica
+    return instrumented
+
+
 def _prepare_index(
     index: Any,
     tiers: dict[str, ToolTier],
     compensations: dict[str, str],
     client: UndoLogClient | None,
 ) -> None:
-    """Instrument every tool on ``index``, in place, before it queries.
+    """Instrument every tool on ``index`` or agent, in place, before execution.
 
     Parameters:
-        index: The index to prepare. Must expose ``tools``.
+        index: The index or agent to prepare. Must expose ``tools`` or ``tool_specs``.
         tiers: Per-tool tier overrides keyed by tool name.
         compensations: Per-tool compensation registry names keyed by
             tool name.
         client: Optional explicit ``UndoLogClient``.
 
     Raises:
-        AttributeError: If the index does not expose ``tools``. The
-            instrumented copies are assigned back to it, so an object
-            that holds its tools elsewhere is refused rather than
-            queried with tools the wrapper never reached.
-        ValueError: If a tool cannot be instrumented. Every tool is
-            accepted and wrapped before the list is reassigned, so a
-            failure here leaves the index exactly as it was.
+        AttributeError: If the index does not expose ``tools`` or ``tool_specs``.
+        ValueError: If a tool cannot be instrumented.
     """
-    if not hasattr(index, "tools"):
+    has_tools = hasattr(index, "tools")
+    has_specs = hasattr(index, "tool_specs")
+    if not has_tools and not has_specs:
         raise AttributeError(
-            "wrap_llamaindex needs the index to expose 'tools': the "
-            "instrumented copies are assigned back to it before each "
-            "query. If your agent holds them elsewhere, decorate the "
+            "wrap_llamaindex needs the index or agent to expose 'tools' or "
+            "'tool_specs': the instrumented copies are assigned back to it "
+            "before each query. If your agent holds them elsewhere, decorate the "
             "tools with @undolog_tool and open run_with_session around "
             "the query yourself."
         )
-    tools = list(index.tools or [])
+
+    tools = list(index.tools or []) if has_tools and index.tools is not None else []
+    tool_specs = (
+        list(index.tool_specs or [])
+        if has_specs and index.tool_specs is not None
+        else []
+    )
+
     for tool in tools:
         require_async_tool(tool, "wrap_llamaindex", "FunctionTool")
-    index.tools = wrap_tools(
-        tools, tiers=tiers, compensations=compensations, client=client
-    )
+    for tool in tool_specs:
+        require_async_tool(tool, "wrap_llamaindex", "FunctionTool")
+
+    wrapped_tools = [
+        _instrument_index_tool(tool, tiers, compensations, client) for tool in tools
+    ]
+    wrapped_specs = [
+        _instrument_index_tool(tool, tiers, compensations, client)
+        for tool in tool_specs
+    ]
+
+    if has_tools and index.tools is not None:
+        index.tools = wrapped_tools
+    if has_specs and index.tool_specs is not None:
+        index.tool_specs = wrapped_specs
 
 
 class WrappedIndex:
-    """Index facade whose ``aquery`` runs inside an UndoLog session.
+    """Index or agent facade whose execution runs inside an UndoLog session.
 
-    The facade adds ``aquery`` and the UndoLog run properties; every
-    other attribute resolves on the wrapped index. ``aquery``
-    instruments the index's tools, creates or resumes an
-    ``UndoLogSession``, runs the query inside ``run_with_session`` so
-    wrapped tools resolve the session from the context var, and records
-    the run on the facade. Only ``aquery`` opens a session.
+    The facade adds ``aquery``, ``achat``, and the UndoLog run properties;
+    every other attribute resolves on the wrapped index or agent runner.
     """
 
     def __init__(
@@ -127,22 +308,27 @@ class WrappedIndex:
         tiers: dict[str, ToolTier],
         compensations: dict[str, str],
         client: UndoLogClient | None,
+        multi_turn: bool = False,
     ) -> None:
-        """Bind the facade to an index.
+        """Bind the facade to an index or agent runner.
 
         Parameters:
-            index: Any object exposing ``aquery`` and ``tools``.
+            index: Any object exposing ``aquery`` or ``achat`` alongside
+                ``tools`` or ``tool_specs``.
             org_id: Organisation identifier for new sessions.
             tiers: Per-tool tier overrides keyed by tool name.
             compensations: Per-tool compensation registry names keyed
                 by tool name.
             client: Optional explicit ``UndoLogClient``.
+            multi_turn: When True, multi-turn conversations persist
+                session state across queries or chat turns.
         """
         self._index = index
         self._org_id = org_id
         self._tiers = tiers
         self._compensations = compensations
         self._client = client
+        self._multi_turn = multi_turn
         self._session_id: str | None = None
         self._step_index: int = 0
         self._awaiting_approval: bool = False
@@ -155,21 +341,12 @@ class WrappedIndex:
 
     @property
     def session_id(self) -> str | None:
-        """Session id of the most recent run, or ``None`` before the first.
-
-        Read this after an ``AwaitingApprovalError`` to resume the same
-        journal once the approval resolves.
-        """
+        """Session id of the most recent run, or ``None`` before the first."""
         return self._session_id
 
     @property
     def step_index(self) -> int:
-        """Step progress reached by the most recent run.
-
-        Passing this back as ``undolog_step_index`` continues the
-        counter; omit it on a retried run to replay the steps already
-        journaled.
-        """
+        """Step progress reached by the most recent run."""
         return self._step_index
 
     @property
@@ -185,10 +362,6 @@ class WrappedIndex:
     def __getattr__(self, name: str) -> Any:
         """Delegate unknown attributes to the wrapped index.
 
-        Only called for attributes not found on the facade itself.
-        Underscore-prefixed lookups are never delegated, which keeps
-        ``self._index`` access safe before the attribute exists.
-
         Raises:
             AttributeError: If the attribute is private or the wrapped
                 index lacks it.
@@ -198,52 +371,46 @@ class WrappedIndex:
         return getattr(self._index, name)
 
     async def aquery(self, query: Any, **kwargs: Any) -> Any:
-        """Query the index inside an UndoLog session.
+        """Query the index or agent inside an UndoLog session."""
+        return await self._run_with_session("aquery", query, is_chat=False, **kwargs)
 
-        Pass ``session_id`` to resume that journal. On a retry, leave
-        ``undolog_step_index`` out: the counter restarts, so each call
-        lands on the step it already journaled and the engine replays
-        it rather than running it again. Pass ``undolog_step_index`` as
-        well to continue past those steps. Both keywords are removed
-        before the index sees them, because they are UndoLog
-        bookkeeping rather than query options.
+    async def achat(self, message: Any, **kwargs: Any) -> Any:
+        """Chat with the agent inside an UndoLog session across multiple turns."""
+        return await self._run_with_session("achat", message, is_chat=True, **kwargs)
 
-        Parameters:
-            query: The query to run, forwarded unchanged.
-            **kwargs: Query options forwarded to ``aquery``. May carry
-                ``session_id`` to resume a journal and
-                ``undolog_step_index`` to continue its counter.
-
-        Returns:
-            Whatever the index returns, unchanged.
-
-        Raises:
-            AttributeError: If the index does not expose ``tools``.
-                Raised before the session opens.
-            ValueError: If any tool cannot be instrumented. The index
-                is left untouched when that happens.
-            AwaitingApprovalError: When the proxy suspends an
-                irreversible tool. The facade records the run first, so
-                ``session_id`` and ``approval_request`` are readable
-                from the handler.
-        """
+    async def _run_with_session(
+        self,
+        method_name: str,
+        arg: Any,
+        is_chat: bool,
+        **kwargs: Any,
+    ) -> Any:
         session_id = kwargs.pop(INPUT_SESSION_KEY, None)
-        start_step = int(kwargs.pop(INPUT_STEP_KEY, 0) or 0)
+        step_arg = kwargs.pop(INPUT_STEP_KEY, None)
+
+        if session_id is None:
+            if (is_chat or self._multi_turn) and self._session_id is not None:
+                session_id = self._session_id
+                start_step = self._step_index if step_arg is None else int(step_arg)
+            else:
+                start_step = 0 if step_arg is None else int(step_arg)
+        else:
+            start_step = 0 if step_arg is None else int(step_arg)
 
         _prepare_index(self._index, self._tiers, self._compensations, self._client)
 
         async with UndoLogSession(org_id=self._org_id) as session:
             if session_id:
-                # Resume the journal the previous run wrote to instead
-                # of starting a new one.
                 session.session_id = str(session_id)
             session._step_index = start_step
             self._session_id = session.session_id
+            self._step_index = start_step
             self._awaiting_approval = False
             self._approval_request = None
             try:
                 async with run_with_session(session):
-                    return await self._index.aquery(query, **kwargs)
+                    target_fn = getattr(self._index, method_name)
+                    return await target_fn(arg, **kwargs)
             except AwaitingApprovalError as exc:
                 self._awaiting_approval = True
                 self._approval_request = {
@@ -252,8 +419,9 @@ class WrappedIndex:
                     "step_index": exc.step_index,
                 }
                 log.info(
-                    "undolog aquery: approval required tool=%s step=%d "
+                    "undolog %s: approval required tool=%s step=%d "
                     "approval_id=%s session=%s",
+                    method_name,
                     exc.tool_name,
                     exc.step_index,
                     exc.approval_id,
@@ -261,8 +429,6 @@ class WrappedIndex:
                 )
                 raise
             finally:
-                # Report the progress the run actually reached,
-                # including the step that suspended it.
                 self._step_index = session._step_index
 
 
@@ -272,42 +438,27 @@ def wrap_llamaindex(
     tiers: dict[str, ToolTier] | None = None,
     compensations: dict[str, str] | None = None,
     client: UndoLogClient | None = None,
+    *,
+    multi_turn: bool = False,
 ) -> WrappedIndex:
-    """Run a LlamaIndex query inside an UndoLog session, in one call.
+    """Run a LlamaIndex query or chat agent inside an UndoLog session.
 
     Parameters:
-        index: Anything exposing ``aquery`` and ``tools``, such as an
-            agent built from LlamaIndex ``FunctionTool`` objects.
+        index: Anything exposing ``aquery`` or ``achat`` alongside
+            ``tools`` or ``tool_specs``.
         org_id: Organisation identifier for sessions. Defaults to the
             ``UNDOLOG_ORG_ID`` environment variable, then ``org_demo``.
         tiers: Per-tool tier overrides keyed by tool name. Tools not
-            listed default to ``COMPENSABLE``.
+            listed default to heuristics classification.
         compensations: Per-tool compensation registry names keyed by
             tool name. Required for any ``COMPENSABLE`` tool that is
             not already decorated with ``@undolog_tool``.
         client: Optional explicit ``UndoLogClient``.
+        multi_turn: When True, multi-turn conversations persist
+            session state across queries or chat turns.
 
     Returns:
-        A ``WrappedIndex`` facade. The original index is not replaced;
-        its tool list is reassigned to the instrumented copies at each
-        query.
-
-    Raises:
-        AttributeError: At the first ``aquery``, if the index does not
-            expose ``tools``.
-        ValueError: At the first ``aquery``, if a tool cannot be
-            instrumented.
-
-    Note:
-        Tools already decorated with ``@undolog_tool`` come back
-        untouched, so an index built from decorated tools needs no tier
-        or compensation mapping.
-
-    Example:
-        Single-line integration::
-
-            index = wrap_llamaindex(index, org_id="org_demo")
-            result = await index.aquery(prompt)
+        A ``WrappedIndex`` facade.
     """
     resolved_org = org_id or os.environ.get("UNDOLOG_ORG_ID", "org_demo")
     return WrappedIndex(
@@ -316,4 +467,5 @@ def wrap_llamaindex(
         tiers or {},
         compensations or {},
         client,
+        multi_turn=multi_turn,
     )
