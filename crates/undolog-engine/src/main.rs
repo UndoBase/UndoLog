@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
 
     // Bootstrap the EffectEngine - connects to Postgres, initialises stores,
     // loads the tier registry, and spawns the registry refresh loop.
-    let engine = startup::build_engine(
+    let (engine, dead_letter_store) = startup::build_engine(
         engine_config,
         &database_url,
         Duration::from_secs(registry_refresh_secs),
@@ -119,7 +119,8 @@ async fn main() -> Result<()> {
 
     // Wrap engine in the tonic gRPC service. With no token configured the
     // interceptor passes every call through unchanged.
-    let grpc_service = UndoLogEngineServer::new(UndoLogEngineService::new(engine));
+    let grpc_service =
+        UndoLogEngineServer::new(UndoLogEngineService::new(engine, Some(dead_letter_store)));
     if auth_token.is_some() {
         info!("gRPC authentication enabled: callers must present the bearer token");
     }

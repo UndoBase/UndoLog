@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to initialize SQLite storage")?;
 
-    let grpc_service = UndoLogEngineServer::new(UndoLogEngineService::new(engine));
+    let grpc_service = UndoLogEngineServer::new(UndoLogEngineService::new(engine, None));
 
     let health_handle = tokio::spawn(health_server(health_addr));
 

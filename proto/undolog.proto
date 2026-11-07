@@ -49,6 +49,18 @@ service UndoLogEngine {
   // on startup and periodically so a proxy restart does not orphan approvals.
   rpc ListPendingApprovals(ListPendingApprovalsRequest)
       returns (ListPendingApprovalsResponse);
+
+  // ListDeadLetters returns the dead-letter records for an organization,
+  // optionally filtered by state.
+  rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
+
+  // RetryDeadLetter resets a dead-letter record to Retrying and increments
+  // its retry count, enabling re-execution.
+  rpc RetryDeadLetter(RetryDeadLetterRequest) returns (RetryDeadLetterResponse);
+
+  // SkipDeadLetter marks a dead-letter record as Skipped, resolving it without
+  // compensation execution.
+  rpc SkipDeadLetter(SkipDeadLetterRequest) returns (SkipDeadLetterResponse);
 }
 
 // ── Messages ───────────────────────────────────────────────────────────────
@@ -232,4 +244,82 @@ message ApprovalRecord {
 message ListPendingApprovalsResponse {
   // Unresolved approval requests for the requested organization.
   repeated ApprovalRecord approval_records = 1;
+}
+
+// ── Dead-Letter Queue ──────────────────────────────────────────────────────
+
+// DeadLetterState represents the lifecycle state of a dead-letter record.
+enum DeadLetterState {
+  DEAD_LETTER_STATE_UNSPECIFIED = 0;
+  DEAD_LETTER_STATE_FAILED = 1;
+  DEAD_LETTER_STATE_RETRYING = 2;
+  DEAD_LETTER_STATE_SKIPPED = 3;
+}
+
+// DeadLetterRecord represents a persisted compensation failure.
+message DeadLetterRecord {
+  // Unique identifier for the dead-letter record (UUID v4).
+  string dead_letter_id = 1;
+  // Organisation that owns this record.
+  string org_id = 2;
+  // Session that produced the failed compensation.
+  string session_id = 3;
+  // Effect that failed to compensate.
+  string effect_id = 4;
+  // Undo entry that failed.
+  string undo_id = 5;
+  // Logical name of the compensation function.
+  string compensation_fn = 6;
+  // Semantic version of the compensation function.
+  string compensation_version = 7;
+  // Raw JSON arguments supplied to the compensation function.
+  bytes compensation_args = 8;
+  // Error message from the failed compensation.
+  string error_message = 9;
+  // Number of retry attempts.
+  int32 retry_count = 10;
+  // Current state of the dead-letter record.
+  DeadLetterState state = 11;
+  // When this record was created as Unix milliseconds (UTC).
+  int64 created_at_unix_ms = 12;
+  // When this record was last updated as Unix milliseconds (UTC).
+  int64 updated_at_unix_ms = 13;
+}
+
+message ListDeadLettersRequest {
+  // Organisation whose dead letters should be returned.
+  string org_id = 1;
+  // Optional filter by state. If unspecified, defaults to failed.
+  DeadLetterState state = 2;
+}
+
+message ListDeadLettersResponse {
+  // Matching dead-letter records.
+  repeated DeadLetterRecord records = 1;
+  // Total count of records returned.
+  uint64 count = 2;
+}
+
+message RetryDeadLetterRequest {
+  // Organisation that owns the dead letter record.
+  string org_id = 1;
+  // Unique identifier of the dead-letter record to retry.
+  string dead_letter_id = 2;
+}
+
+message RetryDeadLetterResponse {
+  // The updated dead-letter record in Retrying state.
+  DeadLetterRecord record = 1;
+}
+
+message SkipDeadLetterRequest {
+  // Organisation that owns the dead letter record.
+  string org_id = 1;
+  // Unique identifier of the dead-letter record to skip.
+  string dead_letter_id = 2;
+}
+
+message SkipDeadLetterResponse {
+  // The updated dead-letter record in Skipped state.
+  DeadLetterRecord record = 1;
 }

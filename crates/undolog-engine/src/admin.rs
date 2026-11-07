@@ -91,6 +91,13 @@ pub struct ListDeadLettersParams {
     pub state: Option<String>,
 }
 
+/// Query parameters requiring organization ID.
+#[derive(Debug, Deserialize)]
+pub struct OrgIdQuery {
+    /// Organization ID for scoping administrative operations.
+    pub org_id: uuid::Uuid,
+}
+
 /// Build the admin API router with the given shared state.
 pub fn router(state: AdminState) -> Router {
     Router::new()
@@ -132,7 +139,7 @@ async fn list_dead_letters(
     Ok(Json(response))
 }
 
-/// POST /admin/dead-letters/{id}/retry
+/// POST /admin/dead-letters/{id}/retry?org_id={org_id}
 ///
 /// Retry a dead-letter record by resetting its state to `retrying`.
 /// Returns the updated record.
@@ -140,8 +147,10 @@ async fn list_dead_letters(
 async fn retry_dead_letter(
     State(state): State<AdminState>,
     Path(id): Path<uuid::Uuid>,
+    Query(query): Query<OrgIdQuery>,
 ) -> Result<Json<DeadLetterRecordJson>, (StatusCode, String)> {
-    let record = state.dead_letter_store.retry(id).await.map_err(|e| match e {
+    let org_id: undolog_types::ids::OrgId = query.org_id.into();
+    let record = state.dead_letter_store.retry(org_id, id).await.map_err(|e| match e {
         UndoLogError::Database(ref db_err) => {
             if let sqlx::Error::RowNotFound = db_err {
                 (StatusCode::NOT_FOUND, format!("dead letter {id} not found"))
@@ -155,7 +164,7 @@ async fn retry_dead_letter(
     Ok(Json(DeadLetterRecordJson::from(record)))
 }
 
-/// POST /admin/dead-letters/{id}/skip
+/// POST /admin/dead-letters/{id}/skip?org_id={org_id}
 ///
 /// Skip a dead-letter record by marking it as `skipped`.
 /// Returns the updated record.
@@ -163,8 +172,10 @@ async fn retry_dead_letter(
 async fn skip_dead_letter(
     State(state): State<AdminState>,
     Path(id): Path<uuid::Uuid>,
+    Query(query): Query<OrgIdQuery>,
 ) -> Result<Json<DeadLetterRecordJson>, (StatusCode, String)> {
-    let record = state.dead_letter_store.skip(id).await.map_err(|e| match e {
+    let org_id: undolog_types::ids::OrgId = query.org_id.into();
+    let record = state.dead_letter_store.skip(org_id, id).await.map_err(|e| match e {
         UndoLogError::Database(ref db_err) => {
             if let sqlx::Error::RowNotFound = db_err {
                 (StatusCode::NOT_FOUND, format!("dead letter {id} not found"))

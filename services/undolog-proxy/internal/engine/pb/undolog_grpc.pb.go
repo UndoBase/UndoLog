@@ -37,6 +37,9 @@ const (
 	UndoLogEngine_Approve_FullMethodName              = "/undolog.v1.UndoLogEngine/Approve"
 	UndoLogEngine_Reject_FullMethodName               = "/undolog.v1.UndoLogEngine/Reject"
 	UndoLogEngine_ListPendingApprovals_FullMethodName = "/undolog.v1.UndoLogEngine/ListPendingApprovals"
+	UndoLogEngine_ListDeadLetters_FullMethodName      = "/undolog.v1.UndoLogEngine/ListDeadLetters"
+	UndoLogEngine_RetryDeadLetter_FullMethodName      = "/undolog.v1.UndoLogEngine/RetryDeadLetter"
+	UndoLogEngine_SkipDeadLetter_FullMethodName       = "/undolog.v1.UndoLogEngine/SkipDeadLetter"
 )
 
 // UndoLogEngineClient is the client API for UndoLogEngine service.
@@ -68,6 +71,15 @@ type UndoLogEngineClient interface {
 	// organization.  The proxy reconciles its in-memory approval view from this
 	// on startup and periodically so a proxy restart does not orphan approvals.
 	ListPendingApprovals(ctx context.Context, in *ListPendingApprovalsRequest, opts ...grpc.CallOption) (*ListPendingApprovalsResponse, error)
+	// ListDeadLetters returns the dead-letter records for an organization,
+	// optionally filtered by state.
+	ListDeadLetters(ctx context.Context, in *ListDeadLettersRequest, opts ...grpc.CallOption) (*ListDeadLettersResponse, error)
+	// RetryDeadLetter resets a dead-letter record to Retrying and increments
+	// its retry count, enabling re-execution.
+	RetryDeadLetter(ctx context.Context, in *RetryDeadLetterRequest, opts ...grpc.CallOption) (*RetryDeadLetterResponse, error)
+	// SkipDeadLetter marks a dead-letter record as Skipped, resolving it without
+	// compensation execution.
+	SkipDeadLetter(ctx context.Context, in *SkipDeadLetterRequest, opts ...grpc.CallOption) (*SkipDeadLetterResponse, error)
 }
 
 type undoLogEngineClient struct {
@@ -138,6 +150,36 @@ func (c *undoLogEngineClient) ListPendingApprovals(ctx context.Context, in *List
 	return out, nil
 }
 
+func (c *undoLogEngineClient) ListDeadLetters(ctx context.Context, in *ListDeadLettersRequest, opts ...grpc.CallOption) (*ListDeadLettersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListDeadLettersResponse)
+	err := c.cc.Invoke(ctx, UndoLogEngine_ListDeadLetters_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *undoLogEngineClient) RetryDeadLetter(ctx context.Context, in *RetryDeadLetterRequest, opts ...grpc.CallOption) (*RetryDeadLetterResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetryDeadLetterResponse)
+	err := c.cc.Invoke(ctx, UndoLogEngine_RetryDeadLetter_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *undoLogEngineClient) SkipDeadLetter(ctx context.Context, in *SkipDeadLetterRequest, opts ...grpc.CallOption) (*SkipDeadLetterResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SkipDeadLetterResponse)
+	err := c.cc.Invoke(ctx, UndoLogEngine_SkipDeadLetter_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UndoLogEngineServer is the server API for UndoLogEngine service.
 // All implementations must embed UnimplementedUndoLogEngineServer
 // for forward compatibility.
@@ -167,6 +209,15 @@ type UndoLogEngineServer interface {
 	// organization.  The proxy reconciles its in-memory approval view from this
 	// on startup and periodically so a proxy restart does not orphan approvals.
 	ListPendingApprovals(context.Context, *ListPendingApprovalsRequest) (*ListPendingApprovalsResponse, error)
+	// ListDeadLetters returns the dead-letter records for an organization,
+	// optionally filtered by state.
+	ListDeadLetters(context.Context, *ListDeadLettersRequest) (*ListDeadLettersResponse, error)
+	// RetryDeadLetter resets a dead-letter record to Retrying and increments
+	// its retry count, enabling re-execution.
+	RetryDeadLetter(context.Context, *RetryDeadLetterRequest) (*RetryDeadLetterResponse, error)
+	// SkipDeadLetter marks a dead-letter record as Skipped, resolving it without
+	// compensation execution.
+	SkipDeadLetter(context.Context, *SkipDeadLetterRequest) (*SkipDeadLetterResponse, error)
 	mustEmbedUnimplementedUndoLogEngineServer()
 }
 
@@ -194,6 +245,15 @@ func (UnimplementedUndoLogEngineServer) Reject(context.Context, *RejectRequest) 
 }
 func (UnimplementedUndoLogEngineServer) ListPendingApprovals(context.Context, *ListPendingApprovalsRequest) (*ListPendingApprovalsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListPendingApprovals not implemented")
+}
+func (UnimplementedUndoLogEngineServer) ListDeadLetters(context.Context, *ListDeadLettersRequest) (*ListDeadLettersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListDeadLetters not implemented")
+}
+func (UnimplementedUndoLogEngineServer) RetryDeadLetter(context.Context, *RetryDeadLetterRequest) (*RetryDeadLetterResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RetryDeadLetter not implemented")
+}
+func (UnimplementedUndoLogEngineServer) SkipDeadLetter(context.Context, *SkipDeadLetterRequest) (*SkipDeadLetterResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SkipDeadLetter not implemented")
 }
 func (UnimplementedUndoLogEngineServer) mustEmbedUnimplementedUndoLogEngineServer() {}
 func (UnimplementedUndoLogEngineServer) testEmbeddedByValue()                       {}
@@ -324,6 +384,60 @@ func _UndoLogEngine_ListPendingApprovals_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UndoLogEngine_ListDeadLetters_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListDeadLettersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UndoLogEngineServer).ListDeadLetters(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UndoLogEngine_ListDeadLetters_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UndoLogEngineServer).ListDeadLetters(ctx, req.(*ListDeadLettersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UndoLogEngine_RetryDeadLetter_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetryDeadLetterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UndoLogEngineServer).RetryDeadLetter(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UndoLogEngine_RetryDeadLetter_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UndoLogEngineServer).RetryDeadLetter(ctx, req.(*RetryDeadLetterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UndoLogEngine_SkipDeadLetter_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SkipDeadLetterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UndoLogEngineServer).SkipDeadLetter(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UndoLogEngine_SkipDeadLetter_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UndoLogEngineServer).SkipDeadLetter(ctx, req.(*SkipDeadLetterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UndoLogEngine_ServiceDesc is the grpc.ServiceDesc for UndoLogEngine service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -354,6 +468,18 @@ var UndoLogEngine_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListPendingApprovals",
 			Handler:    _UndoLogEngine_ListPendingApprovals_Handler,
+		},
+		{
+			MethodName: "ListDeadLetters",
+			Handler:    _UndoLogEngine_ListDeadLetters_Handler,
+		},
+		{
+			MethodName: "RetryDeadLetter",
+			Handler:    _UndoLogEngine_RetryDeadLetter_Handler,
+		},
+		{
+			MethodName: "SkipDeadLetter",
+			Handler:    _UndoLogEngine_SkipDeadLetter_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
