@@ -35,14 +35,32 @@ from undolog_sdk.context import (
     require_current_session,
     run_with_session,
 )
-from undolog_sdk.decorators import AwaitingApprovalError, undolog_tool
+from undolog_sdk.decorators import undolog_tool
 from undolog_sdk.errors import (
+    ERROR_CLASSES,
+    ERROR_DOCS_BASE_URL,
+    ApprovalNotFoundError,
     AuthenticationError,
+    AwaitingApprovalError,
+    CompensationError,
+    ConfigurationError,
     ConnectionError,
+    EffectLogConcurrencyError,
+    EffectLogError,
+    ErrorCodes,
+    InvalidStateTransitionError,
     MissingSessionError,
+    NotFoundError,
+    PermissionError,
+    RateLimitError,
+    SerializationError,
     ServerError,
     TimeoutError,
+    ToolNotRegisteredError,
+    ToolRegistrationError,
     UndoLogError,
+    ValidationError,
+    format_runbook_url,
 )
 from undolog_sdk.session import UndoLogSession
 from undolog_sdk.test_harness import (
@@ -50,7 +68,6 @@ from undolog_sdk.test_harness import (
     CompensationTestHarness,
     EffectDescriptor,
     NetworkDropoutError,
-    RateLimitError,
     SagaReport,
     SagaTestHarness,
     StepResult,
@@ -67,28 +84,44 @@ except PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "ERROR_CLASSES",
+    "ERROR_DOCS_BASE_URL",
+    "ApprovalNotFoundError",
     "AuthenticationError",
     "AwaitingApprovalError",
     "CompensationDescriptor",
+    "CompensationError",
     "CompensationReport",
     "CompensationTestHarness",
+    "ConfigurationError",
     "ConnectionError",
     "EffectDescriptor",
+    "EffectLogConcurrencyError",
+    "EffectLogError",
+    "ErrorCodes",
+    "InvalidStateTransitionError",
     "MissingSessionError",
     "NetworkDropoutError",
+    "NotFoundError",
+    "PermissionError",
     "RateLimitError",
     "SagaReport",
     "SagaTestHarness",
+    "SerializationError",
     "ServerError",
     "StepResult",
     "TimeoutError",
+    "ToolNotRegisteredError",
+    "ToolRegistrationError",
     "ToolTier",
     "UndoLogClient",
     "UndoLogError",
     "UndoLogSession",
+    "ValidationError",
     "__version__",
     "assert_saga_rolled_back",
     "calculate_backoff",
+    "format_runbook_url",
     "get_current_session",
     "require_current_session",
     "run_with_session",
@@ -96,3 +129,6 @@ __all__ = [
     "test_saga",
     "undolog_tool",
 ]
+
+# Synchronize AwaitingApprovalError with decorators namespace so tool wrappers raise structured class
+undolog_tool.__globals__["AwaitingApprovalError"] = AwaitingApprovalError
