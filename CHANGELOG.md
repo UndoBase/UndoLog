@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Engine: added gRPC RPCs for listing, retrying, and skipping dead-letter
+  records with organization-scoped authorization.
+
 - Documentation: added ADR 0023 defining transport TLS and optional mTLS
   for proxy-to-engine gRPC communication.
 

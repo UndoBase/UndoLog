@@ -12,7 +12,7 @@ use std::time::Duration;
 use tracing::warn;
 
 #[cfg(feature = "pg")]
-use undolog_store::{ApprovalStore, EffectStore, SessionStore};
+use undolog_store::{ApprovalStore, DeadLetterStore, EffectStore, SessionStore};
 use undolog_types::errors::UndoLogError;
 
 use crate::{EffectEngine, EngineConfig, TierRegistry};
@@ -29,7 +29,7 @@ pub async fn build_engine(
     config: EngineConfig,
     database_url: &str,
     registry_refresh_interval: Duration,
-) -> Result<EffectEngine, UndoLogError> {
+) -> Result<(EffectEngine, DeadLetterStore), UndoLogError> {
     // Connect to PostgreSQL.
     info!("Connecting to database: {}", database_url);
     let pool = sqlx::PgPool::connect(database_url).await?;
@@ -52,10 +52,11 @@ pub async fn build_engine(
     info!("Skipping migrations (managed separately)");
     // sqlx::migrate!("../migrations").run(&pool).await?;
 
-    // Create the three concrete stores.
+    // Create the concrete stores.
     let effect_store = EffectStore::new(pool.clone());
     let session_store = SessionStore::new(pool.clone());
     let approval_store = ApprovalStore::new(pool.clone());
+    let dead_letter_store = DeadLetterStore::new(pool.clone());
 
     // Create the tier registry (initially empty).
     let registry = TierRegistry::new();
@@ -113,7 +114,7 @@ pub async fn build_engine(
     // Build and return the engine.
     let engine = EffectEngine::new(effect_store, session_store, approval_store, registry, config);
     info!("EffectEngine initialized successfully");
-    Ok(engine)
+    Ok((engine, dead_letter_store))
 }
 
 /// Block until `undolog_tool_registry` exists in the public schema (PostgreSQL).

@@ -56,9 +56,12 @@ service UndoLogEngine {
   rpc Intercept(InterceptRequest) returns (InterceptResponse);
   rpc Commit(CommitRequest) returns (CommitResponse);
   rpc Fail(FailRequest) returns (FailResponse);
- rpc Approve(ApproveRequest) returns (ApproveResponse);
- rpc Reject(RejectRequest) returns (RejectResponse);
- rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
+  rpc Approve(ApproveRequest) returns (ApproveResponse);
+  rpc Reject(RejectRequest) returns (RejectResponse);
+  rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
+  rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
+  rpc RetryDeadLetter(RetryDeadLetterRequest) returns (RetryDeadLetterResponse);
+  rpc SkipDeadLetter(SkipDeadLetterRequest) returns (SkipDeadLetterResponse);
 }
 ```
 
@@ -300,6 +303,7 @@ enabling re-execution of the failed compensation.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `org_id` | `string` (UUID) | Yes | Organisation that owns the dead letter. |
 | `dead_letter_id` | `string` (UUID) | Yes | Unique identifier of the dead-letter record to retry. |
 
 **Response:**
@@ -308,7 +312,7 @@ Returns the updated `DeadLetterRecord` in `retrying` state with `retry_count` in
 
 **Errors:**
 
-- Returns 404 Not Found when the dead letter ID does not exist or its current state is not `failed`.
+- Returns 404 Not Found when the dead letter ID does not exist for the organisation or its current state is not `failed`.
 
 ---
 
@@ -321,6 +325,7 @@ re-running compensation.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `org_id` | `string` (UUID) | Yes | Organisation that owns the dead letter. |
 | `dead_letter_id` | `string` (UUID) | Yes | Unique identifier of the dead-letter record to skip. |
 
 **Response:**
@@ -329,7 +334,7 @@ Returns the updated `DeadLetterRecord` in `skipped` state.
 
 **Errors:**
 
-- Returns 404 Not Found when the dead letter ID does not exist or its current state is not `failed`.
+- Returns 404 Not Found when the dead letter ID does not exist for the organisation or its current state is not `failed`.
 
 ---
 
@@ -344,9 +349,9 @@ Returns the updated `DeadLetterRecord` in `skipped` state.
 | `undo_id` | `string` (UUID) | Undo entry that failed. |
 | `compensation_fn` | `string` | Logical name of the compensation function. |
 | `compensation_version` | `string` | Semantic version of the compensation function. |
-| `compensation_args` | `bytes` / `string` | JSON-encoded arguments supplied to the compensation function. |
+| `compensation_args` | `bytes` | Raw JSON arguments supplied to the compensation function. |
 | `error_message` | `string` | Error message captured from the failed compensation attempts. |
 | `retry_count` | `int32` | Number of retry attempts executed so far. |
-| `state` | `string` | Lifecycle state (`"failed"`, `"retrying"`, or `"skipped"`). |
-| `created_at` | `string` | Creation timestamp in RFC 3339 format. |
-| `updated_at` | `string` | Last modification timestamp in RFC 3339 format. |
+| `state` | `DeadLetterState` | Lifecycle state (`FAILED`, `RETRYING`, or `SKIPPED`). |
+| `created_at_unix_ms` | `int64` | Creation timestamp in Unix milliseconds (UTC). |
+| `updated_at_unix_ms` | `int64` | Last modification timestamp in Unix milliseconds (UTC). |

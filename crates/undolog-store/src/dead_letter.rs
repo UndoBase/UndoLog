@@ -182,26 +182,33 @@ impl DeadLetterStore {
 
     /// Retry a dead-letter record by resetting its state to `retrying`.
     ///
-    /// Returns the updated record, or an error if the record is not in `failed` state.
-    #[instrument(skip(self), fields(dead_letter_id = %dead_letter_id))]
-    pub async fn retry(&self, dead_letter_id: uuid::Uuid) -> UndoLogResult<DeadLetterRecord> {
+    /// Returns the updated record, or an error if the record is not found for the
+    /// organization or is not in `failed` state.
+    #[instrument(skip(self), fields(org_id = %org_id, dead_letter_id = %dead_letter_id))]
+    pub async fn retry(
+        &self,
+        org_id: OrgId,
+        dead_letter_id: uuid::Uuid,
+    ) -> UndoLogResult<DeadLetterRecord> {
         let row = sqlx::query(
             r#"
             UPDATE undolog_dead_letters
             SET state = 'retrying', retry_count = retry_count + 1
-            WHERE dead_letter_id = $1 AND state = 'failed'
+            WHERE dead_letter_id = $1 AND org_id = $2 AND state = 'failed'
             RETURNING dead_letter_id, org_id, session_id, effect_id, undo_id,
                       compensation_fn, compensation_version, compensation_args,
                       error_message, retry_count, state, created_at, updated_at
             "#,
         )
         .bind(dead_letter_id)
+        .bind(*org_id.as_uuid())
         .fetch_one(&self.pool)
         .await?;
 
         let record = parse_row(&row)?;
         debug!(
             dead_letter_id = %record.dead_letter_id,
+            org_id = %org_id,
             "Retried dead-letter record"
         );
         Ok(record)
@@ -209,44 +216,56 @@ impl DeadLetterStore {
 
     /// Skip a dead-letter record by marking it as `skipped`.
     ///
-    /// Returns the updated record, or an error if the record is not in `failed` state.
-    #[instrument(skip(self), fields(dead_letter_id = %dead_letter_id))]
-    pub async fn skip(&self, dead_letter_id: uuid::Uuid) -> UndoLogResult<DeadLetterRecord> {
+    /// Returns the updated record, or an error if the record is not found for the
+    /// organization or is not in `failed` state.
+    #[instrument(skip(self), fields(org_id = %org_id, dead_letter_id = %dead_letter_id))]
+    pub async fn skip(
+        &self,
+        org_id: OrgId,
+        dead_letter_id: uuid::Uuid,
+    ) -> UndoLogResult<DeadLetterRecord> {
         let row = sqlx::query(
             r#"
             UPDATE undolog_dead_letters
             SET state = 'skipped'
-            WHERE dead_letter_id = $1 AND state = 'failed'
+            WHERE dead_letter_id = $1 AND org_id = $2 AND state = 'failed'
             RETURNING dead_letter_id, org_id, session_id, effect_id, undo_id,
                       compensation_fn, compensation_version, compensation_args,
                       error_message, retry_count, state, created_at, updated_at
             "#,
         )
         .bind(dead_letter_id)
+        .bind(*org_id.as_uuid())
         .fetch_one(&self.pool)
         .await?;
 
         let record = parse_row(&row)?;
         debug!(
             dead_letter_id = %record.dead_letter_id,
+            org_id = %org_id,
             "Skipped dead-letter record"
         );
         Ok(record)
     }
 
-    /// Get a single dead-letter record by ID.
-    #[instrument(skip(self), fields(dead_letter_id = %dead_letter_id))]
-    pub async fn get(&self, dead_letter_id: uuid::Uuid) -> UndoLogResult<Option<DeadLetterRecord>> {
+    /// Get a single dead-letter record by organization and ID.
+    #[instrument(skip(self), fields(org_id = %org_id, dead_letter_id = %dead_letter_id))]
+    pub async fn get(
+        &self,
+        org_id: OrgId,
+        dead_letter_id: uuid::Uuid,
+    ) -> UndoLogResult<Option<DeadLetterRecord>> {
         let row = sqlx::query(
             r#"
             SELECT dead_letter_id, org_id, session_id, effect_id, undo_id,
                    compensation_fn, compensation_version, compensation_args,
                    error_message, retry_count, state, created_at, updated_at
             FROM undolog_dead_letters
-            WHERE dead_letter_id = $1
+            WHERE dead_letter_id = $1 AND org_id = $2
             "#,
         )
         .bind(dead_letter_id)
+        .bind(*org_id.as_uuid())
         .fetch_optional(&self.pool)
         .await?;
 

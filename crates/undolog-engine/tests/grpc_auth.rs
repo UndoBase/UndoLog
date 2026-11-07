@@ -74,6 +74,27 @@ impl pb::undo_log_engine_server::UndoLogEngine for StubEngine {
     ) -> Result<Response<pb::ListPendingApprovalsResponse>, Status> {
         Ok(Response::new(pb::ListPendingApprovalsResponse { approval_records: Vec::new() }))
     }
+
+    async fn list_dead_letters(
+        &self,
+        _request: Request<pb::ListDeadLettersRequest>,
+    ) -> Result<Response<pb::ListDeadLettersResponse>, Status> {
+        Ok(Response::new(pb::ListDeadLettersResponse { records: Vec::new(), count: 0 }))
+    }
+
+    async fn retry_dead_letter(
+        &self,
+        _request: Request<pb::RetryDeadLetterRequest>,
+    ) -> Result<Response<pb::RetryDeadLetterResponse>, Status> {
+        Ok(Response::new(pb::RetryDeadLetterResponse { record: None }))
+    }
+
+    async fn skip_dead_letter(
+        &self,
+        _request: Request<pb::SkipDeadLetterRequest>,
+    ) -> Result<Response<pb::SkipDeadLetterResponse>, Status> {
+        Ok(Response::new(pb::SkipDeadLetterResponse { record: None }))
+    }
 }
 
 // ── Server harness ─────────────────────────────────────────────────────────

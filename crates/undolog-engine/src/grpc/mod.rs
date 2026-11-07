@@ -38,12 +38,16 @@ use crate::engine::EffectEngine;
 /// native types, calls the engine, and maps the result back to proto types.
 pub struct UndoLogEngineService {
     engine: Arc<RwLock<EffectEngine>>,
+    dead_letter_store: Option<undolog_store::DeadLetterStore>,
 }
 
 impl UndoLogEngineService {
-    /// Wrap an `EffectEngine` in the gRPC service layer.
-    pub fn new(engine: EffectEngine) -> Self {
-        Self { engine: Arc::new(RwLock::new(engine)) }
+    /// Wrap an `EffectEngine` and optional `DeadLetterStore` in the gRPC service layer.
+    pub fn new(
+        engine: EffectEngine,
+        dead_letter_store: Option<undolog_store::DeadLetterStore>,
+    ) -> Self {
+        Self { engine: Arc::new(RwLock::new(engine)), dead_letter_store }
     }
 }
 
@@ -232,6 +236,96 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
             approval_records: approvals.into_iter().map(approval_record_to_proto).collect(),
         }))
     }
+
+    #[instrument(skip(self, request), fields(rpc = "ListDeadLetters"))]
+    async fn list_dead_letters(
+        &self,
+        request: Request<pb::ListDeadLettersRequest>,
+    ) -> Result<Response<pb::ListDeadLettersResponse>, Status> {
+        let store = self
+            .dead_letter_store
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("dead-letter queue is not supported on SQLite"))?;
+
+        let req = request.into_inner();
+        let org_id = parse_org_id(&req.org_id)?;
+
+        let state = match pb::DeadLetterState::try_from(req.state) {
+            Ok(pb::DeadLetterState::Retrying) => {
+                undolog_store::dead_letter::DeadLetterState::Retrying
+            }
+            Ok(pb::DeadLetterState::Skipped) => {
+                undolog_store::dead_letter::DeadLetterState::Skipped
+            }
+            _ => undolog_store::dead_letter::DeadLetterState::Failed,
+        };
+
+        let records = store
+            .list_by_state(org_id, state)
+            .await
+            .map_err(|e| Status::internal(format!("list dead letters failed: {e}")))?;
+
+        let count = records.len() as u64;
+        let pb_records = records.into_iter().map(dead_letter_record_to_proto).collect();
+
+        Ok(Response::new(pb::ListDeadLettersResponse { records: pb_records, count }))
+    }
+
+    #[instrument(skip(self, request), fields(rpc = "RetryDeadLetter"))]
+    async fn retry_dead_letter(
+        &self,
+        request: Request<pb::RetryDeadLetterRequest>,
+    ) -> Result<Response<pb::RetryDeadLetterResponse>, Status> {
+        let store = self
+            .dead_letter_store
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("dead-letter queue is not supported on SQLite"))?;
+
+        let req = request.into_inner();
+        let org_id = parse_org_id(&req.org_id)?;
+        let dead_letter_id = parse_dead_letter_id(&req.dead_letter_id)?;
+
+        let record = store.retry(org_id, dead_letter_id).await.map_err(|e| match e {
+            undolog_types::errors::UndoLogError::Database(sqlx::Error::RowNotFound) => {
+                Status::not_found(format!(
+                    "dead letter '{dead_letter_id}' not found for org '{org_id}' in failed state"
+                ))
+            }
+            other => Status::internal(format!("retry dead letter failed: {other}")),
+        })?;
+
+        Ok(Response::new(pb::RetryDeadLetterResponse {
+            record: Some(dead_letter_record_to_proto(record)),
+        }))
+    }
+
+    #[instrument(skip(self, request), fields(rpc = "SkipDeadLetter"))]
+    async fn skip_dead_letter(
+        &self,
+        request: Request<pb::SkipDeadLetterRequest>,
+    ) -> Result<Response<pb::SkipDeadLetterResponse>, Status> {
+        let store = self
+            .dead_letter_store
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("dead-letter queue is not supported on SQLite"))?;
+
+        let req = request.into_inner();
+        let org_id = parse_org_id(&req.org_id)?;
+        let dead_letter_id = parse_dead_letter_id(&req.dead_letter_id)?;
+
+        let record = store.skip(org_id, dead_letter_id).await.map_err(|e| match e {
+            undolog_types::errors::UndoLogError::Database(sqlx::Error::RowNotFound) => {
+                Status::not_found(format!(
+                    "dead letter '{dead_letter_id}' not found for org '{org_id}' in failed state"
+                ))
+            }
+            other => Status::internal(format!("skip dead letter failed: {other}")),
+        })?;
+
+        Ok(Response::new(pb::SkipDeadLetterResponse {
+            record: Some(dead_letter_record_to_proto(record)),
+        }))
+    }
 }
 
 // ── Proto ↔ Domain conversions ────────────────────────────────────────────
@@ -332,6 +426,42 @@ fn approval_record_to_proto(a: ApprovalRequest) -> pb::ApprovalRecord {
         tool_name: a.tool_name,
         args: serde_json::to_vec(&a.proposed_args).unwrap_or_default(),
         created_at_unix_ms: a.created_at.timestamp_millis(),
+    }
+}
+
+/// Parse a dead-letter ID from a string, returning a gRPC `Status` on failure.
+#[allow(clippy::result_large_err)]
+fn parse_dead_letter_id(s: &str) -> Result<uuid::Uuid, Status> {
+    uuid::Uuid::parse_str(s)
+        .map_err(|e| Status::invalid_argument(format!("invalid dead_letter_id: {e}")))
+}
+
+/// Convert a domain dead-letter record into the wire `DeadLetterRecord`.
+fn dead_letter_record_to_proto(
+    r: undolog_store::dead_letter::DeadLetterRecord,
+) -> pb::DeadLetterRecord {
+    let state = match r.state {
+        undolog_store::dead_letter::DeadLetterState::Failed => pb::DeadLetterState::Failed as i32,
+        undolog_store::dead_letter::DeadLetterState::Retrying => {
+            pb::DeadLetterState::Retrying as i32
+        }
+        undolog_store::dead_letter::DeadLetterState::Skipped => pb::DeadLetterState::Skipped as i32,
+    };
+
+    pb::DeadLetterRecord {
+        dead_letter_id: r.dead_letter_id.to_string(),
+        org_id: r.org_id.to_string(),
+        session_id: r.session_id.to_string(),
+        effect_id: r.effect_id.to_string(),
+        undo_id: r.undo_id.to_string(),
+        compensation_fn: r.compensation_fn,
+        compensation_version: r.compensation_version,
+        compensation_args: serde_json::to_vec(&r.compensation_args).unwrap_or_default(),
+        error_message: r.error_message,
+        retry_count: r.retry_count,
+        state,
+        created_at_unix_ms: r.created_at.timestamp_millis(),
+        updated_at_unix_ms: r.updated_at.timestamp_millis(),
     }
 }
 

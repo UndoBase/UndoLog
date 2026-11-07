@@ -75,10 +75,11 @@ async fn test_retry_dead_letter_returns_404_for_missing_id() {
     let app = undolog_engine::admin::router(state);
 
     let id = uuid::Uuid::new_v4();
+    let org_id = uuid::Uuid::new_v4();
     let response = app
         .oneshot(
             Request::builder()
-                .uri(format!("/admin/dead-letters/{id}/retry"))
+                .uri(format!("/admin/dead-letters/{id}/retry?org_id={org_id}"))
                 .method("POST")
                 .body(Body::empty())
                 .unwrap(),
@@ -102,10 +103,11 @@ async fn test_skip_dead_letter_returns_404_for_missing_id() {
     let app = undolog_engine::admin::router(state);
 
     let id = uuid::Uuid::new_v4();
+    let org_id = uuid::Uuid::new_v4();
     let response = app
         .oneshot(
             Request::builder()
-                .uri(format!("/admin/dead-letters/{id}/skip"))
+                .uri(format!("/admin/dead-letters/{id}/skip?org_id={org_id}"))
                 .method("POST")
                 .body(Body::empty())
                 .unwrap(),
