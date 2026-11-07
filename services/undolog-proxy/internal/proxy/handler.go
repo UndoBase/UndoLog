@@ -412,9 +412,25 @@ func hexTraceID(id [16]byte) string {
 	return hex.EncodeToString(id[:])
 }
 
+// isValidUUID reports whether s is a standard 36-character hyphenated UUID.
+func isValidUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+		return false
+	}
+	var b [16]byte
+	cleaned := s[0:8] + s[9:13] + s[14:18] + s[19:23] + s[24:36]
+	_, err := hex.Decode(b[:], []byte(cleaned))
+	return err == nil
+}
+
 // DeadLetterAdmin defines administrative operations for dead-letter records.
 type DeadLetterAdmin interface {
 	ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error)
+	RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error)
+	SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error)
 }
 
 // AdminHandler serves administrative HTTP routes.
@@ -473,7 +489,89 @@ func (h *AdminHandler) ListDeadLetters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, h.logger, http.StatusOK, resp)
 }
 
+// RetryDeadLetter handles POST /api/v1/admin/dead-letters/{id}/retry.
+func (h *AdminHandler) RetryDeadLetter(w http.ResponseWriter, r *http.Request) {
+	reqID := requestIDFrom(r.Context())
+	if r.Method != http.MethodPost {
+		writeError(w, h.logger, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", reqID)
+		return
+	}
+	orgID := orgIDFrom(r.Context())
+	if orgID == "" {
+		writeError(w, h.logger, http.StatusUnauthorized, "auth_failed", "unauthenticated", reqID)
+		return
+	}
+
+	id := r.PathValue("id")
+	if !isValidUUID(id) {
+		writeError(w, h.logger, http.StatusBadRequest, "invalid_argument", "invalid dead-letter id: must be a valid UUID", reqID)
+		return
+	}
+
+	resp, err := h.admin.RetryDeadLetter(r.Context(), protocol.RetryDeadLetterRequest{
+		OrgID:        orgID,
+		DeadLetterID: id,
+	})
+	if err != nil {
+		h.writeEngineError(w, err, reqID)
+		return
+	}
+
+	h.logger.Info("admin dead letter action",
+		"org_id", orgID,
+		"action", "retry",
+		"dead_letter_id", id,
+		"request_id", reqID,
+		"outcome", resp.Record.State,
+	)
+
+	writeJSON(w, h.logger, http.StatusOK, resp.Record)
+}
+
+// SkipDeadLetter handles POST /api/v1/admin/dead-letters/{id}/skip.
+func (h *AdminHandler) SkipDeadLetter(w http.ResponseWriter, r *http.Request) {
+	reqID := requestIDFrom(r.Context())
+	if r.Method != http.MethodPost {
+		writeError(w, h.logger, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", reqID)
+		return
+	}
+	orgID := orgIDFrom(r.Context())
+	if orgID == "" {
+		writeError(w, h.logger, http.StatusUnauthorized, "auth_failed", "unauthenticated", reqID)
+		return
+	}
+
+	id := r.PathValue("id")
+	if !isValidUUID(id) {
+		writeError(w, h.logger, http.StatusBadRequest, "invalid_argument", "invalid dead-letter id: must be a valid UUID", reqID)
+		return
+	}
+
+	resp, err := h.admin.SkipDeadLetter(r.Context(), protocol.SkipDeadLetterRequest{
+		OrgID:        orgID,
+		DeadLetterID: id,
+	})
+	if err != nil {
+		h.writeEngineError(w, err, reqID)
+		return
+	}
+
+	h.logger.Info("admin dead letter action",
+		"org_id", orgID,
+		"action", "skip",
+		"dead_letter_id", id,
+		"request_id", reqID,
+		"outcome", resp.Record.State,
+	)
+
+	writeJSON(w, h.logger, http.StatusOK, resp.Record)
+}
+
 func (h *AdminHandler) writeEngineError(w http.ResponseWriter, err error, reqID string) {
+	if grpcstatus.Code(err) == codes.NotFound {
+		writeError(w, h.logger, http.StatusNotFound, "dead_letter_not_found", "dead-letter record not found", reqID)
+		return
+	}
 	if grpcstatus.Code(err) == codes.Unimplemented {
 		writeError(w, h.logger, http.StatusNotImplemented, "dead_letter_unavailable", "dead-letter queue is not supported on this engine backend", reqID)
 		return

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Proxy: added administrative REST endpoints for retrying and skipping
+  failed dead-letter records.
+
 - Proxy: added admin API key configuration, role-based authorization,
   and dead-letter listing endpoint.
 

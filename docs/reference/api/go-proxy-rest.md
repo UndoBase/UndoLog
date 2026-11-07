@@ -543,3 +543,121 @@ The organization is derived strictly from the authenticated API key; any `org_id
 | `501 Not Implemented` | `dead_letter_unavailable` | The backing engine does not support dead-letter queues (such as SQLite). |
 | `502 Bad Gateway` | `engine_error` | The engine returned an internal database or communication error. |
 | `503 Service Unavailable` | `engine_unavailable` | Engine is unavailable or overloaded. Includes `Retry-After: 1` header. |
+
+---
+
+## `POST /api/v1/admin/dead-letters/{id}/retry`
+
+Mark a failed dead-letter compensation record for retry.
+
+### Request
+
+**Headers**
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-Api-Key` | Yes | Administrative API key. Must carry the `admin` role. |
+
+**Path Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | `string` | Yes | Dead-letter record UUID. |
+
+The organization is derived strictly from the authenticated API key. The target record must belong to the caller's organization and be in the `failed` state.
+
+### Responses
+
+#### `200 OK`
+
+```json
+{
+  "dead_letter_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "org_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+  "session_id": "c3b9b4a1-8d2b-4d7a-8f91-7d3a2b4c5e6f",
+  "effect_id": "d1e2f3a4-b5c6-4d7e-8f90-1a2b3c4d5e6f",
+  "undo_id": "e2f3a4b5-c6d7-4e8f-901a-2b3c4d5e6f70",
+  "compensation_fn": "cancel_reservation",
+  "compensation_version": "1.0.0",
+  "compensation_args": {
+    "reservation_id": "res-12345"
+  },
+  "error_message": "upstream service returned 503",
+  "retry_count": 1,
+  "state": "retrying",
+  "created_at": "2026-11-07T12:00:00Z",
+  "updated_at": "2026-11-07T12:05:00Z"
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| `400 Bad Request` | `invalid_argument` | Path parameter `id` is not a valid UUID. |
+| `401 Unauthorized` | `auth_failed` | Missing `X-Api-Key` header. |
+| `403 Forbidden` | `auth_failed` | API key belongs to a member role instead of an admin role. |
+| `404 Not Found` | `dead_letter_not_found` | Dead-letter record not found, belongs to a different organization, or is not in `failed` state. |
+| `405 Method Not Allowed` | `method_not_allowed` | HTTP method is not `POST`. |
+| `501 Not Implemented` | `dead_letter_unavailable` | The backing engine does not support dead-letter queues (such as SQLite). |
+| `502 Bad Gateway` | `engine_error` | The engine returned an internal database or communication error. |
+| `503 Service Unavailable` | `engine_unavailable` | Engine is unavailable or overloaded. Includes `Retry-After: 1` header. |
+
+---
+
+## `POST /api/v1/admin/dead-letters/{id}/skip`
+
+Mark a failed dead-letter compensation record as skipped.
+
+### Request
+
+**Headers**
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-Api-Key` | Yes | Administrative API key. Must carry the `admin` role. |
+
+**Path Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | `string` | Yes | Dead-letter record UUID. |
+
+The organization is derived strictly from the authenticated API key. The target record must belong to the caller's organization and be in the `failed` state.
+
+### Responses
+
+#### `200 OK`
+
+```json
+{
+  "dead_letter_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "org_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+  "session_id": "c3b9b4a1-8d2b-4d7a-8f91-7d3a2b4c5e6f",
+  "effect_id": "d1e2f3a4-b5c6-4d7e-8f90-1a2b3c4d5e6f",
+  "undo_id": "e2f3a4b5-c6d7-4e8f-901a-2b3c4d5e6f70",
+  "compensation_fn": "cancel_reservation",
+  "compensation_version": "1.0.0",
+  "compensation_args": {
+    "reservation_id": "res-12345"
+  },
+  "error_message": "upstream service returned 503",
+  "retry_count": 0,
+  "state": "skipped",
+  "created_at": "2026-11-07T12:00:00Z",
+  "updated_at": "2026-11-07T12:05:00Z"
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| `400 Bad Request` | `invalid_argument` | Path parameter `id` is not a valid UUID. |
+| `401 Unauthorized` | `auth_failed` | Missing `X-Api-Key` header. |
+| `403 Forbidden` | `auth_failed` | API key belongs to a member role instead of an admin role. |
+| `404 Not Found` | `dead_letter_not_found` | Dead-letter record not found, belongs to a different organization, or is not in `failed` state. |
+| `405 Method Not Allowed` | `method_not_allowed` | HTTP method is not `POST`. |
+| `501 Not Implemented` | `dead_letter_unavailable` | The backing engine does not support dead-letter queues (such as SQLite). |
+| `502 Bad Gateway` | `engine_error` | The engine returned an internal database or communication error. |
+| `503 Service Unavailable` | `engine_unavailable` | Engine is unavailable or overloaded. Includes `Retry-After: 1` header. |

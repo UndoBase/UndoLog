@@ -86,6 +86,16 @@ func (m *mockTransport) ListDeadLetters(ctx context.Context, req protocol.ListDe
 	return protocol.ListDeadLettersResponse{}, nil
 }
 
+// RetryDeadLetter returns an empty retry response for the mock transport.
+func (m *mockTransport) RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error) {
+	return protocol.RetryDeadLetterResponse{}, nil
+}
+
+// SkipDeadLetter returns an empty skip response for the mock transport.
+func (m *mockTransport) SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error) {
+	return protocol.SkipDeadLetterResponse{}, nil
+}
+
 // Close is a no-op for the mock transport.
 func (m *mockTransport) Close() error { return nil }
 
@@ -123,6 +133,12 @@ func TestClientDelegatesToTransport(t *testing.T) {
 	}
 	if _, err := client.ListDeadLetters(context.Background(), protocol.ListDeadLettersRequest{OrgID: "org-1", State: "failed"}); err != nil {
 		t.Fatalf("list dead letters returned error: %v", err)
+	}
+	if _, err := client.RetryDeadLetter(context.Background(), protocol.RetryDeadLetterRequest{OrgID: "org-1", DeadLetterID: "dl-1"}); err != nil {
+		t.Fatalf("retry dead letter returned error: %v", err)
+	}
+	if _, err := client.SkipDeadLetter(context.Background(), protocol.SkipDeadLetterRequest{OrgID: "org-1", DeadLetterID: "dl-1"}); err != nil {
+		t.Fatalf("skip dead letter returned error: %v", err)
 	}
 }
 
@@ -684,6 +700,26 @@ func (b *blockingTransport) ListDeadLetters(ctx context.Context, req protocol.Li
 		return protocol.ListDeadLettersResponse{}, ctx.Err()
 	}
 	return protocol.ListDeadLettersResponse{}, b.failure
+}
+
+func (b *blockingTransport) RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error) {
+	b.calls.Add(1)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return protocol.RetryDeadLetterResponse{}, ctx.Err()
+	}
+	return protocol.RetryDeadLetterResponse{}, b.failure
+}
+
+func (b *blockingTransport) SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error) {
+	b.calls.Add(1)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return protocol.SkipDeadLetterResponse{}, ctx.Err()
+	}
+	return protocol.SkipDeadLetterResponse{}, b.failure
 }
 
 func (b *blockingTransport) Close() error { return nil }

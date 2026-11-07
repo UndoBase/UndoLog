@@ -166,6 +166,28 @@ type ListDeadLettersResponse struct {
 	Count   int                `json:"count"`
 }
 
+// RetryDeadLetterRequest asks the engine to retry a dead-letter record.
+type RetryDeadLetterRequest struct {
+	OrgID        string `json:"org_id"`
+	DeadLetterID string `json:"dead_letter_id"`
+}
+
+// RetryDeadLetterResponse holds the retried dead-letter record.
+type RetryDeadLetterResponse struct {
+	Record DeadLetterRecord `json:"record"`
+}
+
+// SkipDeadLetterRequest asks the engine to skip a dead-letter record.
+type SkipDeadLetterRequest struct {
+	OrgID        string `json:"org_id"`
+	DeadLetterID string `json:"dead_letter_id"`
+}
+
+// SkipDeadLetterResponse holds the skipped dead-letter record.
+type SkipDeadLetterResponse struct {
+	Record DeadLetterRecord `json:"record"`
+}
+
 // EngineClient is the RPC contract shared by the proxy and engine.
 type EngineClient interface {
 	Intercept(ctx context.Context, req InterceptRequest) (InterceptResponse, error)
@@ -175,6 +197,8 @@ type EngineClient interface {
 	Reject(ctx context.Context, req RejectRequest) error
 	ListPendingApprovals(ctx context.Context, req ListPendingApprovalsRequest) (ListPendingApprovalsResponse, error)
 	ListDeadLetters(ctx context.Context, req ListDeadLettersRequest) (ListDeadLettersResponse, error)
+	RetryDeadLetter(ctx context.Context, req RetryDeadLetterRequest) (RetryDeadLetterResponse, error)
+	SkipDeadLetter(ctx context.Context, req SkipDeadLetterRequest) (SkipDeadLetterResponse, error)
 	Close() error
 }
 

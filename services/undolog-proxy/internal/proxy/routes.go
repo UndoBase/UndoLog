@@ -20,7 +20,24 @@ func MountAdminRoutes(mux *http.ServeMux, mw *MiddlewareStack, admin DeadLetterA
 		}
 		adminHandler.ListDeadLetters(w, r)
 	})
+	adminMux.HandleFunc("/api/v1/admin/dead-letters/{id}/retry", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			reqID := requestIDFrom(r.Context())
+			writeError(w, logger, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", reqID)
+			return
+		}
+		adminHandler.RetryDeadLetter(w, r)
+	})
+	adminMux.HandleFunc("/api/v1/admin/dead-letters/{id}/skip", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			reqID := requestIDFrom(r.Context())
+			writeError(w, logger, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", reqID)
+			return
+		}
+		adminHandler.SkipDeadLetter(w, r)
+	})
 
 	protectedAdmin := mw.PanicRecovery(mw.RequestID(mw.StructuredLogging(mw.Auth(mw.AdminOnly(adminMux)))))
 	mux.Handle("/api/v1/admin/dead-letters", protectedAdmin)
+	mux.Handle("/api/v1/admin/dead-letters/", protectedAdmin)
 }
