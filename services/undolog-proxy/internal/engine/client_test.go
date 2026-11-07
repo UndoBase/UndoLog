@@ -81,6 +81,11 @@ func (m *mockTransport) ListPendingApprovals(ctx context.Context, req protocol.L
 	return protocol.ListPendingApprovalsResponse{}, nil
 }
 
+// ListDeadLetters returns an empty dead-letter response for the mock transport.
+func (m *mockTransport) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
+	return protocol.ListDeadLettersResponse{}, nil
+}
+
 // Close is a no-op for the mock transport.
 func (m *mockTransport) Close() error { return nil }
 
@@ -115,6 +120,9 @@ func TestClientDelegatesToTransport(t *testing.T) {
 	}
 	if err := client.Reject(context.Background(), protocol.RejectRequest{ApprovalID: "approval-1"}); err != nil {
 		t.Fatalf("reject returned error: %v", err)
+	}
+	if _, err := client.ListDeadLetters(context.Background(), protocol.ListDeadLettersRequest{OrgID: "org-1", State: "failed"}); err != nil {
+		t.Fatalf("list dead letters returned error: %v", err)
 	}
 }
 
@@ -666,6 +674,16 @@ func (b *blockingTransport) Reject(ctx context.Context, req protocol.RejectReque
 // is exempt from the guard by design.
 func (b *blockingTransport) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
 	return protocol.ListPendingApprovalsResponse{}, nil
+}
+
+func (b *blockingTransport) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
+	b.calls.Add(1)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return protocol.ListDeadLettersResponse{}, ctx.Err()
+	}
+	return protocol.ListDeadLettersResponse{}, b.failure
 }
 
 func (b *blockingTransport) Close() error { return nil }

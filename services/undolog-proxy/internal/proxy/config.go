@@ -79,6 +79,8 @@ type Config struct {
 	LogLevel string
 	// TrustedAPIKeys maps API keys to organization identifiers.
 	TrustedAPIKeys map[string]string
+	// AdminAPIKeys maps administrative API keys to organization identifiers.
+	AdminAPIKeys map[string]string
 	// Plugins is the ordered interceptor plugin names from
 	// UNDOLOG_PROXY_PLUGINS. An empty list runs no plugins.
 	Plugins []string
@@ -142,6 +144,7 @@ func LoadConfig() (Config, error) {
 		UpstreamToolURL:           resolveStr("UNDOLOG_PROXY_UPSTREAM_TOOL_URL", f.UpstreamToolURL, ""),
 		LogLevel:                  resolveStr("UNDOLOG_LOG_LEVEL", f.LogLevel, "info"),
 		TrustedAPIKeys:            resolveAPIKeys(f),
+		AdminAPIKeys:              resolveAdminAPIKeys(f),
 		Plugins:                   resolvePlugins(f),
 		RateLimitRPS:              rateRPS,
 		RateLimitBurst:            rateBurst,
@@ -159,6 +162,11 @@ func LoadConfig() (Config, error) {
 	}
 	if len(cfg.TrustedAPIKeys) == 0 {
 		return Config{}, fmt.Errorf("UNDOLOG_PROXY_API_KEYS must define at least one key=org pair")
+	}
+	for key := range cfg.AdminAPIKeys {
+		if _, exists := cfg.TrustedAPIKeys[key]; exists {
+			return Config{}, fmt.Errorf("API key %q cannot be configured in both api_keys and admin_api_keys", key)
+		}
 	}
 	if cfg.UpstreamToolURL != "" {
 		u, err := url.Parse(cfg.UpstreamToolURL)
@@ -213,6 +221,7 @@ func restartOnlyNames(running, next Config) []string {
 	add("engine_breaker_reset_secs", running.EngineBreakerReset != next.EngineBreakerReset)
 	add("upstream_tool_url", running.UpstreamToolURL != next.UpstreamToolURL)
 	add("api_keys", !maps.Equal(running.TrustedAPIKeys, next.TrustedAPIKeys))
+	add("admin_api_keys", !maps.Equal(running.AdminAPIKeys, next.AdminAPIKeys))
 	add("plugins", !slices.Equal(running.Plugins, next.Plugins))
 	add("max_body_bytes", running.MaxBodyBytes != next.MaxBodyBytes)
 	add("read_header_timeout_secs", running.ReadHeaderTimeout != next.ReadHeaderTimeout)

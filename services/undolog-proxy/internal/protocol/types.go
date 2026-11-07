@@ -137,6 +137,35 @@ type ListPendingApprovalsResponse struct {
 	Records []ApprovalRecord `json:"approval_records"`
 }
 
+// DeadLetterRecord represents a persisted compensation failure.
+type DeadLetterRecord struct {
+	DeadLetterID        string          `json:"dead_letter_id"`
+	OrgID               string          `json:"org_id"`
+	SessionID           string          `json:"session_id"`
+	EffectID            string          `json:"effect_id"`
+	UndoID              string          `json:"undo_id"`
+	CompensationFn      string          `json:"compensation_fn"`
+	CompensationVersion string          `json:"compensation_version"`
+	CompensationArgs    json.RawMessage `json:"compensation_args"`
+	ErrorMessage        string          `json:"error_message"`
+	RetryCount          int32           `json:"retry_count"`
+	State               string          `json:"state"`
+	CreatedAt           string          `json:"created_at"`
+	UpdatedAt           string          `json:"updated_at"`
+}
+
+// ListDeadLettersRequest asks the engine to list dead-letter records.
+type ListDeadLettersRequest struct {
+	OrgID string `json:"org_id"`
+	State string `json:"state,omitempty"`
+}
+
+// ListDeadLettersResponse holds the returned dead-letter records.
+type ListDeadLettersResponse struct {
+	Records []DeadLetterRecord `json:"records"`
+	Count   int                `json:"count"`
+}
+
 // EngineClient is the RPC contract shared by the proxy and engine.
 type EngineClient interface {
 	Intercept(ctx context.Context, req InterceptRequest) (InterceptResponse, error)
@@ -145,6 +174,7 @@ type EngineClient interface {
 	Approve(ctx context.Context, req ApproveRequest) (ApproveResponse, error)
 	Reject(ctx context.Context, req RejectRequest) error
 	ListPendingApprovals(ctx context.Context, req ListPendingApprovalsRequest) (ListPendingApprovalsResponse, error)
+	ListDeadLetters(ctx context.Context, req ListDeadLettersRequest) (ListDeadLettersResponse, error)
 	Close() error
 }
 

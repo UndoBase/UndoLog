@@ -74,6 +74,11 @@ func (m *mockEngineClient) ListPendingApprovals(ctx context.Context, req protoco
 	return protocol.ListPendingApprovalsResponse{Records: m.pending}, nil
 }
 
+// ListDeadLetters is a stub satisfying protocol.EngineClient.
+func (m *mockEngineClient) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
+	return protocol.ListDeadLettersResponse{}, nil
+}
+
 // Close is a no-op stub used to satisfy the engine client interface.
 func (m *mockEngineClient) Close() error { return nil }
 
@@ -614,7 +619,7 @@ func TestToolCallBodySizeLimit(t *testing.T) {
 
 // TestMiddlewareAuthAndRequestID verifies auth, request IDs, and logging middleware.
 func TestMiddlewareAuthAndRequestID(t *testing.T) {
-	stack := NewMiddlewareStack(nil, map[string]string{"key-1": "org-1"})
+	stack := NewMiddlewareStack(nil, map[string]string{"key-1": "org-1"}, nil)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := orgIDFrom(r.Context()); got != "org-1" {
@@ -644,7 +649,7 @@ func TestMiddlewareAuthAndRequestID(t *testing.T) {
 // TestMiddlewareAuthRejectsUnknownAndMissingKeys verifies the digest-based auth
 // middleware still enforces the 401/403 contract for missing and unknown keys.
 func TestMiddlewareAuthRejectsUnknownAndMissingKeys(t *testing.T) {
-	stack := NewMiddlewareStack(nil, map[string]string{"key-1": "org-1"})
+	stack := NewMiddlewareStack(nil, map[string]string{"key-1": "org-1"}, nil)
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -1651,6 +1656,10 @@ func (e *trackingEngine) Reject(ctx context.Context, req protocol.RejectRequest)
 
 func (e *trackingEngine) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
 	return protocol.ListPendingApprovalsResponse{}, nil
+}
+
+func (e *trackingEngine) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
+	return protocol.ListDeadLettersResponse{}, nil
 }
 
 func (e *trackingEngine) Close() error { return nil }

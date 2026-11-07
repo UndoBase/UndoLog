@@ -100,15 +100,16 @@ func (c *Client) SetMetrics(reg *metrics.Registry) {
 
 // RPC method labels used in engine RPC metrics.
 const (
-	rpcMethodIntercept   = "Intercept"
-	rpcMethodCommit      = "Commit"
-	rpcMethodFail        = "Fail"
-	rpcMethodApprove     = "Approve"
-	rpcMethodReject      = "Reject"
-	rpcMethodListPending = "ListPendingApprovals"
-	rpcDurationMetric    = "undolog_proxy_engine_rpc_duration_seconds"
-	rpcErrorsMetric      = "undolog_proxy_engine_rpc_errors_total"
-	rpcRetriesMetric     = "undolog_proxy_engine_rpc_retries_total"
+	rpcMethodIntercept       = "Intercept"
+	rpcMethodCommit          = "Commit"
+	rpcMethodFail            = "Fail"
+	rpcMethodApprove         = "Approve"
+	rpcMethodReject          = "Reject"
+	rpcMethodListPending     = "ListPendingApprovals"
+	rpcMethodListDeadLetters = "ListDeadLetters"
+	rpcDurationMetric        = "undolog_proxy_engine_rpc_duration_seconds"
+	rpcErrorsMetric          = "undolog_proxy_engine_rpc_errors_total"
+	rpcRetriesMetric         = "undolog_proxy_engine_rpc_retries_total"
 )
 
 // Metric names and rejection reasons used by the backpressure guard. The
@@ -548,6 +549,18 @@ func (c *Client) ListPendingApprovals(ctx context.Context, req protocol.ListPend
 		return t.ListPendingApprovals(ctx, req)
 	})
 	c.observeRPC(rpcMethodListPending, start, err)
+	return resp, err
+}
+
+// ListDeadLetters queries dead-letter records for an organization.
+func (c *Client) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
+	start := time.Now()
+	resp, err := guarded(ctx, c, func() (protocol.ListDeadLettersResponse, error) {
+		return call(ctx, c, func(t Transport) (protocol.ListDeadLettersResponse, error) {
+			return t.ListDeadLetters(ctx, req)
+		})
+	})
+	c.observeRPC(rpcMethodListDeadLetters, start, err)
 	return resp, err
 }
 

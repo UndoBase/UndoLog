@@ -7,6 +7,8 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -264,6 +266,66 @@ func listPendingApprovalsFromProto(msg *pb.ListPendingApprovalsResponse) protoco
 			ToolName:      rec.ToolName,
 			Args:          rec.Args,
 			CreatedAtUnix: rec.CreatedAtUnixMs,
+		})
+	}
+	return out
+}
+
+// ListDeadLetters retrieves dead-letter records for an organization filtered by state.
+func (t *GRPCTransport) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
+	ctx = withTracingMetadata(ctx)
+	var pbState pb.DeadLetterState
+	switch strings.ToLower(req.State) {
+	case "retrying":
+		pbState = pb.DeadLetterState_DEAD_LETTER_STATE_RETRYING
+	case "skipped":
+		pbState = pb.DeadLetterState_DEAD_LETTER_STATE_SKIPPED
+	default:
+		pbState = pb.DeadLetterState_DEAD_LETTER_STATE_FAILED
+	}
+
+	pbReq := &pb.ListDeadLettersRequest{
+		OrgId: req.OrgID,
+		State: pbState,
+	}
+
+	pbResp, err := t.client.ListDeadLetters(ctx, pbReq)
+	if err != nil {
+		return protocol.ListDeadLettersResponse{}, err
+	}
+	return listDeadLettersResponseFromProto(pbResp), nil
+}
+
+func listDeadLettersResponseFromProto(msg *pb.ListDeadLettersResponse) protocol.ListDeadLettersResponse {
+	out := protocol.ListDeadLettersResponse{
+		Records: make([]protocol.DeadLetterRecord, 0, len(msg.Records)),
+		Count:   int(msg.Count),
+	}
+	for _, rec := range msg.Records {
+		var stateStr string
+		switch rec.State {
+		case pb.DeadLetterState_DEAD_LETTER_STATE_RETRYING:
+			stateStr = "retrying"
+		case pb.DeadLetterState_DEAD_LETTER_STATE_SKIPPED:
+			stateStr = "skipped"
+		default:
+			stateStr = "failed"
+		}
+
+		out.Records = append(out.Records, protocol.DeadLetterRecord{
+			DeadLetterID:        rec.DeadLetterId,
+			OrgID:               rec.OrgId,
+			SessionID:           rec.SessionId,
+			EffectID:            rec.EffectId,
+			UndoID:              rec.UndoId,
+			CompensationFn:      rec.CompensationFn,
+			CompensationVersion: rec.CompensationVersion,
+			CompensationArgs:    rec.CompensationArgs,
+			ErrorMessage:        rec.ErrorMessage,
+			RetryCount:          rec.RetryCount,
+			State:               stateStr,
+			CreatedAt:           time.UnixMilli(rec.CreatedAtUnixMs).UTC().Format(time.RFC3339),
+			UpdatedAt:           time.UnixMilli(rec.UpdatedAtUnixMs).UTC().Format(time.RFC3339),
 		})
 	}
 	return out

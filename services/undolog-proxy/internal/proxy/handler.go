@@ -13,7 +13,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"undolog-proxy/internal/approval"
 	"undolog-proxy/internal/engine"
@@ -276,15 +280,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			SessionID: req.SessionID,
 			Payload:   json.RawMessage(`{"stage":"intercept","error":"failed"}`),
 		})
-		status := http.StatusBadGateway
+		httpStatus := http.StatusBadGateway
 		if engine.IsOverload(err) {
 			// Server capacity, not engine failure: mark the answer
 			// retryable so SDKs back off instead of reporting a broken
 			// proxy. The envelope code still names the failed stage.
 			w.Header().Set("Retry-After", protocol.BusyRetryAfter)
-			status = http.StatusServiceUnavailable
+			httpStatus = http.StatusServiceUnavailable
 		}
-		writeError(w, h.logger, status, "intercept_failed", err.Error(), requestIDFrom(r.Context()))
+		writeError(w, h.logger, httpStatus, "intercept_failed", err.Error(), requestIDFrom(r.Context()))
 		return
 	}
 
@@ -331,13 +335,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				EffectID:  outcome.EffectID,
 				Payload:   json.RawMessage(`{"stage":"commit","error":"failed"}`),
 			})
-			status := http.StatusBadGateway
+			httpStatus := http.StatusBadGateway
 			if engine.IsOverload(err) {
 				// Server capacity, not engine failure: answer retryable.
 				w.Header().Set("Retry-After", protocol.BusyRetryAfter)
-				status = http.StatusServiceUnavailable
+				httpStatus = http.StatusServiceUnavailable
 			}
-			writeError(w, h.logger, status, "commit_failed", err.Error(), requestIDFrom(r.Context()))
+			writeError(w, h.logger, httpStatus, "commit_failed", err.Error(), requestIDFrom(r.Context()))
 			return
 		}
 		h.emit(sse.Event{
@@ -406,4 +410,78 @@ func (h *Handler) emit(evt sse.Event) {
 // hexTraceID formats a 16-byte trace ID as a hex string for structured logging.
 func hexTraceID(id [16]byte) string {
 	return hex.EncodeToString(id[:])
+}
+
+// DeadLetterAdmin defines administrative operations for dead-letter records.
+type DeadLetterAdmin interface {
+	ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error)
+}
+
+// AdminHandler serves administrative HTTP routes.
+type AdminHandler struct {
+	admin  DeadLetterAdmin
+	logger *slog.Logger
+}
+
+// NewAdminHandler constructs an administrative handler.
+func NewAdminHandler(admin DeadLetterAdmin, logger *slog.Logger) *AdminHandler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &AdminHandler{
+		admin:  admin,
+		logger: logger,
+	}
+}
+
+// ListDeadLetters handles GET /api/v1/admin/dead-letters?state=failed.
+func (h *AdminHandler) ListDeadLetters(w http.ResponseWriter, r *http.Request) {
+	reqID := requestIDFrom(r.Context())
+	orgID := orgIDFrom(r.Context())
+	if orgID == "" {
+		writeError(w, h.logger, http.StatusUnauthorized, "auth_failed", "unauthenticated", reqID)
+		return
+	}
+
+	stateParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("state")))
+	if stateParam == "" {
+		stateParam = "failed"
+	}
+	switch stateParam {
+	case "failed", "retrying", "skipped":
+	default:
+		writeError(w, h.logger, http.StatusBadRequest, "invalid_argument", "state must be one of: failed, retrying, skipped", reqID)
+		return
+	}
+
+	resp, err := h.admin.ListDeadLetters(r.Context(), protocol.ListDeadLettersRequest{
+		OrgID: orgID,
+		State: stateParam,
+	})
+	if err != nil {
+		h.writeEngineError(w, err, reqID)
+		return
+	}
+
+	h.logger.Info("admin dead letters listed",
+		"org_id", orgID,
+		"entry_count", resp.Count,
+		"state", stateParam,
+		"request_id", reqID,
+	)
+
+	writeJSON(w, h.logger, http.StatusOK, resp)
+}
+
+func (h *AdminHandler) writeEngineError(w http.ResponseWriter, err error, reqID string) {
+	if grpcstatus.Code(err) == codes.Unimplemented {
+		writeError(w, h.logger, http.StatusNotImplemented, "dead_letter_unavailable", "dead-letter queue is not supported on this engine backend", reqID)
+		return
+	}
+	if engine.IsOverload(err) || grpcstatus.Code(err) == codes.Unavailable {
+		w.Header().Set("Retry-After", protocol.BusyRetryAfter)
+		writeError(w, h.logger, http.StatusServiceUnavailable, "engine_unavailable", "engine unavailable or overloaded", reqID)
+		return
+	}
+	writeError(w, h.logger, http.StatusBadGateway, "engine_error", "engine RPC failed: "+err.Error(), reqID)
 }
