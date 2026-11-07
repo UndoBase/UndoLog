@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- SDK: added structured error taxonomy covering all 13 error codes with
+  code identifiers, details dictionaries, and troubleshooting runbook URLs.
+
 - SDK: enhanced Semantic Kernel auto-instrumentation with plugin function
   discovery, un-annotated tool categorization, and approval handling.
 
