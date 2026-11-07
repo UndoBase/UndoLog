@@ -44,6 +44,7 @@ type fileLayer struct {
 	IdleTimeoutSecs               *int              `toml:"idle_timeout_secs"`
 	MaxHeaderBytes                *int              `toml:"max_header_bytes"`
 	APIKeys                       map[string]string `toml:"api_keys"`
+	AdminAPIKeys                  map[string]string `toml:"admin_api_keys"`
 	Plugins                       []string          `toml:"plugins"`
 }
 
@@ -97,6 +98,7 @@ var fileKeyKinds = map[string]string{
 	"idle_timeout_secs":                "an integer",
 	"max_header_bytes":                 "an integer",
 	"api_keys":                         "a table of strings",
+	"admin_api_keys":                   "a table of strings",
 	"plugins":                          "an array of strings",
 }
 
@@ -271,6 +273,11 @@ func (f *fileLayer) validate(path string) error {
 			return err
 		}
 	}
+	if f.AdminAPIKeys != nil {
+		if err := f.validateAdminAPIKeys(path); err != nil {
+			return err
+		}
+	}
 	if f.Plugins != nil {
 		names := make([]string, 0, len(f.Plugins))
 		for _, name := range f.Plugins {
@@ -386,6 +393,27 @@ func strictSecsSetting(envKey string, fileVal *int) (time.Duration, error) {
 	return strictSecsEnv(envKey)
 }
 
+// validateAdminAPIKeys trims every table entry and rejects empty ones, so a
+// blank key or organization fails startup with the entry named.
+func (f *fileLayer) validateAdminAPIKeys(path string) error {
+	names := make([]string, 0, len(f.AdminAPIKeys))
+	for name := range f.AdminAPIKeys {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	trimmed := make(map[string]string, len(f.AdminAPIKeys))
+	for _, name := range names {
+		key := strings.TrimSpace(name)
+		org := strings.TrimSpace(f.AdminAPIKeys[name])
+		if key == "" || org == "" {
+			return fmt.Errorf("config file %s: admin_api_keys entry %q must map a key to an organization", path, name)
+		}
+		trimmed[key] = org
+	}
+	f.AdminAPIKeys = trimmed
+	return nil
+}
+
 // resolveAPIKeys prefers the environment list when set, then the file
 // table, then no keys, which LoadConfig rejects at startup.
 func resolveAPIKeys(f *fileLayer) map[string]string {
@@ -394,6 +422,18 @@ func resolveAPIKeys(f *fileLayer) map[string]string {
 	}
 	if f.APIKeys != nil {
 		return f.APIKeys
+	}
+	return parseAPIKeys("")
+}
+
+// resolveAdminAPIKeys prefers the environment list when set, then the file
+// table, then an empty map.
+func resolveAdminAPIKeys(f *fileLayer) map[string]string {
+	if strings.TrimSpace(os.Getenv("UNDOLOG_PROXY_ADMIN_API_KEYS")) != "" {
+		return parseAPIKeys(os.Getenv("UNDOLOG_PROXY_ADMIN_API_KEYS"))
+	}
+	if f.AdminAPIKeys != nil {
+		return f.AdminAPIKeys
 	}
 	return parseAPIKeys("")
 }

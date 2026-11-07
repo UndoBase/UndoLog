@@ -17,7 +17,7 @@ import (
 // the matched key's digest to the handler, that the identity is not the raw
 // key, and that rejected requests carry no identity at all.
 func TestAuthMiddlewareStoresKeyDigest(t *testing.T) {
-	stack := NewMiddlewareStack(nil, map[string]string{"key-1": "org-1"})
+	stack := NewMiddlewareStack(nil, map[string]string{"key-1": "org-1"}, nil)
 	var seen string
 	handler := stack.Auth(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = plugin.APIKeyDigestFrom(r.Context())

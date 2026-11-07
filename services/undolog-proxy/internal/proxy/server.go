@@ -64,7 +64,7 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 		return tool.Execute(ctx, call)
 	}
 	approvalHandler := approval.NewHandler(approvalStore, engine, executeApproved, broadcaster, cfg.RequestTimeout, cfg.MaxBodyBytes, logger)
-	mw := NewMiddlewareStack(logger, cfg.TrustedAPIKeys)
+	mw := NewMiddlewareStack(logger, cfg.TrustedAPIKeys, cfg.AdminAPIKeys)
 	handler := NewHandler(engine, tool, approvalStore, broadcaster, cfg.RequestTimeout, cfg.MaxBodyBytes, logger)
 
 	broadcaster.SetMetrics(registry)
@@ -155,6 +155,10 @@ func NewServer(cfg Config, engine protocol.EngineClient, tool ToolExecutor, regi
 	mux.Handle("/events", protectedChain)
 	mux.Handle("/approvals", protectedChain)
 	mux.Handle("/approvals/", protectedChain)
+
+	if dlqAdmin, ok := engine.(DeadLetterAdmin); ok {
+		MountAdminRoutes(mux, mw, dlqAdmin, logger)
+	}
 
 	return &Server{
 		cfg:               cfg,

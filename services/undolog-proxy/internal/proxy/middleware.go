@@ -26,11 +26,30 @@ type ctxKey string
 
 const (
 	ctxKeyOrgID     ctxKey = "org_id"
+	ctxKeyRole      ctxKey = "role"
 	ctxKeyRequestID ctxKey = "request_id"
 
 	httpRequestsMetric = "undolog_proxy_http_requests_total"
 	httpDurationMetric = "undolog_proxy_http_request_duration_seconds"
 )
+
+// Role represents the authorization level associated with an API key.
+type Role string
+
+const (
+	// RoleMember designates callers with access to tenant routes.
+	RoleMember Role = "member"
+	// RoleAdmin designates operators with access to both tenant and admin routes.
+	RoleAdmin Role = "admin"
+)
+
+// RoleFrom extracts the authenticated caller's role from ctx, or "" if not set.
+func RoleFrom(ctx context.Context) Role {
+	if r, ok := ctx.Value(ctxKeyRole).(Role); ok {
+		return r
+	}
+	return ""
+}
 
 // apiKeyEntry holds one trusted API key as its HMAC-SHA-256 digest so the
 // request path never compares plaintext keys. Constant-time digest comparison
@@ -42,6 +61,7 @@ const (
 type apiKeyEntry struct {
 	digest []byte
 	orgID  string
+	role   Role
 }
 
 // MiddlewareStack composes the proxy middlewares into one reusable bundle.
@@ -53,7 +73,7 @@ type MiddlewareStack struct {
 }
 
 // NewMiddlewareStack builds the middleware chain used by the proxy server.
-func NewMiddlewareStack(logger *slog.Logger, trustedAPIKeys map[string]string) *MiddlewareStack {
+func NewMiddlewareStack(logger *slog.Logger, trustedAPIKeys, adminAPIKeys map[string]string) *MiddlewareStack {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -63,9 +83,20 @@ func NewMiddlewareStack(logger *slog.Logger, trustedAPIKeys map[string]string) *
 	if _, err := rand.Read(hmacKey); err != nil {
 		panic("failed to generate HMAC key: " + err.Error())
 	}
-	entries := make([]apiKeyEntry, 0, len(trustedAPIKeys))
+	entries := make([]apiKeyEntry, 0, len(trustedAPIKeys)+len(adminAPIKeys))
 	for key, org := range trustedAPIKeys {
-		entries = append(entries, apiKeyEntry{digest: hmacDigest(hmacKey, key), orgID: org})
+		entries = append(entries, apiKeyEntry{
+			digest: hmacDigest(hmacKey, key),
+			orgID:  org,
+			role:   RoleMember,
+		})
+	}
+	for key, org := range adminAPIKeys {
+		entries = append(entries, apiKeyEntry{
+			digest: hmacDigest(hmacKey, key),
+			orgID:  org,
+			role:   RoleAdmin,
+		})
 	}
 	return &MiddlewareStack{logger: logger, apiKeys: entries, hmacKey: hmacKey}
 }
@@ -83,8 +114,8 @@ func (m *MiddlewareStack) SetMetrics(reg *metrics.Registry) {
 	m.metrics = reg
 }
 
-// Auth resolves X-Api-Key to an organization ID, stores it on the request
-// together with the matched key digest the rate limiter meters.
+// Auth resolves X-Api-Key to an organization ID and role, stores them on the
+// request context together with the matched key digest the rate limiter meters.
 func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiKey := strings.TrimSpace(r.Header.Get("X-Api-Key"))
@@ -93,29 +124,43 @@ func (m *MiddlewareStack) Auth(next http.Handler) http.Handler {
 			return
 		}
 		digest := hmacDigest(m.hmacKey, apiKey)
-		orgID, ok := m.orgForKey(digest)
+		entry, ok := m.keyEntryForDigest(digest)
 		if !ok {
 			writeError(w, m.logger, http.StatusForbidden, "auth_failed", "API key not recognized", "")
 			return
 		}
-		ctx := context.WithValue(r.Context(), ctxKeyOrgID, orgID)
+		ctx := context.WithValue(r.Context(), ctxKeyOrgID, entry.orgID)
+		ctx = context.WithValue(ctx, ctxKeyRole, entry.role)
 		ctx = plugin.WithAPIKeyDigest(ctx, hex.EncodeToString(digest))
 		r = r.WithContext(ctx)
-		r.Header.Set("X-Org-Id", orgID)
+		r.Header.Set("X-Org-Id", entry.orgID)
 		next.ServeHTTP(w, r)
 	})
 }
 
-// orgForKey resolves the organization served by an API-key digest. Every
-// candidate digest is compared in constant time so the lookup does not leak
-// which key (or whether any key) matched.
-func (m *MiddlewareStack) orgForKey(digest []byte) (string, bool) {
+// AdminOnly rejects requests from callers that do not hold the RoleAdmin role.
+func (m *MiddlewareStack) AdminOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role := RoleFrom(r.Context())
+		if role != RoleAdmin {
+			reqID := requestIDFrom(r.Context())
+			writeError(w, m.logger, http.StatusForbidden, "auth_failed", "admin access required", reqID)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// keyEntryForDigest resolves the key entry served by an API-key digest.
+// Every candidate digest is compared in constant time so the lookup does not
+// leak which key (or whether any key) matched.
+func (m *MiddlewareStack) keyEntryForDigest(digest []byte) (apiKeyEntry, bool) {
 	for _, entry := range m.apiKeys {
 		if subtle.ConstantTimeCompare(digest, entry.digest) == 1 {
-			return entry.orgID, true
+			return entry, true
 		}
 	}
-	return "", false
+	return apiKeyEntry{}, false
 }
 
 // RequestID assigns a request-scoped identifier for tracing and log correlation.

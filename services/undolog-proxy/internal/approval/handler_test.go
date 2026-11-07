@@ -100,6 +100,11 @@ func (m *mockEngine) ListPendingApprovals(ctx context.Context, req protocol.List
 	return protocol.ListPendingApprovalsResponse{Records: m.pending}, nil
 }
 
+// ListDeadLetters is a no-op stub used to satisfy the engine interface.
+func (m *mockEngine) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
+	return protocol.ListDeadLettersResponse{}, nil
+}
+
 // Close is a no-op stub used to satisfy the engine interface.
 func (m *mockEngine) Close() error { return nil }
 

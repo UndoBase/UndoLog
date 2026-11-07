@@ -219,13 +219,17 @@ plugins = ["header"]
 
 [api_keys]
 "key-1" = "org-1"
+
+[admin_api_keys]
+"admin-key-1" = "org-1"
 ```
 
 `UNDOLOG_PROXY_API_KEYS` becomes the `[api_keys]` table instead of a
-comma-joined value, and setting the variable replaces the file table as a
-whole. TOML wins over YAML because implicit typing has no place in a
-security tool's configuration, and over JSON because operators annotate
-config files and JSON has no comments.
+comma-joined value, and `UNDOLOG_PROXY_ADMIN_API_KEYS` becomes the
+`[admin_api_keys]` table. Setting either variable replaces the corresponding
+file table as a whole. TOML wins over YAML because implicit typing has no
+place in a security tool's configuration, and over JSON because operators
+annotate config files and JSON has no comments.
 
 ### Hot reload
 
@@ -434,6 +438,22 @@ Log level for the proxy server. Shared env var name across both engine and proxy
 | Type | Default | Description |
 |------|---------|-------------|
 | `string` | `""` | Comma-separated `key=org_id` pairs for API key authentication. Example: `sk-abc123=org-xyz,sk-def456=org-uvw`. At least one pair is required: the proxy refuses to start with none configured, and keys are compared as SHA-256 digests in constant time. |
+
+---
+
+### `UNDOLOG_PROXY_ADMIN_API_KEYS`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Comma-separated `key=org_id` pairs for administrative API keys. Callers
+presenting an admin key receive the `admin` role, permitting access to
+administrative endpoints (`/api/v1/admin/*`) and their organization's tenant
+routes. Standard `UNDOLOG_PROXY_API_KEYS` callers hold the `member` role and
+are denied access to admin routes. A key cannot appear in both `api_keys` and
+`admin_api_keys`: the proxy fails startup on duplicate key definitions. When
+unset, all administrative routes are denied.
 
 ---
 
@@ -723,6 +743,7 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_API_KEYS` | Proxy | `string` | `""` | Yes |
+| `UNDOLOG_PROXY_ADMIN_API_KEYS` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_PLUGINS` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_RATE_LIMIT_RPS` | Proxy | `float` | `0` | No |
 | `UNDOLOG_PROXY_RATE_LIMIT_BURST` | Proxy | `int` | `0` | No |
