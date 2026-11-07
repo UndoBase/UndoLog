@@ -7,6 +7,15 @@ export type {
   InterceptParams,
 } from "./client.js";
 
+export { UndoLogAdminClient } from "./admin.js";
+export type {
+  UndoLogAdminClientOptions,
+  DeadLetterRecord,
+  DeadLetterState,
+  ListDeadLettersFilter,
+  ListDeadLettersResponse,
+} from "./admin.js";
+
 export { wrapTool } from "./decorators.js";
 export type { ToolDefinition, WrappedTool, WrapToolOptions } from "./decorators.js";
 
