@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Documentation: added ADR 0023 defining transport TLS and optional mTLS
+  for proxy-to-engine gRPC communication.
+
 - Documentation: added ADR 0022 defining admin API key configuration, roles,
   and route authorization boundaries for the proxy.
 

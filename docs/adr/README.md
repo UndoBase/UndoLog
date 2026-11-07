@@ -31,3 +31,4 @@ Every significant design decision in UndoLog is recorded as an ADR.
 | [0020](0020-proxy-rate-limiting.md) | Proxy Rate Limiting and Backpressure |
 | [0021](0021-single-binary-deployment.md) | Single-Container Deployment |
 | [0022](0022-proxy-admin-api-keys.md) | Administrative API Key Roles for the Proxy |
+| [0023](0023-engine-transport-tls.md) | Engine Transport TLS and Optional mTLS |
