@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Documentation: added ADR 0022 defining admin API key configuration, roles,
+  and route authorization boundaries for the proxy.
+
 - SDK: added structured error taxonomy covering all 13 error codes with
   code identifiers, details dictionaries, and troubleshooting runbook URLs.
 

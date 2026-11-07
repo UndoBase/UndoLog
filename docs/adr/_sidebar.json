@@ -23,6 +23,7 @@
     { "slug": "0018-proxy-grpc-auth-method", "title": "0018: gRPC Auth Method" },
     { "slug": "0019-proxy-plugin-system", "title": "0019: Plugin System" },
     { "slug": "0020-proxy-rate-limiting", "title": "0020: Rate Limiting" },
-    { "slug": "0021-single-binary-deployment", "title": "0021: Single Container" }
+    { "slug": "0021-single-binary-deployment", "title": "0021: Single Container" },
+    { "slug": "0022-proxy-admin-api-keys", "title": "0022: Admin API Keys" }
   ]
 }
