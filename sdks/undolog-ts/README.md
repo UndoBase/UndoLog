@@ -241,6 +241,52 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 ```
 
+### Dead-letter admin MCP server
+
+Expose dedicated dead-letter management tools over MCP:
+
+```typescript
+import { UndoLogAdminClient } from "@undolog/sdk";
+import { createUndoLogAdminMcpServer, connectStdio } from "@undolog/sdk/mcp";
+
+const adminClient = new UndoLogAdminClient({
+  baseUrl: "http://localhost:8080",
+  apiKey: "your-admin-api-key",
+});
+
+const server = createUndoLogAdminMcpServer(adminClient);
+await connectStdio(server);
+```
+
+The admin server exposes three tools without creating effect logs:
+- `undolog_list_dead_letters`: inspect failed, retrying, or skipped dead-letter records.
+- `undolog_retry_dead_letter`: re-queue a failed compensation record for retry.
+- `undolog_skip_dead_letter`: mark an unrecoverable dead-letter record as skipped.
+
+## Dead-letter admin client
+
+Inspect and resolve failed dead-letter compensations directly in code:
+
+```typescript
+import { UndoLogAdminClient } from "@undolog/sdk";
+
+const adminClient = new UndoLogAdminClient({
+  baseUrl: "http://localhost:8080",
+  apiKey: "your-admin-api-key",
+});
+
+// List records filtered by state
+const { records } = await adminClient.listDeadLetters({ state: "failed" });
+
+// Retry or skip a record by its UUID
+if (records.length > 0) {
+  const targetId = records[0].deadLetterId;
+  await adminClient.retryDeadLetter(targetId);
+  // Or mark unrecoverable records as skipped:
+  // await adminClient.skipDeadLetter(targetId);
+}
+```
+
 ## Testing helpers
 
 The `testing` sub-path provides a fully in-memory mock server so you can

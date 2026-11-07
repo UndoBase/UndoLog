@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- SDK: added UndoLogAdminClient and dedicated dead-letter admin MCP tools
+  in TypeScript SDK.
+
 - Proxy: added administrative REST endpoints for retrying and skipping
   failed dead-letter records.
 

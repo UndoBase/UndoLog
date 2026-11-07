@@ -13,8 +13,14 @@ export {
   registerUndologMcpTool,
   connectStdio,
 } from "./server.js";
+export {
+  createUndoLogAdminMcpServer,
+} from "./admin.js";
 export type {
   UndoLogMcpToolRegistration,
   UndoLogMcpServerOptions,
   McpServerInstance,
 } from "./server.js";
+export type {
+  UndoLogAdminMcpServerOptions,
+} from "./admin.js";
