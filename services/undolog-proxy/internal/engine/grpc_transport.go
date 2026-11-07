@@ -296,37 +296,78 @@ func (t *GRPCTransport) ListDeadLetters(ctx context.Context, req protocol.ListDe
 	return listDeadLettersResponseFromProto(pbResp), nil
 }
 
+// RetryDeadLetter requests the engine to retry a failed dead-letter record.
+func (t *GRPCTransport) RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error) {
+	ctx = withTracingMetadata(ctx)
+	pbReq := &pb.RetryDeadLetterRequest{
+		OrgId:        req.OrgID,
+		DeadLetterId: req.DeadLetterID,
+	}
+
+	pbResp, err := t.client.RetryDeadLetter(ctx, pbReq)
+	if err != nil {
+		return protocol.RetryDeadLetterResponse{}, err
+	}
+	return protocol.RetryDeadLetterResponse{
+		Record: deadLetterRecordFromProto(pbResp.GetRecord()),
+	}, nil
+}
+
+// SkipDeadLetter requests the engine to skip a failed dead-letter record.
+func (t *GRPCTransport) SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error) {
+	ctx = withTracingMetadata(ctx)
+	pbReq := &pb.SkipDeadLetterRequest{
+		OrgId:        req.OrgID,
+		DeadLetterId: req.DeadLetterID,
+	}
+
+	pbResp, err := t.client.SkipDeadLetter(ctx, pbReq)
+	if err != nil {
+		return protocol.SkipDeadLetterResponse{}, err
+	}
+	return protocol.SkipDeadLetterResponse{
+		Record: deadLetterRecordFromProto(pbResp.GetRecord()),
+	}, nil
+}
+
+func deadLetterRecordFromProto(rec *pb.DeadLetterRecord) protocol.DeadLetterRecord {
+	if rec == nil {
+		return protocol.DeadLetterRecord{}
+	}
+	var stateStr string
+	switch rec.State {
+	case pb.DeadLetterState_DEAD_LETTER_STATE_RETRYING:
+		stateStr = "retrying"
+	case pb.DeadLetterState_DEAD_LETTER_STATE_SKIPPED:
+		stateStr = "skipped"
+	default:
+		stateStr = "failed"
+	}
+
+	return protocol.DeadLetterRecord{
+		DeadLetterID:        rec.DeadLetterId,
+		OrgID:               rec.OrgId,
+		SessionID:           rec.SessionId,
+		EffectID:            rec.EffectId,
+		UndoID:              rec.UndoId,
+		CompensationFn:      rec.CompensationFn,
+		CompensationVersion: rec.CompensationVersion,
+		CompensationArgs:    rec.CompensationArgs,
+		ErrorMessage:        rec.ErrorMessage,
+		RetryCount:          rec.RetryCount,
+		State:               stateStr,
+		CreatedAt:           time.UnixMilli(rec.CreatedAtUnixMs).UTC().Format(time.RFC3339),
+		UpdatedAt:           time.UnixMilli(rec.UpdatedAtUnixMs).UTC().Format(time.RFC3339),
+	}
+}
+
 func listDeadLettersResponseFromProto(msg *pb.ListDeadLettersResponse) protocol.ListDeadLettersResponse {
 	out := protocol.ListDeadLettersResponse{
 		Records: make([]protocol.DeadLetterRecord, 0, len(msg.Records)),
 		Count:   int(msg.Count),
 	}
 	for _, rec := range msg.Records {
-		var stateStr string
-		switch rec.State {
-		case pb.DeadLetterState_DEAD_LETTER_STATE_RETRYING:
-			stateStr = "retrying"
-		case pb.DeadLetterState_DEAD_LETTER_STATE_SKIPPED:
-			stateStr = "skipped"
-		default:
-			stateStr = "failed"
-		}
-
-		out.Records = append(out.Records, protocol.DeadLetterRecord{
-			DeadLetterID:        rec.DeadLetterId,
-			OrgID:               rec.OrgId,
-			SessionID:           rec.SessionId,
-			EffectID:            rec.EffectId,
-			UndoID:              rec.UndoId,
-			CompensationFn:      rec.CompensationFn,
-			CompensationVersion: rec.CompensationVersion,
-			CompensationArgs:    rec.CompensationArgs,
-			ErrorMessage:        rec.ErrorMessage,
-			RetryCount:          rec.RetryCount,
-			State:               stateStr,
-			CreatedAt:           time.UnixMilli(rec.CreatedAtUnixMs).UTC().Format(time.RFC3339),
-			UpdatedAt:           time.UnixMilli(rec.UpdatedAtUnixMs).UTC().Format(time.RFC3339),
-		})
+		out.Records = append(out.Records, deadLetterRecordFromProto(rec))
 	}
 	return out
 }

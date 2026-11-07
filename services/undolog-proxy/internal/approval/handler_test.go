@@ -105,6 +105,16 @@ func (m *mockEngine) ListDeadLetters(ctx context.Context, req protocol.ListDeadL
 	return protocol.ListDeadLettersResponse{}, nil
 }
 
+// RetryDeadLetter is a no-op stub used to satisfy the engine interface.
+func (m *mockEngine) RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error) {
+	return protocol.RetryDeadLetterResponse{}, nil
+}
+
+// SkipDeadLetter is a no-op stub used to satisfy the engine interface.
+func (m *mockEngine) SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error) {
+	return protocol.SkipDeadLetterResponse{}, nil
+}
+
 // Close is a no-op stub used to satisfy the engine interface.
 func (m *mockEngine) Close() error { return nil }
 

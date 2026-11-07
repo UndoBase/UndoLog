@@ -107,6 +107,8 @@ const (
 	rpcMethodReject          = "Reject"
 	rpcMethodListPending     = "ListPendingApprovals"
 	rpcMethodListDeadLetters = "ListDeadLetters"
+	rpcMethodRetryDeadLetter = "RetryDeadLetter"
+	rpcMethodSkipDeadLetter  = "SkipDeadLetter"
 	rpcDurationMetric        = "undolog_proxy_engine_rpc_duration_seconds"
 	rpcErrorsMetric          = "undolog_proxy_engine_rpc_errors_total"
 	rpcRetriesMetric         = "undolog_proxy_engine_rpc_retries_total"
@@ -561,6 +563,30 @@ func (c *Client) ListDeadLetters(ctx context.Context, req protocol.ListDeadLette
 		})
 	})
 	c.observeRPC(rpcMethodListDeadLetters, start, err)
+	return resp, err
+}
+
+// RetryDeadLetter requests the engine to retry a failed dead-letter record.
+func (c *Client) RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error) {
+	start := time.Now()
+	resp, err := guarded(ctx, c, func() (protocol.RetryDeadLetterResponse, error) {
+		return call(ctx, c, func(t Transport) (protocol.RetryDeadLetterResponse, error) {
+			return t.RetryDeadLetter(ctx, req)
+		})
+	})
+	c.observeRPC(rpcMethodRetryDeadLetter, start, err)
+	return resp, err
+}
+
+// SkipDeadLetter requests the engine to skip a failed dead-letter record.
+func (c *Client) SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error) {
+	start := time.Now()
+	resp, err := guarded(ctx, c, func() (protocol.SkipDeadLetterResponse, error) {
+		return call(ctx, c, func(t Transport) (protocol.SkipDeadLetterResponse, error) {
+			return t.SkipDeadLetter(ctx, req)
+		})
+	})
+	c.observeRPC(rpcMethodSkipDeadLetter, start, err)
 	return resp, err
 }
 

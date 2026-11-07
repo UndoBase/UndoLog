@@ -24,14 +24,30 @@ import (
 
 type mockDLQEngine struct {
 	mockEngineClient
-	listResp protocol.ListDeadLettersResponse
-	listErr  error
-	lastReq  protocol.ListDeadLettersRequest
+	listResp     protocol.ListDeadLettersResponse
+	listErr      error
+	lastReq      protocol.ListDeadLettersRequest
+	retryResp    protocol.RetryDeadLetterResponse
+	retryErr     error
+	lastRetryReq protocol.RetryDeadLetterRequest
+	skipResp     protocol.SkipDeadLetterResponse
+	skipErr      error
+	lastSkipReq  protocol.SkipDeadLetterRequest
 }
 
 func (m *mockDLQEngine) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
 	m.lastReq = req
 	return m.listResp, m.listErr
+}
+
+func (m *mockDLQEngine) RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error) {
+	m.lastRetryReq = req
+	return m.retryResp, m.retryErr
+}
+
+func (m *mockDLQEngine) SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error) {
+	m.lastSkipReq = req
+	return m.skipResp, m.skipErr
 }
 
 func newTestAdminServer(t *testing.T, engineClient protocol.EngineClient, memberKeys, adminKeys map[string]string, logger *slog.Logger) *Server {
@@ -477,5 +493,387 @@ func TestAdminDLQ_DirectListDelegation(t *testing.T) {
 	}
 	if resp.Count != 2 {
 		t.Errorf("expected count 2, got %d", resp.Count)
+	}
+}
+
+func TestAdminDLQ_RetrySuccessAndAudit(t *testing.T) {
+	validID := "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+	mockEng := &mockDLQEngine{
+		retryResp: protocol.RetryDeadLetterResponse{
+			Record: protocol.DeadLetterRecord{
+				DeadLetterID:        validID,
+				OrgID:               "org-1",
+				SessionID:           "c3b9b4a1-8d2b-4d7a-8f91-7d3a2b4c5e6f",
+				EffectID:            "d1e2f3a4-b5c6-4d7e-8f90-1a2b3c4d5e6f",
+				UndoID:              "e2f3a4b5-c6d7-4e8f-901a-2b3c4d5e6f70",
+				CompensationFn:      "cancel_reservation",
+				CompensationVersion: "1.0.0",
+				CompensationArgs:    json.RawMessage(`{"reservation_id":"res-12345"}`),
+				ErrorMessage:        "temporary timeout",
+				RetryCount:          1,
+				State:               "retrying",
+				CreatedAt:           "2026-11-07T12:00:00Z",
+				UpdatedAt:           "2026-11-07T12:05:00Z",
+			},
+		},
+	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	server := newTestAdminServer(t, mockEng,
+		map[string]string{"member-key": "org-1"},
+		map[string]string{"admin-key": "org-1"},
+		logger,
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+validID+"/retry", nil)
+	req.Header.Set("X-Api-Key", "admin-key")
+	w := httptest.NewRecorder()
+
+	server.handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	if mockEng.lastRetryReq.OrgID != "org-1" {
+		t.Errorf("expected engine org_id org-1, got %q", mockEng.lastRetryReq.OrgID)
+	}
+	if mockEng.lastRetryReq.DeadLetterID != validID {
+		t.Errorf("expected engine dead_letter_id %s, got %q", validID, mockEng.lastRetryReq.DeadLetterID)
+	}
+
+	var rec protocol.DeadLetterRecord
+	if err := json.Unmarshal(w.Body.Bytes(), &rec); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if rec.DeadLetterID != validID || rec.State != "retrying" || rec.RetryCount != 1 {
+		t.Errorf("unexpected record content: %+v", rec)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "admin dead letter action") {
+		t.Errorf("expected audit action log, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"action":"retry"`) {
+		t.Errorf("expected action:retry in log, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"dead_letter_id":"`+validID+`"`) {
+		t.Errorf("expected dead_letter_id in log, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"org_id":"org-1"`) {
+		t.Errorf("expected org_id:org-1 in log, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"outcome":"retrying"`) {
+		t.Errorf("expected outcome:retrying in log, got:\n%s", logOutput)
+	}
+}
+
+func TestAdminDLQ_SkipSuccessAndAudit(t *testing.T) {
+	validID := "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+	mockEng := &mockDLQEngine{
+		skipResp: protocol.SkipDeadLetterResponse{
+			Record: protocol.DeadLetterRecord{
+				DeadLetterID:        validID,
+				OrgID:               "org-1",
+				SessionID:           "c3b9b4a1-8d2b-4d7a-8f91-7d3a2b4c5e6f",
+				EffectID:            "d1e2f3a4-b5c6-4d7e-8f90-1a2b3c4d5e6f",
+				UndoID:              "e2f3a4b5-c6d7-4e8f-901a-2b3c4d5e6f70",
+				CompensationFn:      "cancel_reservation",
+				CompensationVersion: "1.0.0",
+				CompensationArgs:    json.RawMessage(`{"reservation_id":"res-12345"}`),
+				ErrorMessage:        "unrecoverable error",
+				RetryCount:          0,
+				State:               "skipped",
+				CreatedAt:           "2026-11-07T12:00:00Z",
+				UpdatedAt:           "2026-11-07T12:05:00Z",
+			},
+		},
+	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	server := newTestAdminServer(t, mockEng,
+		map[string]string{"member-key": "org-1"},
+		map[string]string{"admin-key": "org-1"},
+		logger,
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+validID+"/skip", nil)
+	req.Header.Set("X-Api-Key", "admin-key")
+	w := httptest.NewRecorder()
+
+	server.handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	if mockEng.lastSkipReq.OrgID != "org-1" {
+		t.Errorf("expected engine org_id org-1, got %q", mockEng.lastSkipReq.OrgID)
+	}
+	if mockEng.lastSkipReq.DeadLetterID != validID {
+		t.Errorf("expected engine dead_letter_id %s, got %q", validID, mockEng.lastSkipReq.DeadLetterID)
+	}
+
+	var rec protocol.DeadLetterRecord
+	if err := json.Unmarshal(w.Body.Bytes(), &rec); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if rec.DeadLetterID != validID || rec.State != "skipped" {
+		t.Errorf("unexpected record content: %+v", rec)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "admin dead letter action") {
+		t.Errorf("expected audit action log, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"action":"skip"`) {
+		t.Errorf("expected action:skip in log, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"outcome":"skipped"`) {
+		t.Errorf("expected outcome:skipped in log, got:\n%s", logOutput)
+	}
+}
+
+func TestAdminDLQ_NotFoundCases(t *testing.T) {
+	validID := "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+	mockEng := &mockDLQEngine{
+		retryErr: status.Error(codes.NotFound, "record not found"),
+		skipErr:  status.Error(codes.NotFound, "record not in failed state"),
+	}
+
+	server := newTestAdminServer(t, mockEng,
+		map[string]string{"member-key": "org-1"},
+		map[string]string{"admin-key": "org-1"},
+		nil,
+	)
+
+	// Retry returns 404
+	reqRetry := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+validID+"/retry", nil)
+	reqRetry.Header.Set("X-Api-Key", "admin-key")
+	wRetry := httptest.NewRecorder()
+	server.handler.ServeHTTP(wRetry, reqRetry)
+	if wRetry.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for retry not found, got %d", wRetry.Code)
+	}
+	if !strings.Contains(wRetry.Body.String(), `"code":"dead_letter_not_found"`) {
+		t.Errorf("expected code dead_letter_not_found, got %s", wRetry.Body.String())
+	}
+
+	// Skip returns 404
+	reqSkip := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+validID+"/skip", nil)
+	reqSkip.Header.Set("X-Api-Key", "admin-key")
+	wSkip := httptest.NewRecorder()
+	server.handler.ServeHTTP(wSkip, reqSkip)
+	if wSkip.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for skip not found, got %d", wSkip.Code)
+	}
+	if !strings.Contains(wSkip.Body.String(), `"code":"dead_letter_not_found"`) {
+		t.Errorf("expected code dead_letter_not_found, got %s", wSkip.Body.String())
+	}
+}
+
+func TestAdminDLQ_MalformedUUIDReturns400(t *testing.T) {
+	mockEng := &mockDLQEngine{}
+	server := newTestAdminServer(t, mockEng,
+		map[string]string{"member-key": "org-1"},
+		map[string]string{"admin-key": "org-1"},
+		nil,
+	)
+
+	malformedIDs := []string{
+		"not-a-uuid",
+		"12345",
+		"9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6g",  // invalid hex
+		"9b1deb4d3b7d4bad9bdd2b0d7b3dcb6d",      // missing hyphens
+		"9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6de", // 37 chars
+	}
+
+	for _, id := range malformedIDs {
+		// Retry
+		reqRetry := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+id+"/retry", nil)
+		reqRetry.Header.Set("X-Api-Key", "admin-key")
+		wRetry := httptest.NewRecorder()
+		server.handler.ServeHTTP(wRetry, reqRetry)
+		if wRetry.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 for malformed retry UUID %q, got %d", id, wRetry.Code)
+		}
+		if !strings.Contains(wRetry.Body.String(), `"code":"invalid_argument"`) {
+			t.Errorf("expected invalid_argument code, got %s", wRetry.Body.String())
+		}
+
+		// Skip
+		reqSkip := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+id+"/skip", nil)
+		reqSkip.Header.Set("X-Api-Key", "admin-key")
+		wSkip := httptest.NewRecorder()
+		server.handler.ServeHTTP(wSkip, reqSkip)
+		if wSkip.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 for malformed skip UUID %q, got %d", id, wSkip.Code)
+		}
+		if !strings.Contains(wSkip.Body.String(), `"code":"invalid_argument"`) {
+			t.Errorf("expected invalid_argument code, got %s", wSkip.Body.String())
+		}
+	}
+}
+
+func TestAdminDLQ_WrongMethodReturns405(t *testing.T) {
+	validID := "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+	mockEng := &mockDLQEngine{}
+	server := newTestAdminServer(t, mockEng,
+		map[string]string{"member-key": "org-1"},
+		map[string]string{"admin-key": "org-1"},
+		nil,
+	)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
+
+	for _, method := range methods {
+		// Retry endpoint
+		reqRetry := httptest.NewRequest(method, "/api/v1/admin/dead-letters/"+validID+"/retry", nil)
+		reqRetry.Header.Set("X-Api-Key", "admin-key")
+		wRetry := httptest.NewRecorder()
+		server.handler.ServeHTTP(wRetry, reqRetry)
+		if wRetry.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405 for %s on retry, got %d", method, wRetry.Code)
+		}
+
+		// Skip endpoint
+		reqSkip := httptest.NewRequest(method, "/api/v1/admin/dead-letters/"+validID+"/skip", nil)
+		reqSkip.Header.Set("X-Api-Key", "admin-key")
+		wSkip := httptest.NewRecorder()
+		server.handler.ServeHTTP(wSkip, reqSkip)
+		if wSkip.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405 for %s on skip, got %d", method, wSkip.Code)
+		}
+	}
+}
+
+func TestAdminDLQ_MemberKeyReturns403OnDecisions(t *testing.T) {
+	validID := "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+	mockEng := &mockDLQEngine{}
+	server := newTestAdminServer(t, mockEng,
+		map[string]string{"member-key": "org-1"},
+		map[string]string{"admin-key": "org-1"},
+		nil,
+	)
+
+	reqRetry := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+validID+"/retry", nil)
+	reqRetry.Header.Set("X-Api-Key", "member-key")
+	wRetry := httptest.NewRecorder()
+	server.handler.ServeHTTP(wRetry, reqRetry)
+	if wRetry.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for member key on retry, got %d", wRetry.Code)
+	}
+
+	reqSkip := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+validID+"/skip", nil)
+	reqSkip.Header.Set("X-Api-Key", "member-key")
+	wSkip := httptest.NewRecorder()
+	server.handler.ServeHTTP(wSkip, reqSkip)
+	if wSkip.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for member key on skip, got %d", wSkip.Code)
+	}
+}
+
+func TestAdminDLQ_DecisionEngineErrorMappings(t *testing.T) {
+	validID := "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+
+	cases := []struct {
+		name       string
+		engineErr  error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "unimplemented",
+			engineErr:  status.Error(codes.Unimplemented, "unimplemented"),
+			wantStatus: http.StatusNotImplemented,
+			wantCode:   "dead_letter_unavailable",
+		},
+		{
+			name:       "unavailable",
+			engineErr:  status.Error(codes.Unavailable, "service unavailable"),
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   "engine_unavailable",
+		},
+		{
+			name:       "internal_error",
+			engineErr:  errors.New("db error"),
+			wantStatus: http.StatusBadGateway,
+			wantCode:   "engine_error",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockEng := &mockDLQEngine{
+				retryErr: tc.engineErr,
+				skipErr:  tc.engineErr,
+			}
+			server := newTestAdminServer(t, mockEng,
+				map[string]string{"member-key": "org-1"},
+				map[string]string{"admin-key": "org-1"},
+				nil,
+			)
+
+			// Test Retry
+			reqRetry := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+validID+"/retry", nil)
+			reqRetry.Header.Set("X-Api-Key", "admin-key")
+			wRetry := httptest.NewRecorder()
+			server.handler.ServeHTTP(wRetry, reqRetry)
+			if wRetry.Code != tc.wantStatus {
+				t.Errorf("retry %s: expected status %d, got %d", tc.name, tc.wantStatus, wRetry.Code)
+			}
+			if !strings.Contains(wRetry.Body.String(), tc.wantCode) {
+				t.Errorf("retry %s: expected code %s, got %s", tc.name, tc.wantCode, wRetry.Body.String())
+			}
+
+			// Test Skip
+			reqSkip := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dead-letters/"+validID+"/skip", nil)
+			reqSkip.Header.Set("X-Api-Key", "admin-key")
+			wSkip := httptest.NewRecorder()
+			server.handler.ServeHTTP(wSkip, reqSkip)
+			if wSkip.Code != tc.wantStatus {
+				t.Errorf("skip %s: expected status %d, got %d", tc.name, tc.wantStatus, wSkip.Code)
+			}
+			if !strings.Contains(wSkip.Body.String(), tc.wantCode) {
+				t.Errorf("skip %s: expected code %s, got %s", tc.name, tc.wantCode, wSkip.Body.String())
+			}
+		})
+	}
+}
+
+func TestAdminDLQ_DirectDecisionDelegation(t *testing.T) {
+	mockEng := &mockDLQEngine{
+		retryResp: protocol.RetryDeadLetterResponse{
+			Record: protocol.DeadLetterRecord{State: "retrying"},
+		},
+		skipResp: protocol.SkipDeadLetterResponse{
+			Record: protocol.DeadLetterRecord{State: "skipped"},
+		},
+	}
+
+	retryResp, err := mockEng.RetryDeadLetter(context.Background(), protocol.RetryDeadLetterRequest{
+		OrgID:        "org-1",
+		DeadLetterID: "dl-1",
+	})
+	if err != nil {
+		t.Fatalf("RetryDeadLetter failed: %v", err)
+	}
+	if retryResp.Record.State != "retrying" {
+		t.Errorf("expected retrying, got %s", retryResp.Record.State)
+	}
+
+	skipResp, err := mockEng.SkipDeadLetter(context.Background(), protocol.SkipDeadLetterRequest{
+		OrgID:        "org-1",
+		DeadLetterID: "dl-1",
+	})
+	if err != nil {
+		t.Fatalf("SkipDeadLetter failed: %v", err)
+	}
+	if skipResp.Record.State != "skipped" {
+		t.Errorf("expected skipped, got %s", skipResp.Record.State)
 	}
 }

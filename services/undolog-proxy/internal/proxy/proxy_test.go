@@ -79,6 +79,16 @@ func (m *mockEngineClient) ListDeadLetters(ctx context.Context, req protocol.Lis
 	return protocol.ListDeadLettersResponse{}, nil
 }
 
+// RetryDeadLetter is a stub satisfying protocol.EngineClient.
+func (m *mockEngineClient) RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error) {
+	return protocol.RetryDeadLetterResponse{}, nil
+}
+
+// SkipDeadLetter is a stub satisfying protocol.EngineClient.
+func (m *mockEngineClient) SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error) {
+	return protocol.SkipDeadLetterResponse{}, nil
+}
+
 // Close is a no-op stub used to satisfy the engine client interface.
 func (m *mockEngineClient) Close() error { return nil }
 
@@ -1660,6 +1670,14 @@ func (e *trackingEngine) ListPendingApprovals(ctx context.Context, req protocol.
 
 func (e *trackingEngine) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
 	return protocol.ListDeadLettersResponse{}, nil
+}
+
+func (e *trackingEngine) RetryDeadLetter(ctx context.Context, req protocol.RetryDeadLetterRequest) (protocol.RetryDeadLetterResponse, error) {
+	return protocol.RetryDeadLetterResponse{}, nil
+}
+
+func (e *trackingEngine) SkipDeadLetter(ctx context.Context, req protocol.SkipDeadLetterRequest) (protocol.SkipDeadLetterResponse, error) {
+	return protocol.SkipDeadLetterResponse{}, nil
 }
 
 func (e *trackingEngine) Close() error { return nil }
