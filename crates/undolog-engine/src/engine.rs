@@ -529,6 +529,16 @@ impl EffectEngine {
         self.approval_store.list_pending(org_id).await
     }
 
+    /// Retrieve a single approval request by ID within an organization.
+    #[instrument(skip(self), fields(org_id = %org_id, approval_request_id = %approval_request_id))]
+    pub async fn get_approval(
+        &self,
+        org_id: &OrgId,
+        approval_request_id: &ApprovalRequestId,
+    ) -> Result<Option<ApprovalRequest>, UndoLogError> {
+        self.approval_store.get(org_id, approval_request_id).await
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────
 
     /// Resolve the tool's tier from the registry.

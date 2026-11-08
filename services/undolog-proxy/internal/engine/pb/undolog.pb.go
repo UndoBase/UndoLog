@@ -33,6 +33,65 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Lifecycle state of a human-in-the-loop approval request.
+type ApprovalState int32
+
+const (
+	ApprovalState_APPROVAL_STATE_UNSPECIFIED   ApprovalState = 0
+	ApprovalState_APPROVAL_STATE_PENDING       ApprovalState = 1
+	ApprovalState_APPROVAL_STATE_APPROVED      ApprovalState = 2
+	ApprovalState_APPROVAL_STATE_REJECTED      ApprovalState = 3
+	ApprovalState_APPROVAL_STATE_TIMED_OUT     ApprovalState = 4
+	ApprovalState_APPROVAL_STATE_AUTO_APPROVED ApprovalState = 5
+)
+
+// Enum value maps for ApprovalState.
+var (
+	ApprovalState_name = map[int32]string{
+		0: "APPROVAL_STATE_UNSPECIFIED",
+		1: "APPROVAL_STATE_PENDING",
+		2: "APPROVAL_STATE_APPROVED",
+		3: "APPROVAL_STATE_REJECTED",
+		4: "APPROVAL_STATE_TIMED_OUT",
+		5: "APPROVAL_STATE_AUTO_APPROVED",
+	}
+	ApprovalState_value = map[string]int32{
+		"APPROVAL_STATE_UNSPECIFIED":   0,
+		"APPROVAL_STATE_PENDING":       1,
+		"APPROVAL_STATE_APPROVED":      2,
+		"APPROVAL_STATE_REJECTED":      3,
+		"APPROVAL_STATE_TIMED_OUT":     4,
+		"APPROVAL_STATE_AUTO_APPROVED": 5,
+	}
+)
+
+func (x ApprovalState) Enum() *ApprovalState {
+	p := new(ApprovalState)
+	*p = x
+	return p
+}
+
+func (x ApprovalState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ApprovalState) Descriptor() protoreflect.EnumDescriptor {
+	return file_undolog_proto_enumTypes[0].Descriptor()
+}
+
+func (ApprovalState) Type() protoreflect.EnumType {
+	return &file_undolog_proto_enumTypes[0]
+}
+
+func (x ApprovalState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ApprovalState.Descriptor instead.
+func (ApprovalState) EnumDescriptor() ([]byte, []int) {
+	return file_undolog_proto_rawDescGZIP(), []int{0}
+}
+
 // DeadLetterState represents the lifecycle state of a dead-letter record.
 type DeadLetterState int32
 
@@ -70,11 +129,11 @@ func (x DeadLetterState) String() string {
 }
 
 func (DeadLetterState) Descriptor() protoreflect.EnumDescriptor {
-	return file_undolog_proto_enumTypes[0].Descriptor()
+	return file_undolog_proto_enumTypes[1].Descriptor()
 }
 
 func (DeadLetterState) Type() protoreflect.EnumType {
-	return &file_undolog_proto_enumTypes[0]
+	return &file_undolog_proto_enumTypes[1]
 }
 
 func (x DeadLetterState) Number() protoreflect.EnumNumber {
@@ -83,7 +142,7 @@ func (x DeadLetterState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DeadLetterState.Descriptor instead.
 func (DeadLetterState) EnumDescriptor() ([]byte, []int) {
-	return file_undolog_proto_rawDescGZIP(), []int{0}
+	return file_undolog_proto_rawDescGZIP(), []int{1}
 }
 
 // ToolCall is the canonical tool invocation exchanged between proxy and engine.
@@ -1109,8 +1168,14 @@ type ApprovalRecord struct {
 	Args []byte `protobuf:"bytes,6,opt,name=args,proto3" json:"args,omitempty"`
 	// Creation time as Unix milliseconds (UTC).
 	CreatedAtUnixMs int64 `protobuf:"varint,7,opt,name=created_at_unix_ms,json=createdAtUnixMs,proto3" json:"created_at_unix_ms,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Lifecycle state of the approval request.
+	State ApprovalState `protobuf:"varint,8,opt,name=state,proto3,enum=undolog.v1.ApprovalState" json:"state,omitempty"`
+	// Resolution time as Unix milliseconds (UTC), or 0 if unresolved.
+	ResolvedAtUnixMs int64 `protobuf:"varint,9,opt,name=resolved_at_unix_ms,json=resolvedAtUnixMs,proto3" json:"resolved_at_unix_ms,omitempty"`
+	// Modified args approved by human, if modified during approval.
+	ApprovedArgs  []byte `protobuf:"bytes,10,opt,name=approved_args,json=approvedArgs,proto3" json:"approved_args,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ApprovalRecord) Reset() {
@@ -1192,6 +1257,27 @@ func (x *ApprovalRecord) GetCreatedAtUnixMs() int64 {
 	return 0
 }
 
+func (x *ApprovalRecord) GetState() ApprovalState {
+	if x != nil {
+		return x.State
+	}
+	return ApprovalState_APPROVAL_STATE_UNSPECIFIED
+}
+
+func (x *ApprovalRecord) GetResolvedAtUnixMs() int64 {
+	if x != nil {
+		return x.ResolvedAtUnixMs
+	}
+	return 0
+}
+
+func (x *ApprovalRecord) GetApprovedArgs() []byte {
+	if x != nil {
+		return x.ApprovedArgs
+	}
+	return nil
+}
+
 type ListPendingApprovalsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unresolved approval requests for the requested organization.
@@ -1237,6 +1323,105 @@ func (x *ListPendingApprovalsResponse) GetApprovalRecords() []*ApprovalRecord {
 	return nil
 }
 
+type GetApprovalRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Organisation that owns the approval request.
+	OrgId string `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	// Approval request identifier (UUID v4).
+	ApprovalId    string `protobuf:"bytes,2,opt,name=approval_id,json=approvalId,proto3" json:"approval_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetApprovalRequest) Reset() {
+	*x = GetApprovalRequest{}
+	mi := &file_undolog_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetApprovalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetApprovalRequest) ProtoMessage() {}
+
+func (x *GetApprovalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_undolog_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetApprovalRequest.ProtoReflect.Descriptor instead.
+func (*GetApprovalRequest) Descriptor() ([]byte, []int) {
+	return file_undolog_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GetApprovalRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *GetApprovalRequest) GetApprovalId() string {
+	if x != nil {
+		return x.ApprovalId
+	}
+	return ""
+}
+
+type GetApprovalResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The requested approval record.
+	Record        *ApprovalRecord `protobuf:"bytes,1,opt,name=record,proto3" json:"record,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetApprovalResponse) Reset() {
+	*x = GetApprovalResponse{}
+	mi := &file_undolog_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetApprovalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetApprovalResponse) ProtoMessage() {}
+
+func (x *GetApprovalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_undolog_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetApprovalResponse.ProtoReflect.Descriptor instead.
+func (*GetApprovalResponse) Descriptor() ([]byte, []int) {
+	return file_undolog_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *GetApprovalResponse) GetRecord() *ApprovalRecord {
+	if x != nil {
+		return x.Record
+	}
+	return nil
+}
+
 // DeadLetterRecord represents a persisted compensation failure.
 type DeadLetterRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1272,7 +1457,7 @@ type DeadLetterRecord struct {
 
 func (x *DeadLetterRecord) Reset() {
 	*x = DeadLetterRecord{}
-	mi := &file_undolog_proto_msgTypes[18]
+	mi := &file_undolog_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1284,7 +1469,7 @@ func (x *DeadLetterRecord) String() string {
 func (*DeadLetterRecord) ProtoMessage() {}
 
 func (x *DeadLetterRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_undolog_proto_msgTypes[18]
+	mi := &file_undolog_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1297,7 +1482,7 @@ func (x *DeadLetterRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeadLetterRecord.ProtoReflect.Descriptor instead.
 func (*DeadLetterRecord) Descriptor() ([]byte, []int) {
-	return file_undolog_proto_rawDescGZIP(), []int{18}
+	return file_undolog_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *DeadLetterRecord) GetDeadLetterId() string {
@@ -1403,7 +1588,7 @@ type ListDeadLettersRequest struct {
 
 func (x *ListDeadLettersRequest) Reset() {
 	*x = ListDeadLettersRequest{}
-	mi := &file_undolog_proto_msgTypes[19]
+	mi := &file_undolog_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1415,7 +1600,7 @@ func (x *ListDeadLettersRequest) String() string {
 func (*ListDeadLettersRequest) ProtoMessage() {}
 
 func (x *ListDeadLettersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_undolog_proto_msgTypes[19]
+	mi := &file_undolog_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1428,7 +1613,7 @@ func (x *ListDeadLettersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDeadLettersRequest.ProtoReflect.Descriptor instead.
 func (*ListDeadLettersRequest) Descriptor() ([]byte, []int) {
-	return file_undolog_proto_rawDescGZIP(), []int{19}
+	return file_undolog_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ListDeadLettersRequest) GetOrgId() string {
@@ -1457,7 +1642,7 @@ type ListDeadLettersResponse struct {
 
 func (x *ListDeadLettersResponse) Reset() {
 	*x = ListDeadLettersResponse{}
-	mi := &file_undolog_proto_msgTypes[20]
+	mi := &file_undolog_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1469,7 +1654,7 @@ func (x *ListDeadLettersResponse) String() string {
 func (*ListDeadLettersResponse) ProtoMessage() {}
 
 func (x *ListDeadLettersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_undolog_proto_msgTypes[20]
+	mi := &file_undolog_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1482,7 +1667,7 @@ func (x *ListDeadLettersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDeadLettersResponse.ProtoReflect.Descriptor instead.
 func (*ListDeadLettersResponse) Descriptor() ([]byte, []int) {
-	return file_undolog_proto_rawDescGZIP(), []int{20}
+	return file_undolog_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ListDeadLettersResponse) GetRecords() []*DeadLetterRecord {
@@ -1511,7 +1696,7 @@ type RetryDeadLetterRequest struct {
 
 func (x *RetryDeadLetterRequest) Reset() {
 	*x = RetryDeadLetterRequest{}
-	mi := &file_undolog_proto_msgTypes[21]
+	mi := &file_undolog_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1523,7 +1708,7 @@ func (x *RetryDeadLetterRequest) String() string {
 func (*RetryDeadLetterRequest) ProtoMessage() {}
 
 func (x *RetryDeadLetterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_undolog_proto_msgTypes[21]
+	mi := &file_undolog_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1536,7 +1721,7 @@ func (x *RetryDeadLetterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryDeadLetterRequest.ProtoReflect.Descriptor instead.
 func (*RetryDeadLetterRequest) Descriptor() ([]byte, []int) {
-	return file_undolog_proto_rawDescGZIP(), []int{21}
+	return file_undolog_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *RetryDeadLetterRequest) GetOrgId() string {
@@ -1563,7 +1748,7 @@ type RetryDeadLetterResponse struct {
 
 func (x *RetryDeadLetterResponse) Reset() {
 	*x = RetryDeadLetterResponse{}
-	mi := &file_undolog_proto_msgTypes[22]
+	mi := &file_undolog_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1575,7 +1760,7 @@ func (x *RetryDeadLetterResponse) String() string {
 func (*RetryDeadLetterResponse) ProtoMessage() {}
 
 func (x *RetryDeadLetterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_undolog_proto_msgTypes[22]
+	mi := &file_undolog_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1588,7 +1773,7 @@ func (x *RetryDeadLetterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryDeadLetterResponse.ProtoReflect.Descriptor instead.
 func (*RetryDeadLetterResponse) Descriptor() ([]byte, []int) {
-	return file_undolog_proto_rawDescGZIP(), []int{22}
+	return file_undolog_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *RetryDeadLetterResponse) GetRecord() *DeadLetterRecord {
@@ -1610,7 +1795,7 @@ type SkipDeadLetterRequest struct {
 
 func (x *SkipDeadLetterRequest) Reset() {
 	*x = SkipDeadLetterRequest{}
-	mi := &file_undolog_proto_msgTypes[23]
+	mi := &file_undolog_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1622,7 +1807,7 @@ func (x *SkipDeadLetterRequest) String() string {
 func (*SkipDeadLetterRequest) ProtoMessage() {}
 
 func (x *SkipDeadLetterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_undolog_proto_msgTypes[23]
+	mi := &file_undolog_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1635,7 +1820,7 @@ func (x *SkipDeadLetterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SkipDeadLetterRequest.ProtoReflect.Descriptor instead.
 func (*SkipDeadLetterRequest) Descriptor() ([]byte, []int) {
-	return file_undolog_proto_rawDescGZIP(), []int{23}
+	return file_undolog_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SkipDeadLetterRequest) GetOrgId() string {
@@ -1662,7 +1847,7 @@ type SkipDeadLetterResponse struct {
 
 func (x *SkipDeadLetterResponse) Reset() {
 	*x = SkipDeadLetterResponse{}
-	mi := &file_undolog_proto_msgTypes[24]
+	mi := &file_undolog_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1674,7 +1859,7 @@ func (x *SkipDeadLetterResponse) String() string {
 func (*SkipDeadLetterResponse) ProtoMessage() {}
 
 func (x *SkipDeadLetterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_undolog_proto_msgTypes[24]
+	mi := &file_undolog_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1687,7 +1872,7 @@ func (x *SkipDeadLetterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SkipDeadLetterResponse.ProtoReflect.Descriptor instead.
 func (*SkipDeadLetterResponse) Descriptor() ([]byte, []int) {
-	return file_undolog_proto_rawDescGZIP(), []int{24}
+	return file_undolog_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SkipDeadLetterResponse) GetRecord() *DeadLetterRecord {
@@ -1773,7 +1958,7 @@ const file_undolog_proto_rawDesc = "" +
 	"\x05actor\x18\x03 \x01(\tR\x05actor\"\x10\n" +
 	"\x0eRejectResponse\"4\n" +
 	"\x1bListPendingApprovalsRequest\x12\x15\n" +
-	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"\xe2\x01\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"\xe7\x02\n" +
 	"\x0eApprovalRecord\x12\x1f\n" +
 	"\vapproval_id\x18\x01 \x01(\tR\n" +
 	"approvalId\x12\x15\n" +
@@ -1783,9 +1968,19 @@ const file_undolog_proto_rawDesc = "" +
 	"\teffect_id\x18\x04 \x01(\tR\beffectId\x12\x1b\n" +
 	"\ttool_name\x18\x05 \x01(\tR\btoolName\x12\x12\n" +
 	"\x04args\x18\x06 \x01(\fR\x04args\x12+\n" +
-	"\x12created_at_unix_ms\x18\a \x01(\x03R\x0fcreatedAtUnixMs\"e\n" +
+	"\x12created_at_unix_ms\x18\a \x01(\x03R\x0fcreatedAtUnixMs\x12/\n" +
+	"\x05state\x18\b \x01(\x0e2\x19.undolog.v1.ApprovalStateR\x05state\x12-\n" +
+	"\x13resolved_at_unix_ms\x18\t \x01(\x03R\x10resolvedAtUnixMs\x12#\n" +
+	"\rapproved_args\x18\n" +
+	" \x01(\fR\fapprovedArgs\"e\n" +
 	"\x1cListPendingApprovalsResponse\x12E\n" +
-	"\x10approval_records\x18\x01 \x03(\v2\x1a.undolog.v1.ApprovalRecordR\x0fapprovalRecords\"\x80\x04\n" +
+	"\x10approval_records\x18\x01 \x03(\v2\x1a.undolog.v1.ApprovalRecordR\x0fapprovalRecords\"L\n" +
+	"\x12GetApprovalRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1f\n" +
+	"\vapproval_id\x18\x02 \x01(\tR\n" +
+	"approvalId\"I\n" +
+	"\x13GetApprovalResponse\x122\n" +
+	"\x06record\x18\x01 \x01(\v2\x1a.undolog.v1.ApprovalRecordR\x06record\"\x80\x04\n" +
 	"\x10DeadLetterRecord\x12$\n" +
 	"\x0edead_letter_id\x18\x01 \x01(\tR\fdeadLetterId\x12\x15\n" +
 	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x12\x1d\n" +
@@ -1818,19 +2013,27 @@ const file_undolog_proto_rawDesc = "" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12$\n" +
 	"\x0edead_letter_id\x18\x02 \x01(\tR\fdeadLetterId\"N\n" +
 	"\x16SkipDeadLetterResponse\x124\n" +
-	"\x06record\x18\x01 \x01(\v2\x1c.undolog.v1.DeadLetterRecordR\x06record*\x91\x01\n" +
+	"\x06record\x18\x01 \x01(\v2\x1c.undolog.v1.DeadLetterRecordR\x06record*\xc5\x01\n" +
+	"\rApprovalState\x12\x1e\n" +
+	"\x1aAPPROVAL_STATE_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16APPROVAL_STATE_PENDING\x10\x01\x12\x1b\n" +
+	"\x17APPROVAL_STATE_APPROVED\x10\x02\x12\x1b\n" +
+	"\x17APPROVAL_STATE_REJECTED\x10\x03\x12\x1c\n" +
+	"\x18APPROVAL_STATE_TIMED_OUT\x10\x04\x12 \n" +
+	"\x1cAPPROVAL_STATE_AUTO_APPROVED\x10\x05*\x91\x01\n" +
 	"\x0fDeadLetterState\x12!\n" +
 	"\x1dDEAD_LETTER_STATE_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18DEAD_LETTER_STATE_FAILED\x10\x01\x12\x1e\n" +
 	"\x1aDEAD_LETTER_STATE_RETRYING\x10\x02\x12\x1d\n" +
-	"\x19DEAD_LETTER_STATE_SKIPPED\x10\x032\xd6\x05\n" +
+	"\x19DEAD_LETTER_STATE_SKIPPED\x10\x032\xa6\x06\n" +
 	"\rUndoLogEngine\x12H\n" +
 	"\tIntercept\x12\x1c.undolog.v1.InterceptRequest\x1a\x1d.undolog.v1.InterceptResponse\x12?\n" +
 	"\x06Commit\x12\x19.undolog.v1.CommitRequest\x1a\x1a.undolog.v1.CommitResponse\x129\n" +
 	"\x04Fail\x12\x17.undolog.v1.FailRequest\x1a\x18.undolog.v1.FailResponse\x12B\n" +
 	"\aApprove\x12\x1a.undolog.v1.ApproveRequest\x1a\x1b.undolog.v1.ApproveResponse\x12?\n" +
 	"\x06Reject\x12\x19.undolog.v1.RejectRequest\x1a\x1a.undolog.v1.RejectResponse\x12i\n" +
-	"\x14ListPendingApprovals\x12'.undolog.v1.ListPendingApprovalsRequest\x1a(.undolog.v1.ListPendingApprovalsResponse\x12Z\n" +
+	"\x14ListPendingApprovals\x12'.undolog.v1.ListPendingApprovalsRequest\x1a(.undolog.v1.ListPendingApprovalsResponse\x12N\n" +
+	"\vGetApproval\x12\x1e.undolog.v1.GetApprovalRequest\x1a\x1f.undolog.v1.GetApprovalResponse\x12Z\n" +
 	"\x0fListDeadLetters\x12\".undolog.v1.ListDeadLettersRequest\x1a#.undolog.v1.ListDeadLettersResponse\x12Z\n" +
 	"\x0fRetryDeadLetter\x12\".undolog.v1.RetryDeadLetterRequest\x1a#.undolog.v1.RetryDeadLetterResponse\x12W\n" +
 	"\x0eSkipDeadLetter\x12!.undolog.v1.SkipDeadLetterRequest\x1a\".undolog.v1.SkipDeadLetterResponseB%Z#undolog-proxy/internal/engine/pb;pbb\x06proto3"
@@ -1847,72 +2050,79 @@ func file_undolog_proto_rawDescGZIP() []byte {
 	return file_undolog_proto_rawDescData
 }
 
-var file_undolog_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_undolog_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_undolog_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_undolog_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_undolog_proto_goTypes = []any{
-	(DeadLetterState)(0),                 // 0: undolog.v1.DeadLetterState
-	(*ToolCall)(nil),                     // 1: undolog.v1.ToolCall
-	(*ToolResult)(nil),                   // 2: undolog.v1.ToolResult
-	(*InterceptRequest)(nil),             // 3: undolog.v1.InterceptRequest
-	(*InterceptResponse)(nil),            // 4: undolog.v1.InterceptResponse
-	(*ExecuteOutcome)(nil),               // 5: undolog.v1.ExecuteOutcome
-	(*ReplayOutcome)(nil),                // 6: undolog.v1.ReplayOutcome
-	(*AwaitingApprovalOutcome)(nil),      // 7: undolog.v1.AwaitingApprovalOutcome
-	(*CommitRequest)(nil),                // 8: undolog.v1.CommitRequest
-	(*CommitResponse)(nil),               // 9: undolog.v1.CommitResponse
-	(*FailRequest)(nil),                  // 10: undolog.v1.FailRequest
-	(*FailResponse)(nil),                 // 11: undolog.v1.FailResponse
-	(*ApproveRequest)(nil),               // 12: undolog.v1.ApproveRequest
-	(*ApproveResponse)(nil),              // 13: undolog.v1.ApproveResponse
-	(*RejectRequest)(nil),                // 14: undolog.v1.RejectRequest
-	(*RejectResponse)(nil),               // 15: undolog.v1.RejectResponse
-	(*ListPendingApprovalsRequest)(nil),  // 16: undolog.v1.ListPendingApprovalsRequest
-	(*ApprovalRecord)(nil),               // 17: undolog.v1.ApprovalRecord
-	(*ListPendingApprovalsResponse)(nil), // 18: undolog.v1.ListPendingApprovalsResponse
-	(*DeadLetterRecord)(nil),             // 19: undolog.v1.DeadLetterRecord
-	(*ListDeadLettersRequest)(nil),       // 20: undolog.v1.ListDeadLettersRequest
-	(*ListDeadLettersResponse)(nil),      // 21: undolog.v1.ListDeadLettersResponse
-	(*RetryDeadLetterRequest)(nil),       // 22: undolog.v1.RetryDeadLetterRequest
-	(*RetryDeadLetterResponse)(nil),      // 23: undolog.v1.RetryDeadLetterResponse
-	(*SkipDeadLetterRequest)(nil),        // 24: undolog.v1.SkipDeadLetterRequest
-	(*SkipDeadLetterResponse)(nil),       // 25: undolog.v1.SkipDeadLetterResponse
+	(ApprovalState)(0),                   // 0: undolog.v1.ApprovalState
+	(DeadLetterState)(0),                 // 1: undolog.v1.DeadLetterState
+	(*ToolCall)(nil),                     // 2: undolog.v1.ToolCall
+	(*ToolResult)(nil),                   // 3: undolog.v1.ToolResult
+	(*InterceptRequest)(nil),             // 4: undolog.v1.InterceptRequest
+	(*InterceptResponse)(nil),            // 5: undolog.v1.InterceptResponse
+	(*ExecuteOutcome)(nil),               // 6: undolog.v1.ExecuteOutcome
+	(*ReplayOutcome)(nil),                // 7: undolog.v1.ReplayOutcome
+	(*AwaitingApprovalOutcome)(nil),      // 8: undolog.v1.AwaitingApprovalOutcome
+	(*CommitRequest)(nil),                // 9: undolog.v1.CommitRequest
+	(*CommitResponse)(nil),               // 10: undolog.v1.CommitResponse
+	(*FailRequest)(nil),                  // 11: undolog.v1.FailRequest
+	(*FailResponse)(nil),                 // 12: undolog.v1.FailResponse
+	(*ApproveRequest)(nil),               // 13: undolog.v1.ApproveRequest
+	(*ApproveResponse)(nil),              // 14: undolog.v1.ApproveResponse
+	(*RejectRequest)(nil),                // 15: undolog.v1.RejectRequest
+	(*RejectResponse)(nil),               // 16: undolog.v1.RejectResponse
+	(*ListPendingApprovalsRequest)(nil),  // 17: undolog.v1.ListPendingApprovalsRequest
+	(*ApprovalRecord)(nil),               // 18: undolog.v1.ApprovalRecord
+	(*ListPendingApprovalsResponse)(nil), // 19: undolog.v1.ListPendingApprovalsResponse
+	(*GetApprovalRequest)(nil),           // 20: undolog.v1.GetApprovalRequest
+	(*GetApprovalResponse)(nil),          // 21: undolog.v1.GetApprovalResponse
+	(*DeadLetterRecord)(nil),             // 22: undolog.v1.DeadLetterRecord
+	(*ListDeadLettersRequest)(nil),       // 23: undolog.v1.ListDeadLettersRequest
+	(*ListDeadLettersResponse)(nil),      // 24: undolog.v1.ListDeadLettersResponse
+	(*RetryDeadLetterRequest)(nil),       // 25: undolog.v1.RetryDeadLetterRequest
+	(*RetryDeadLetterResponse)(nil),      // 26: undolog.v1.RetryDeadLetterResponse
+	(*SkipDeadLetterRequest)(nil),        // 27: undolog.v1.SkipDeadLetterRequest
+	(*SkipDeadLetterResponse)(nil),       // 28: undolog.v1.SkipDeadLetterResponse
 }
 var file_undolog_proto_depIdxs = []int32{
-	1,  // 0: undolog.v1.InterceptRequest.tool_call:type_name -> undolog.v1.ToolCall
-	5,  // 1: undolog.v1.InterceptResponse.execute:type_name -> undolog.v1.ExecuteOutcome
-	6,  // 2: undolog.v1.InterceptResponse.replay:type_name -> undolog.v1.ReplayOutcome
-	7,  // 3: undolog.v1.InterceptResponse.awaiting_approval:type_name -> undolog.v1.AwaitingApprovalOutcome
-	2,  // 4: undolog.v1.ReplayOutcome.cached_result:type_name -> undolog.v1.ToolResult
-	2,  // 5: undolog.v1.CommitRequest.result:type_name -> undolog.v1.ToolResult
-	17, // 6: undolog.v1.ListPendingApprovalsResponse.approval_records:type_name -> undolog.v1.ApprovalRecord
-	0,  // 7: undolog.v1.DeadLetterRecord.state:type_name -> undolog.v1.DeadLetterState
-	0,  // 8: undolog.v1.ListDeadLettersRequest.state:type_name -> undolog.v1.DeadLetterState
-	19, // 9: undolog.v1.ListDeadLettersResponse.records:type_name -> undolog.v1.DeadLetterRecord
-	19, // 10: undolog.v1.RetryDeadLetterResponse.record:type_name -> undolog.v1.DeadLetterRecord
-	19, // 11: undolog.v1.SkipDeadLetterResponse.record:type_name -> undolog.v1.DeadLetterRecord
-	3,  // 12: undolog.v1.UndoLogEngine.Intercept:input_type -> undolog.v1.InterceptRequest
-	8,  // 13: undolog.v1.UndoLogEngine.Commit:input_type -> undolog.v1.CommitRequest
-	10, // 14: undolog.v1.UndoLogEngine.Fail:input_type -> undolog.v1.FailRequest
-	12, // 15: undolog.v1.UndoLogEngine.Approve:input_type -> undolog.v1.ApproveRequest
-	14, // 16: undolog.v1.UndoLogEngine.Reject:input_type -> undolog.v1.RejectRequest
-	16, // 17: undolog.v1.UndoLogEngine.ListPendingApprovals:input_type -> undolog.v1.ListPendingApprovalsRequest
-	20, // 18: undolog.v1.UndoLogEngine.ListDeadLetters:input_type -> undolog.v1.ListDeadLettersRequest
-	22, // 19: undolog.v1.UndoLogEngine.RetryDeadLetter:input_type -> undolog.v1.RetryDeadLetterRequest
-	24, // 20: undolog.v1.UndoLogEngine.SkipDeadLetter:input_type -> undolog.v1.SkipDeadLetterRequest
-	4,  // 21: undolog.v1.UndoLogEngine.Intercept:output_type -> undolog.v1.InterceptResponse
-	9,  // 22: undolog.v1.UndoLogEngine.Commit:output_type -> undolog.v1.CommitResponse
-	11, // 23: undolog.v1.UndoLogEngine.Fail:output_type -> undolog.v1.FailResponse
-	13, // 24: undolog.v1.UndoLogEngine.Approve:output_type -> undolog.v1.ApproveResponse
-	15, // 25: undolog.v1.UndoLogEngine.Reject:output_type -> undolog.v1.RejectResponse
-	18, // 26: undolog.v1.UndoLogEngine.ListPendingApprovals:output_type -> undolog.v1.ListPendingApprovalsResponse
-	21, // 27: undolog.v1.UndoLogEngine.ListDeadLetters:output_type -> undolog.v1.ListDeadLettersResponse
-	23, // 28: undolog.v1.UndoLogEngine.RetryDeadLetter:output_type -> undolog.v1.RetryDeadLetterResponse
-	25, // 29: undolog.v1.UndoLogEngine.SkipDeadLetter:output_type -> undolog.v1.SkipDeadLetterResponse
-	21, // [21:30] is the sub-list for method output_type
-	12, // [12:21] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	2,  // 0: undolog.v1.InterceptRequest.tool_call:type_name -> undolog.v1.ToolCall
+	6,  // 1: undolog.v1.InterceptResponse.execute:type_name -> undolog.v1.ExecuteOutcome
+	7,  // 2: undolog.v1.InterceptResponse.replay:type_name -> undolog.v1.ReplayOutcome
+	8,  // 3: undolog.v1.InterceptResponse.awaiting_approval:type_name -> undolog.v1.AwaitingApprovalOutcome
+	3,  // 4: undolog.v1.ReplayOutcome.cached_result:type_name -> undolog.v1.ToolResult
+	3,  // 5: undolog.v1.CommitRequest.result:type_name -> undolog.v1.ToolResult
+	0,  // 6: undolog.v1.ApprovalRecord.state:type_name -> undolog.v1.ApprovalState
+	18, // 7: undolog.v1.ListPendingApprovalsResponse.approval_records:type_name -> undolog.v1.ApprovalRecord
+	18, // 8: undolog.v1.GetApprovalResponse.record:type_name -> undolog.v1.ApprovalRecord
+	1,  // 9: undolog.v1.DeadLetterRecord.state:type_name -> undolog.v1.DeadLetterState
+	1,  // 10: undolog.v1.ListDeadLettersRequest.state:type_name -> undolog.v1.DeadLetterState
+	22, // 11: undolog.v1.ListDeadLettersResponse.records:type_name -> undolog.v1.DeadLetterRecord
+	22, // 12: undolog.v1.RetryDeadLetterResponse.record:type_name -> undolog.v1.DeadLetterRecord
+	22, // 13: undolog.v1.SkipDeadLetterResponse.record:type_name -> undolog.v1.DeadLetterRecord
+	4,  // 14: undolog.v1.UndoLogEngine.Intercept:input_type -> undolog.v1.InterceptRequest
+	9,  // 15: undolog.v1.UndoLogEngine.Commit:input_type -> undolog.v1.CommitRequest
+	11, // 16: undolog.v1.UndoLogEngine.Fail:input_type -> undolog.v1.FailRequest
+	13, // 17: undolog.v1.UndoLogEngine.Approve:input_type -> undolog.v1.ApproveRequest
+	15, // 18: undolog.v1.UndoLogEngine.Reject:input_type -> undolog.v1.RejectRequest
+	17, // 19: undolog.v1.UndoLogEngine.ListPendingApprovals:input_type -> undolog.v1.ListPendingApprovalsRequest
+	20, // 20: undolog.v1.UndoLogEngine.GetApproval:input_type -> undolog.v1.GetApprovalRequest
+	23, // 21: undolog.v1.UndoLogEngine.ListDeadLetters:input_type -> undolog.v1.ListDeadLettersRequest
+	25, // 22: undolog.v1.UndoLogEngine.RetryDeadLetter:input_type -> undolog.v1.RetryDeadLetterRequest
+	27, // 23: undolog.v1.UndoLogEngine.SkipDeadLetter:input_type -> undolog.v1.SkipDeadLetterRequest
+	5,  // 24: undolog.v1.UndoLogEngine.Intercept:output_type -> undolog.v1.InterceptResponse
+	10, // 25: undolog.v1.UndoLogEngine.Commit:output_type -> undolog.v1.CommitResponse
+	12, // 26: undolog.v1.UndoLogEngine.Fail:output_type -> undolog.v1.FailResponse
+	14, // 27: undolog.v1.UndoLogEngine.Approve:output_type -> undolog.v1.ApproveResponse
+	16, // 28: undolog.v1.UndoLogEngine.Reject:output_type -> undolog.v1.RejectResponse
+	19, // 29: undolog.v1.UndoLogEngine.ListPendingApprovals:output_type -> undolog.v1.ListPendingApprovalsResponse
+	21, // 30: undolog.v1.UndoLogEngine.GetApproval:output_type -> undolog.v1.GetApprovalResponse
+	24, // 31: undolog.v1.UndoLogEngine.ListDeadLetters:output_type -> undolog.v1.ListDeadLettersResponse
+	26, // 32: undolog.v1.UndoLogEngine.RetryDeadLetter:output_type -> undolog.v1.RetryDeadLetterResponse
+	28, // 33: undolog.v1.UndoLogEngine.SkipDeadLetter:output_type -> undolog.v1.SkipDeadLetterResponse
+	24, // [24:34] is the sub-list for method output_type
+	14, // [14:24] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_undolog_proto_init() }
@@ -1930,8 +2140,8 @@ func file_undolog_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_undolog_proto_rawDesc), len(file_undolog_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   25,
+			NumEnums:      2,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

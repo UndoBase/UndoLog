@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Engine: added GetApproval gRPC RPC and extended ApprovalRecord with
+  resolution state, timestamp, and approved arguments.
+
 - SDK: added UndoLogAdminClient and dedicated dead-letter admin MCP tools
   in TypeScript SDK.
 

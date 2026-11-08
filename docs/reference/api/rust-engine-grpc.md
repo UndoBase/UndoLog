@@ -59,6 +59,7 @@ service UndoLogEngine {
   rpc Approve(ApproveRequest) returns (ApproveResponse);
   rpc Reject(RejectRequest) returns (RejectResponse);
   rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
+  rpc GetApproval(GetApprovalRequest) returns (GetApprovalResponse);
   rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
   rpc RetryDeadLetter(RetryDeadLetterRequest) returns (RetryDeadLetterResponse);
   rpc SkipDeadLetter(SkipDeadLetterRequest) returns (SkipDeadLetterResponse);
@@ -242,13 +243,45 @@ disconnect, so in-flight requests are not orphaned.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `approval_id` | `string` | Approval request identifier. |
+| `approval_id` | `string` | Approval request identifier (UUID v4). |
 | `org_id` | `string` | Organisation that owns the approval request. |
 | `session_id` | `string` | Session that requested the approval. |
 | `effect_id` | `string` | Effect awaiting the decision. |
 | `tool_name` | `string` | Name of the tool proposed for execution. |
-| `args_json` | `string` | JSON-serialised arguments proposed for the tool. |
+| `args` | `bytes` | Raw JSON arguments proposed for the tool. |
 | `created_at_unix_ms` | `int64` | Creation time in Unix milliseconds. |
+| `state` | `ApprovalState` | Current lifecycle state: `APPROVAL_STATE_PENDING` (1), `APPROVAL_STATE_APPROVED` (2), `APPROVAL_STATE_REJECTED` (3), `APPROVAL_STATE_TIMED_OUT` (4), `APPROVAL_STATE_AUTO_APPROVED` (5). |
+| `resolved_at_unix_ms` | `int64` | Resolution time in Unix milliseconds, or 0 if unresolved. |
+| `approved_args` | `bytes` | Raw JSON modified args approved by human, if modified during approval. |
+
+---
+
+## RPC: `GetApproval`
+
+Retrieves a single human-in-the-loop approval record by ID within an
+organization.
+
+### `GetApprovalRequest`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `org_id` | `string` | Organisation that owns the approval request (UUID v4). |
+| `approval_id` | `string` | Approval request identifier (UUID v4). |
+
+### `GetApprovalResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `record` | `ApprovalRecord` | The requested approval record. |
+
+### Status Codes
+
+| Code | Name | Condition |
+|------|------|-----------|
+| 0 | `OK` | Approval record found and returned. |
+| 3 | `INVALID_ARGUMENT` | `org_id` or `approval_id` is not a valid UUID. |
+| 5 | `NOT_FOUND` | Approval request does not exist or belongs to another organization. |
+| 16 | `UNAUTHENTICATED` | Missing or invalid bearer token when authentication is enabled. |
 
 ---
 

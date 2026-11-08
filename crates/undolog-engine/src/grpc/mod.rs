@@ -23,7 +23,7 @@ use tonic::{Request, Response, Status};
 use tracing::{info_span, instrument};
 
 use undolog_types::{
-    approval::ApprovalRequest,
+    approval::{ApprovalRequest, ApprovalState},
     effect::{ToolCall, ToolResult},
     ids::{ApprovalRequestId, EffectId, OrgId},
 };
@@ -237,6 +237,27 @@ impl pb::undo_log_engine_server::UndoLogEngine for UndoLogEngineService {
         }))
     }
 
+    #[instrument(skip(self, request), fields(rpc = "GetApproval"))]
+    async fn get_approval(
+        &self,
+        request: Request<pb::GetApprovalRequest>,
+    ) -> Result<Response<pb::GetApprovalResponse>, Status> {
+        let req = request.into_inner();
+        let org_id = parse_org_id(&req.org_id)?;
+        let approval_id = parse_approval_id(&req.approval_id)?;
+
+        let engine = self.engine.read().await;
+        let approval = engine
+            .get_approval(&org_id, &approval_id)
+            .await
+            .map_err(|e| Status::internal(format!("get approval failed: {e}")))?
+            .ok_or_else(|| Status::not_found(format!("approval {approval_id} not found")))?;
+
+        Ok(Response::new(pb::GetApprovalResponse {
+            record: Some(approval_record_to_proto(approval)),
+        }))
+    }
+
     #[instrument(skip(self, request), fields(rpc = "ListDeadLetters"))]
     async fn list_dead_letters(
         &self,
@@ -418,6 +439,14 @@ fn parse_approval_id(s: &str) -> Result<ApprovalRequestId, Status> {
 
 /// Convert a domain approval request into the wire `ApprovalRecord`.
 fn approval_record_to_proto(a: ApprovalRequest) -> pb::ApprovalRecord {
+    let state = match a.state {
+        ApprovalState::Pending => pb::ApprovalState::Pending as i32,
+        ApprovalState::Approved => pb::ApprovalState::Approved as i32,
+        ApprovalState::Rejected => pb::ApprovalState::Rejected as i32,
+        ApprovalState::TimedOut => pb::ApprovalState::TimedOut as i32,
+        ApprovalState::AutoApproved => pb::ApprovalState::AutoApproved as i32,
+    };
+
     pb::ApprovalRecord {
         approval_id: a.approval_request_id.to_string(),
         org_id: a.org_id.to_string(),
@@ -426,6 +455,13 @@ fn approval_record_to_proto(a: ApprovalRequest) -> pb::ApprovalRecord {
         tool_name: a.tool_name,
         args: serde_json::to_vec(&a.proposed_args).unwrap_or_default(),
         created_at_unix_ms: a.created_at.timestamp_millis(),
+        state,
+        resolved_at_unix_ms: a.resolved_at.map(|t| t.timestamp_millis()).unwrap_or(0),
+        approved_args: a
+            .approved_args
+            .as_ref()
+            .map(|v| serde_json::to_vec(v).unwrap_or_default())
+            .unwrap_or_default(),
     }
 }
 
@@ -501,5 +537,48 @@ mod tests {
         assert_eq!(proto.tool_name, "delete_user");
         assert_eq!(proto.args, br#"{"id":"u1"}"#);
         assert_eq!(proto.created_at_unix_ms, created_at.timestamp_millis());
+        assert_eq!(proto.state, pb::ApprovalState::Pending as i32);
+        assert_eq!(proto.resolved_at_unix_ms, 0);
+        assert!(proto.approved_args.is_empty());
+    }
+
+    #[test]
+    fn approval_record_to_proto_maps_resolved_states() {
+        let created_at = chrono::Utc::now();
+        let resolved_at = created_at + chrono::Duration::seconds(45);
+        let states = [
+            (ApprovalState::Approved, pb::ApprovalState::Approved as i32),
+            (ApprovalState::Rejected, pb::ApprovalState::Rejected as i32),
+            (ApprovalState::TimedOut, pb::ApprovalState::TimedOut as i32),
+            (ApprovalState::AutoApproved, pb::ApprovalState::AutoApproved as i32),
+        ];
+
+        for (domain_state, proto_state) in states {
+            let req = ApprovalRequest {
+                approval_request_id: ApprovalRequestId::new(),
+                org_id: OrgId::new(),
+                session_id: SessionId::new(),
+                effect_id: EffectId::new(),
+                tool_name: "transfer_funds".to_string(),
+                irreversibility_reason: "financial movement".to_string(),
+                risk_tags: vec!["payout".to_string()],
+                estimated_impact: Some("$500 USD".to_string()),
+                proposed_args: serde_json::json!({ "amount": 500 }),
+                agent_context: serde_json::json!({}),
+                state: domain_state,
+                timeout_at: created_at,
+                auto_approve_on_timeout: false,
+                resolved_at: Some(resolved_at),
+                resolved_by: Some("approver-123".to_string()),
+                approved_args: Some(serde_json::json!({ "amount": 450 })),
+                created_at,
+            };
+
+            let proto = approval_record_to_proto(req);
+
+            assert_eq!(proto.state, proto_state);
+            assert_eq!(proto.resolved_at_unix_ms, resolved_at.timestamp_millis());
+            assert_eq!(proto.approved_args, br#"{"amount":450}"#);
+        }
     }
 }
