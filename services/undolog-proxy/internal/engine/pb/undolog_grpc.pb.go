@@ -37,6 +37,7 @@ const (
 	UndoLogEngine_Approve_FullMethodName              = "/undolog.v1.UndoLogEngine/Approve"
 	UndoLogEngine_Reject_FullMethodName               = "/undolog.v1.UndoLogEngine/Reject"
 	UndoLogEngine_ListPendingApprovals_FullMethodName = "/undolog.v1.UndoLogEngine/ListPendingApprovals"
+	UndoLogEngine_GetApproval_FullMethodName          = "/undolog.v1.UndoLogEngine/GetApproval"
 	UndoLogEngine_ListDeadLetters_FullMethodName      = "/undolog.v1.UndoLogEngine/ListDeadLetters"
 	UndoLogEngine_RetryDeadLetter_FullMethodName      = "/undolog.v1.UndoLogEngine/RetryDeadLetter"
 	UndoLogEngine_SkipDeadLetter_FullMethodName       = "/undolog.v1.UndoLogEngine/SkipDeadLetter"
@@ -71,6 +72,9 @@ type UndoLogEngineClient interface {
 	// organization.  The proxy reconciles its in-memory approval view from this
 	// on startup and periodically so a proxy restart does not orphan approvals.
 	ListPendingApprovals(ctx context.Context, in *ListPendingApprovalsRequest, opts ...grpc.CallOption) (*ListPendingApprovalsResponse, error)
+	// GetApproval retrieves a single approval request by ID within an
+	// organization.
+	GetApproval(ctx context.Context, in *GetApprovalRequest, opts ...grpc.CallOption) (*GetApprovalResponse, error)
 	// ListDeadLetters returns the dead-letter records for an organization,
 	// optionally filtered by state.
 	ListDeadLetters(ctx context.Context, in *ListDeadLettersRequest, opts ...grpc.CallOption) (*ListDeadLettersResponse, error)
@@ -150,6 +154,16 @@ func (c *undoLogEngineClient) ListPendingApprovals(ctx context.Context, in *List
 	return out, nil
 }
 
+func (c *undoLogEngineClient) GetApproval(ctx context.Context, in *GetApprovalRequest, opts ...grpc.CallOption) (*GetApprovalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetApprovalResponse)
+	err := c.cc.Invoke(ctx, UndoLogEngine_GetApproval_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *undoLogEngineClient) ListDeadLetters(ctx context.Context, in *ListDeadLettersRequest, opts ...grpc.CallOption) (*ListDeadLettersResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListDeadLettersResponse)
@@ -209,6 +223,9 @@ type UndoLogEngineServer interface {
 	// organization.  The proxy reconciles its in-memory approval view from this
 	// on startup and periodically so a proxy restart does not orphan approvals.
 	ListPendingApprovals(context.Context, *ListPendingApprovalsRequest) (*ListPendingApprovalsResponse, error)
+	// GetApproval retrieves a single approval request by ID within an
+	// organization.
+	GetApproval(context.Context, *GetApprovalRequest) (*GetApprovalResponse, error)
 	// ListDeadLetters returns the dead-letter records for an organization,
 	// optionally filtered by state.
 	ListDeadLetters(context.Context, *ListDeadLettersRequest) (*ListDeadLettersResponse, error)
@@ -245,6 +262,9 @@ func (UnimplementedUndoLogEngineServer) Reject(context.Context, *RejectRequest) 
 }
 func (UnimplementedUndoLogEngineServer) ListPendingApprovals(context.Context, *ListPendingApprovalsRequest) (*ListPendingApprovalsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListPendingApprovals not implemented")
+}
+func (UnimplementedUndoLogEngineServer) GetApproval(context.Context, *GetApprovalRequest) (*GetApprovalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetApproval not implemented")
 }
 func (UnimplementedUndoLogEngineServer) ListDeadLetters(context.Context, *ListDeadLettersRequest) (*ListDeadLettersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListDeadLetters not implemented")
@@ -384,6 +404,24 @@ func _UndoLogEngine_ListPendingApprovals_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UndoLogEngine_GetApproval_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetApprovalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UndoLogEngineServer).GetApproval(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UndoLogEngine_GetApproval_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UndoLogEngineServer).GetApproval(ctx, req.(*GetApprovalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _UndoLogEngine_ListDeadLetters_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListDeadLettersRequest)
 	if err := dec(in); err != nil {
@@ -468,6 +506,10 @@ var UndoLogEngine_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListPendingApprovals",
 			Handler:    _UndoLogEngine_ListPendingApprovals_Handler,
+		},
+		{
+			MethodName: "GetApproval",
+			Handler:    _UndoLogEngine_GetApproval_Handler,
 		},
 		{
 			MethodName: "ListDeadLetters",

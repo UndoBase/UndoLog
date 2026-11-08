@@ -50,6 +50,10 @@ service UndoLogEngine {
   rpc ListPendingApprovals(ListPendingApprovalsRequest)
       returns (ListPendingApprovalsResponse);
 
+  // GetApproval retrieves a single approval request by ID within an
+  // organization.
+  rpc GetApproval(GetApprovalRequest) returns (GetApprovalResponse);
+
   // ListDeadLetters returns the dead-letter records for an organization,
   // optionally filtered by state.
   rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
@@ -239,11 +243,41 @@ message ApprovalRecord {
   bytes args = 6;
   // Creation time as Unix milliseconds (UTC).
   int64 created_at_unix_ms = 7;
+  // Lifecycle state of the approval request.
+  ApprovalState state = 8;
+  // Resolution time as Unix milliseconds (UTC), or 0 if unresolved.
+  int64 resolved_at_unix_ms = 9;
+  // Modified args approved by human, if modified during approval.
+  bytes approved_args = 10;
+}
+
+// Lifecycle state of a human-in-the-loop approval request.
+enum ApprovalState {
+  APPROVAL_STATE_UNSPECIFIED = 0;
+  APPROVAL_STATE_PENDING = 1;
+  APPROVAL_STATE_APPROVED = 2;
+  APPROVAL_STATE_REJECTED = 3;
+  APPROVAL_STATE_TIMED_OUT = 4;
+  APPROVAL_STATE_AUTO_APPROVED = 5;
 }
 
 message ListPendingApprovalsResponse {
   // Unresolved approval requests for the requested organization.
   repeated ApprovalRecord approval_records = 1;
+}
+
+// ── GetApproval ────────────────────────────────────────────────────────────
+
+message GetApprovalRequest {
+  // Organisation that owns the approval request.
+  string org_id = 1;
+  // Approval request identifier (UUID v4).
+  string approval_id = 2;
+}
+
+message GetApprovalResponse {
+  // The requested approval record.
+  ApprovalRecord record = 1;
 }
 
 // ── Dead-Letter Queue ──────────────────────────────────────────────────────

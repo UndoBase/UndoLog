@@ -75,6 +75,13 @@ impl pb::undo_log_engine_server::UndoLogEngine for StubEngine {
         Ok(Response::new(pb::ListPendingApprovalsResponse { approval_records: Vec::new() }))
     }
 
+    async fn get_approval(
+        &self,
+        _request: Request<pb::GetApprovalRequest>,
+    ) -> Result<Response<pb::GetApprovalResponse>, Status> {
+        Ok(Response::new(pb::GetApprovalResponse { record: None }))
+    }
+
     async fn list_dead_letters(
         &self,
         _request: Request<pb::ListDeadLettersRequest>,
@@ -235,6 +242,12 @@ async fn with_a_configured_token_every_rpc_is_guarded() {
         .list_pending_approvals(Request::new(pb::ListPendingApprovalsRequest::default()))
         .await
         .expect_err("listing without the token must be rejected");
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+
+    let status = client
+        .get_approval(Request::new(pb::GetApprovalRequest::default()))
+        .await
+        .expect_err("get_approval without the token must be rejected");
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
 
     server.stop().await;
