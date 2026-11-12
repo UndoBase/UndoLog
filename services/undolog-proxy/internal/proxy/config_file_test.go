@@ -26,6 +26,9 @@ var allConfigEnvKeys = []string{
 	"UNDOLOG_PROXY_APPROVAL_RETENTION_SECS",
 	"UNDOLOG_PROXY_ENGINE_GRPC_ADDR",
 	"UNDOLOG_PROXY_ENGINE_AUTH_TOKEN",
+	"UNDOLOG_PROXY_ENGINE_TLS_CA_PATH",
+	"UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH",
+	"UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH",
 	"UNDOLOG_PROXY_MAX_ENGINE_RPCS",
 	"UNDOLOG_PROXY_ENGINE_QUEUE_MAX",
 	"UNDOLOG_PROXY_ENGINE_QUEUE_WAIT_MS",
@@ -80,6 +83,9 @@ approval_reconcile_interval_secs = 45
 approval_retention_secs = 3600
 engine_grpc_addr = "engine:60051"
 engine_auth_token = "  file-secret  "
+engine_tls_ca_path = "/etc/ssl/ca.crt"
+engine_tls_client_cert_path = "/etc/ssl/client.crt"
+engine_tls_client_key_path = "/etc/ssl/client.key"
 max_engine_rpcs = 8
 engine_queue_max = 16
 engine_queue_wait_ms = 250
@@ -139,6 +145,15 @@ plugins = ["header", "auth"]
 	}
 	if cfg.EngineAuthToken != "file-secret" {
 		t.Errorf("EngineAuthToken = %q, want %q", cfg.EngineAuthToken, "file-secret")
+	}
+	if cfg.EngineTLSCAPath != "/etc/ssl/ca.crt" {
+		t.Errorf("EngineTLSCAPath = %q, want %q", cfg.EngineTLSCAPath, "/etc/ssl/ca.crt")
+	}
+	if cfg.EngineTLSClientCertPath != "/etc/ssl/client.crt" {
+		t.Errorf("EngineTLSClientCertPath = %q, want %q", cfg.EngineTLSClientCertPath, "/etc/ssl/client.crt")
+	}
+	if cfg.EngineTLSClientKeyPath != "/etc/ssl/client.key" {
+		t.Errorf("EngineTLSClientKeyPath = %q, want %q", cfg.EngineTLSClientKeyPath, "/etc/ssl/client.key")
 	}
 	if cfg.MaxEngineRPCs != 8 {
 		t.Errorf("MaxEngineRPCs = %d, want 8", cfg.MaxEngineRPCs)
@@ -392,5 +407,69 @@ func TestConfigFileMissingFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), path) {
 		t.Fatalf("error %q must contain the file path %q", err, path)
+	}
+}
+
+// TestConfigTLSValidation verifies proxy TLS and mTLS configuration pairing rules.
+func TestConfigTLSValidation(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("UNDOLOG_PROXY_API_KEYS", "test-key=test-org")
+
+	t.Run("client cert without key fails", func(t *testing.T) {
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CA_PATH", "/path/to/ca.crt")
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH", "/path/to/cert.crt")
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH", "")
+
+		_, err := LoadConfig()
+		if err == nil {
+			t.Fatal("expected error when client cert is set without key")
+		}
+		if !strings.Contains(err.Error(), "must be set together") {
+			t.Fatalf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("client key without cert fails", func(t *testing.T) {
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CA_PATH", "/path/to/ca.crt")
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH", "")
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH", "/path/to/key.key")
+
+		_, err := LoadConfig()
+		if err == nil {
+			t.Fatal("expected error when client key is set without cert")
+		}
+		if !strings.Contains(err.Error(), "must be set together") {
+			t.Fatalf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("client cert without CA fails", func(t *testing.T) {
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CA_PATH", "")
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH", "/path/to/cert.crt")
+		t.Setenv("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH", "/path/to/key.key")
+
+		_, err := LoadConfig()
+		if err == nil {
+			t.Fatal("expected error when client cert is configured without CA")
+		}
+		if !strings.Contains(err.Error(), "requires UNDOLOG_PROXY_ENGINE_TLS_CA_PATH") {
+			t.Fatalf("unexpected error message: %v", err)
+		}
+	})
+}
+
+// TestConfigTLSRestartOnlyNames verifies TLS settings are tracked by restartOnlyNames.
+func TestConfigTLSRestartOnlyNames(t *testing.T) {
+	base := Config{}
+	next := Config{
+		EngineTLSCAPath:         "/ca.crt",
+		EngineTLSClientCertPath: "/cert.crt",
+		EngineTLSClientKeyPath:  "/key.key",
+	}
+	names := restartOnlyNames(base, next)
+	for _, expected := range []string{"engine_tls_ca_path", "engine_tls_client_cert_path", "engine_tls_client_key_path"} {
+		if !slices.Contains(names, expected) {
+			t.Errorf("restartOnlyNames missing %q in %v", expected, names)
+		}
 	}
 }

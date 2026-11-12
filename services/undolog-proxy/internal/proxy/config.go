@@ -59,6 +59,15 @@ type Config struct {
 	// gRPC call. Surrounding whitespace is trimmed, as the engine trims its
 	// copy, and an empty value sends no credential. It must never be logged.
 	EngineAuthToken string
+	// EngineTLSCAPath is the optional path to a PEM-encoded CA bundle used to
+	// verify the engine server certificate.
+	EngineTLSCAPath string
+	// EngineTLSClientCertPath is the path to the PEM-encoded client certificate
+	// presented to the engine for mTLS.
+	EngineTLSClientCertPath string
+	// EngineTLSClientKeyPath is the path to the PEM-encoded client private key
+	// for mTLS.
+	EngineTLSClientKeyPath string
 	// MaxEngineRPCs caps engine RPCs in flight. Zero disables the gate.
 	MaxEngineRPCs int
 	// EngineQueueMax bounds how many engine RPCs may wait for a gate slot.
@@ -136,6 +145,9 @@ func LoadConfig() (Config, error) {
 		ApprovalRetention:         resolveSecs("UNDOLOG_PROXY_APPROVAL_RETENTION_SECS", f.ApprovalRetentionSecs, 24*time.Hour),
 		EngineGRPCAddr:            resolveStr("UNDOLOG_PROXY_ENGINE_GRPC_ADDR", f.EngineGRPCAddr, "localhost:50051"),
 		EngineAuthToken:           resolveTrimmed("UNDOLOG_PROXY_ENGINE_AUTH_TOKEN", f.EngineAuthToken),
+		EngineTLSCAPath:           resolveTrimmed("UNDOLOG_PROXY_ENGINE_TLS_CA_PATH", f.EngineTLSCAPath),
+		EngineTLSClientCertPath:   resolveTrimmed("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH", f.EngineTLSClientCertPath),
+		EngineTLSClientKeyPath:    resolveTrimmed("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH", f.EngineTLSClientKeyPath),
 		MaxEngineRPCs:             bp.maxRPCs,
 		EngineQueueMax:            bp.queueMax,
 		EngineQueueWait:           bp.queueWait,
@@ -186,6 +198,12 @@ func LoadConfig() (Config, error) {
 	if (cfg.EngineBreakerThreshold > 0) != (cfg.EngineBreakerReset > 0) {
 		return Config{}, fmt.Errorf("UNDOLOG_PROXY_ENGINE_BREAKER_THRESHOLD and UNDOLOG_PROXY_ENGINE_BREAKER_RESET_SECS must be set together")
 	}
+	if (cfg.EngineTLSClientCertPath != "") != (cfg.EngineTLSClientKeyPath != "") {
+		return Config{}, fmt.Errorf("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH and UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH must be set together")
+	}
+	if cfg.EngineTLSClientCertPath != "" && cfg.EngineTLSCAPath == "" {
+		return Config{}, fmt.Errorf("UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH requires UNDOLOG_PROXY_ENGINE_TLS_CA_PATH")
+	}
 	cfg.filePath = strings.TrimSpace(os.Getenv(envKeyConfigFile))
 	return cfg, nil
 }
@@ -214,6 +232,9 @@ func restartOnlyNames(running, next Config) []string {
 	add("approval_retention_secs", running.ApprovalRetention != next.ApprovalRetention)
 	add("engine_grpc_addr", running.EngineGRPCAddr != next.EngineGRPCAddr)
 	add("engine_auth_token", running.EngineAuthToken != next.EngineAuthToken)
+	add("engine_tls_ca_path", running.EngineTLSCAPath != next.EngineTLSCAPath)
+	add("engine_tls_client_cert_path", running.EngineTLSClientCertPath != next.EngineTLSClientCertPath)
+	add("engine_tls_client_key_path", running.EngineTLSClientKeyPath != next.EngineTLSClientKeyPath)
 	add("max_engine_rpcs", running.MaxEngineRPCs != next.MaxEngineRPCs)
 	add("engine_queue_max", running.EngineQueueMax != next.EngineQueueMax)
 	add("engine_queue_wait_ms", running.EngineQueueWait != next.EngineQueueWait)

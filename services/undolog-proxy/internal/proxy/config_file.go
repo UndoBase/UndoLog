@@ -30,6 +30,9 @@ type fileLayer struct {
 	ApprovalRetentionSecs         *int              `toml:"approval_retention_secs"`
 	EngineGRPCAddr                *string           `toml:"engine_grpc_addr"`
 	EngineAuthToken               *string           `toml:"engine_auth_token"`
+	EngineTLSCAPath               *string           `toml:"engine_tls_ca_path"`
+	EngineTLSClientCertPath       *string           `toml:"engine_tls_client_cert_path"`
+	EngineTLSClientKeyPath        *string           `toml:"engine_tls_client_key_path"`
 	MaxEngineRPCs                 *int              `toml:"max_engine_rpcs"`
 	EngineQueueMax                *int              `toml:"engine_queue_max"`
 	EngineQueueWaitMs             *int              `toml:"engine_queue_wait_ms"`
@@ -84,6 +87,9 @@ var fileKeyKinds = map[string]string{
 	"approval_retention_secs":          "an integer",
 	"engine_grpc_addr":                 "a string",
 	"engine_auth_token":                "a string",
+	"engine_tls_ca_path":               "a string",
+	"engine_tls_client_cert_path":      "a string",
+	"engine_tls_client_key_path":       "a string",
 	"max_engine_rpcs":                  "an integer",
 	"engine_queue_max":                 "an integer",
 	"engine_queue_wait_ms":             "an integer",

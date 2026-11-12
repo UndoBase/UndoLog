@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
@@ -166,8 +167,10 @@ type Option func(*clientOptions)
 // clientOptions collects the settings Option values apply before the dialer
 // is built.
 type clientOptions struct {
-	authToken    string
-	backpressure *BackpressureConfig
+	authToken      string
+	backpressure   *BackpressureConfig
+	transportCreds credentials.TransportCredentials
+	tlsErr         error
 }
 
 // WithAuthToken makes every engine RPC carry token in the `authorization`
@@ -176,6 +179,26 @@ type clientOptions struct {
 func WithAuthToken(token string) Option {
 	return func(o *clientOptions) {
 		o.authToken = token
+	}
+}
+
+// WithTransportCredentials configures gRPC transport credentials (such as TLS or mTLS)
+// for the engine connection.
+func WithTransportCredentials(creds credentials.TransportCredentials) Option {
+	return func(o *clientOptions) {
+		o.transportCreds = creds
+	}
+}
+
+// WithTLSConfig builds transport credentials from cfg and applies them to the client.
+func WithTLSConfig(cfg TLSConfig) Option {
+	return func(o *clientOptions) {
+		creds, err := BuildTransportCredentials(cfg)
+		if err != nil {
+			o.tlsErr = err
+			return
+		}
+		o.transportCreds = creds
 	}
 }
 
@@ -272,9 +295,12 @@ func (g *guard) publish() {
 // background, so an engine that starts after the proxy (or restarts) is picked
 // up without the proxy exiting. A non-empty token is attached as per-RPC
 // credentials.
-func newDialer(token string) func(context.Context, string) (*grpc.ClientConn, error) {
+func newDialer(token string, creds credentials.TransportCredentials) func(context.Context, string) (*grpc.ClientConn, error) {
+	if creds == nil {
+		creds = insecure.NewCredentials()
+	}
 	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: reconnectBackoff}),
 	}
 	if token != "" {
@@ -303,11 +329,19 @@ func NewClient(address string, retry RetryConfig, logger *slog.Logger, opts ...O
 		opt(&options)
 	}
 	watchCtx, watchCancel := context.WithCancel(context.Background())
+	var dialer func(context.Context, string) (*grpc.ClientConn, error)
+	if options.tlsErr != nil {
+		dialer = func(_ context.Context, _ string) (*grpc.ClientConn, error) {
+			return nil, options.tlsErr
+		}
+	} else {
+		dialer = newDialer(options.authToken, options.transportCreds)
+	}
 	c := &Client{
 		address:     address,
 		retry:       retry,
 		logger:      logger,
-		dial:        newDialer(options.authToken),
+		dial:        dialer,
 		watchCtx:    watchCtx,
 		watchCancel: watchCancel,
 		watchDone:   make(chan struct{}),

@@ -6,11 +6,17 @@ package engine
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
 	"undolog-proxy/internal/engine/pb"
@@ -69,6 +75,59 @@ func withTracingMetadata(ctx context.Context) context.Context {
 		return ctx
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
+}
+
+// TLSConfig specifies transport security settings for the engine gRPC transport.
+type TLSConfig struct {
+	// CAPath is the path to a PEM-encoded CA bundle used to verify the engine
+	// server certificate. When empty and client certificates are configured,
+	// the host's system certificate pool is used.
+	CAPath string
+	// ClientCertPath is the path to a PEM-encoded client certificate presented
+	// to the engine for mutual TLS (mTLS).
+	ClientCertPath string
+	// ClientKeyPath is the path to a PEM-encoded client private key for mTLS.
+	ClientKeyPath string
+}
+
+// BuildTransportCredentials constructs gRPC transport credentials from cfg.
+// When no TLS variables are set (CAPath, ClientCertPath, and ClientKeyPath are all empty),
+// it returns insecure.NewCredentials() for plaintext TCP.
+// When TLS variables are configured, it builds credentials.NewTLS with the
+// custom CA (or system root pool) and optional client certificate.
+func BuildTransportCredentials(cfg TLSConfig) (credentials.TransportCredentials, error) {
+	if cfg.CAPath == "" && cfg.ClientCertPath == "" && cfg.ClientKeyPath == "" {
+		return insecure.NewCredentials(), nil
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	if cfg.CAPath != "" {
+		caPEM, err := os.ReadFile(cfg.CAPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read engine TLS CA from %q: %w", cfg.CAPath, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("failed to parse PEM in engine TLS CA from %q", cfg.CAPath)
+		}
+		tlsConfig.RootCAs = pool
+	}
+
+	if cfg.ClientCertPath != "" || cfg.ClientKeyPath != "" {
+		if cfg.ClientCertPath == "" || cfg.ClientKeyPath == "" {
+			return nil, fmt.Errorf("client certificate and key must both be specified for mTLS")
+		}
+		cert, err := tls.LoadX509KeyPair(cfg.ClientCertPath, cfg.ClientKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load engine client certificate from %q and %q: %w", cfg.ClientCertPath, cfg.ClientKeyPath, err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	return credentials.NewTLS(tlsConfig), nil
 }
 
 // GRPCTransport adapts the generated `pb.UndoLogEngineClient` to the
