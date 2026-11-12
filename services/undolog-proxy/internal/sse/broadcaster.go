@@ -6,10 +6,6 @@ package sse
 
 import (
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,10 +31,14 @@ const (
 	EventApprovalApproved EventType = "approval_approved"
 	// EventApprovalRejected marks a human-rejected call that stops here.
 	EventApprovalRejected EventType = "approval_rejected"
+	// EventResyncRequired marks when an event gap exceeds buffer capacity.
+	EventResyncRequired EventType = "resync_required"
 )
 
 // Event is the SSE payload delivered to dashboard subscribers.
 type Event struct {
+	// ID is the monotonic sequence identifier assigned by the broadcaster.
+	ID uint64 `json:"-"`
 	// Type classifies the event.
 	Type EventType `json:"type"`
 	// Timestamp records when the event was emitted.
@@ -55,13 +55,17 @@ type Event struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-// Broadcaster maintains org-scoped subscriber lists for SSE delivery.
+// Broadcaster maintains org-scoped subscriber lists and an in-memory event ring
+// buffer for SSE delivery and replay.
 type Broadcaster struct {
-	bufferSize int
-	mu         sync.RWMutex
-	subs       map[string]map[uint64]chan Event
-	nextID     atomic.Uint64
-	metrics    *metrics.Registry
+	bufferSize   int
+	ringCapacity int
+	mu           sync.RWMutex
+	subs         map[string]map[uint64]chan Event
+	nextID       atomic.Uint64
+	nextEventID  uint64
+	ring         []Event
+	metrics      *metrics.Registry
 }
 
 // Metric names published by the broadcaster.
@@ -70,24 +74,29 @@ const (
 	sseEventsDroppedMetric = "undolog_proxy_sse_events_dropped_total"
 )
 
+const defaultRingCapacity = 1000
+
 // SetMetrics wires the registry so subscriber counts and dropped events are
 // exposed on /metrics. A nil registry disables instrumentation.
 func (b *Broadcaster) SetMetrics(reg *metrics.Registry) {
 	b.metrics = reg
 }
 
-// NewBroadcaster creates a broadcaster with the given channel buffer size.
+// NewBroadcaster creates a broadcaster with the given subscriber channel buffer size.
 func NewBroadcaster(bufferSize int) *Broadcaster {
 	if bufferSize <= 0 {
 		bufferSize = 128
 	}
 	return &Broadcaster{
-		bufferSize: bufferSize,
-		subs:       make(map[string]map[uint64]chan Event),
+		bufferSize:   bufferSize,
+		ringCapacity: defaultRingCapacity,
+		subs:         make(map[string]map[uint64]chan Event),
+		ring:         make([]Event, 0, defaultRingCapacity),
 	}
 }
 
-// Emit sends one event to every subscriber registered for the matching org.
+// Emit assigns a monotonic integer event ID, appends the event to the in-memory
+// ring buffer, and sends the event to every subscriber registered for the matching org.
 func (b *Broadcaster) Emit(evt Event) {
 	if evt.OrgID == "" {
 		return
@@ -97,8 +106,18 @@ func (b *Broadcaster) Emit(evt Event) {
 		evt.Timestamp = time.Now().UTC()
 	}
 
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.nextEventID++
+	evt.ID = b.nextEventID
+
+	if len(b.ring) < b.ringCapacity {
+		b.ring = append(b.ring, evt)
+	} else {
+		copy(b.ring, b.ring[1:])
+		b.ring[len(b.ring)-1] = evt
+	}
 
 	// Drop events rather than blocking the proxy hot path.
 	dropped := 0
@@ -131,8 +150,9 @@ func (b *Broadcaster) recordSubscriberMetric(org string, count int) {
 	b.metrics.Gauge(sseSubscribersMetric, "Active SSE dashboard subscribers", "org").Set(float64(count), org)
 }
 
-// Subscribe registers one org-scoped SSE subscriber and returns an unsubscribe function.
-func (b *Broadcaster) Subscribe(orgID string) (<-chan Event, func()) {
+// Subscribe registers one org-scoped SSE subscriber and returns any replayable
+// events for the requested lastEventID, the live event channel, and an unsubscribe function.
+func (b *Broadcaster) Subscribe(orgID string, lastEventID *uint64) ([]Event, <-chan Event, func()) {
 	ch := make(chan Event, b.bufferSize)
 	id := b.nextID.Add(1)
 
@@ -142,6 +162,25 @@ func (b *Broadcaster) Subscribe(orgID string) (<-chan Event, func()) {
 	}
 	b.subs[orgID][id] = ch
 	b.recordSubscriberMetric(orgID, len(b.subs[orgID]))
+
+	var replay []Event
+	if lastEventID != nil {
+		reqID := *lastEventID
+		if len(b.ring) > 0 && reqID < b.ring[0].ID {
+			replay = []Event{{
+				Type:      EventResyncRequired,
+				Timestamp: time.Now().UTC(),
+				OrgID:     orgID,
+			}}
+		} else if reqID <= b.nextEventID {
+			for i := range b.ring {
+				evt := &b.ring[i]
+				if evt.ID > reqID && evt.OrgID == orgID {
+					replay = append(replay, *evt)
+				}
+			}
+		}
+	}
 	b.mu.Unlock()
 
 	unsubscribe := func() {
@@ -159,81 +198,7 @@ func (b *Broadcaster) Subscribe(orgID string) (<-chan Event, func()) {
 		b.mu.Unlock()
 	}
 
-	return ch, unsubscribe
-}
-
-// Handler serves the SSE endpoint used by the dashboard.
-func (b *Broadcaster) Handler(w http.ResponseWriter, r *http.Request) {
-	orgID := strings.TrimSpace(r.Header.Get("X-Org-Id"))
-	if orgID == "" {
-		http.Error(w, "org_id required", http.StatusUnauthorized)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-
-	// SSE streams must outlive the server WriteTimeout, which would otherwise
-	// terminate the connection while the dashboard idles between heartbeats.
-	// Clearing the deadline is best-effort: writers without a deadline concept
-	// (e.g. httptest.ResponseRecorder) report ErrNotSupported, which is a no-op.
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-
-	// Flush the headers so the client observes the stream as open before the
-	// first event or heartbeat arrives.
-	flusher.Flush()
-	events, unsubscribe := b.Subscribe(orgID)
-	defer unsubscribe()
-
-	heartbeat := time.NewTicker(25 * time.Second)
-	defer heartbeat.Stop()
-
-	for {
-		select {
-		case evt, ok := <-events:
-			if !ok {
-				return
-			}
-			if err := writeEvent(w, evt); err != nil {
-				return
-			}
-			flusher.Flush()
-		case <-heartbeat.C:
-			// A failed heartbeat means the connection is gone (e.g. a silent
-			// network drop), so end the handler instead of idling forever.
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
-				return
-			}
-			flusher.Flush()
-		case <-r.Context().Done():
-			return
-		}
-	}
-}
-
-func writeEvent(w http.ResponseWriter, evt Event) error {
-	payload, err := json.Marshal(evt)
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "event: %s\n", evt.Type); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "id: %s\n", strconv.FormatInt(evt.Timestamp.UnixNano(), 10)); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
-		return err
-	}
-	return nil
+	return replay, ch, unsubscribe
 }
 
 // Close drains and closes all subscriber channels, releasing broadcaster resources.
@@ -248,9 +213,4 @@ func (b *Broadcaster) Close() {
 		b.recordSubscriberMetric(orgID, 0)
 		delete(b.subs, orgID)
 	}
-}
-
-// ServeHTTP allows Broadcaster to satisfy http.Handler.
-func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	b.Handler(w, r)
 }

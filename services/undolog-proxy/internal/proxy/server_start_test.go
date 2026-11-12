@@ -58,7 +58,7 @@ func TestStartupPassRacesSafely(t *testing.T) {
 			defer wg.Done()
 			<-start
 			server.reconcileOnce(context.Background())
-			events, unsubscribe := server.broadcaster.Subscribe("org-1")
+			_, events, unsubscribe := server.broadcaster.Subscribe("org-1", nil)
 			server.broadcaster.Emit(sse.Event{Type: sse.EventApprovalRequired, OrgID: "org-1", ApprovalID: "ap-1"})
 			select {
 			case evt := <-events:

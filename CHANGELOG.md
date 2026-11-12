@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Proxy: added monotonic SSE event IDs and in-memory replay buffer for
+  reconnecting clients via Last-Event-ID header.
+
 - Proxy: added TLS and mTLS client credentials support for the engine
   gRPC transport.
 
