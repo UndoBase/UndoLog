@@ -64,7 +64,7 @@ async-trait = "0.1"
 backoff     = "0.4"
 
 # gRPC (tonic server, prost codec)
-tonic  = { version = "0.12", features = ["prost"] }
+tonic  = { version = "0.12", features = ["prost", "tls"] }
 prost  = "0.13"
 prost-types = "0.13"
 

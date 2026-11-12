@@ -176,3 +176,17 @@ pub async fn build_engine_sqlite(
     info!("EffectEngine initialized (SQLite backend)");
     Ok(engine)
 }
+
+// ── TLS configuration ───────────────────────────────────────────────────────
+
+/// Build a tonic `ServerTlsConfig` from an optional engine `TlsConfig`.
+///
+/// Returns `Ok(None)` when TLS is disabled (plaintext mode).
+pub fn build_server_tls_config(
+    tls_config: Option<&crate::config::TlsConfig>,
+) -> Result<Option<tonic::transport::ServerTlsConfig>, crate::config::TlsConfigError> {
+    match tls_config {
+        Some(cfg) => cfg.build_server_tls_config().map(Some),
+        None => Ok(None),
+    }
+}

@@ -17,6 +17,7 @@
 pub mod admin;
 pub mod cache;
 pub mod circuit_breaker;
+pub mod config;
 pub mod engine;
 pub mod grpc;
 pub mod rate_limit;
@@ -27,6 +28,7 @@ pub mod timeout;
 
 pub use cache::SessionCache;
 pub use circuit_breaker::{CircuitBreaker, CircuitState};
+pub use config::{TlsConfig, TlsConfigError};
 pub use engine::{EffectEngine, EngineConfig, InterceptOutcome};
 pub use rate_limit::ConcurrencyLimiter;
 pub use tier_registry::{TierRegistry, ToolRegistration};

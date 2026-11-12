@@ -78,6 +78,36 @@ Shared secret checked on every gRPC call. When set, a call must present it as
 
 ---
 
+### `UNDOLOG_ENGINE_TLS_CERT_PATH`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Filesystem path to the PEM-encoded server certificate chain. Must be configured together with `UNDOLOG_ENGINE_TLS_KEY_PATH` to enable transport TLS on the gRPC port. When both are unset, the engine serves plaintext TCP.
+
+---
+
+### `UNDOLOG_ENGINE_TLS_KEY_PATH`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Filesystem path to the PEM-encoded server private key. Must be configured together with `UNDOLOG_ENGINE_TLS_CERT_PATH` to enable transport TLS.
+
+---
+
+### `UNDOLOG_ENGINE_TLS_CLIENT_CA_PATH`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Filesystem path to the PEM-encoded CA bundle used to verify client certificates for mutual TLS (mTLS). When set alongside `UNDOLOG_ENGINE_TLS_CERT_PATH` and `UNDOLOG_ENGINE_TLS_KEY_PATH`, the engine requires and validates client certificates on every gRPC connection. Setting this variable without server TLS is a startup configuration error.
+
+---
+
 ### `UNDOLOG_LOG_LEVEL`
 
 | Type | Default | Valid Values |
