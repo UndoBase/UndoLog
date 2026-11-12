@@ -114,7 +114,7 @@ type RejectRequest struct {
 	Actor string `json:"actor"`
 }
 
-// ApprovalRecord is a snapshot of an unresolved approval request from the engine.
+// ApprovalRecord is a snapshot of an approval request from the engine.
 type ApprovalRecord struct {
 	ApprovalID string `json:"approval_id"`
 	OrgID      string `json:"org_id"`
@@ -125,6 +125,12 @@ type ApprovalRecord struct {
 	Args json.RawMessage `json:"args"`
 	// CreatedAtUnix is the request creation time in Unix milliseconds (UTC).
 	CreatedAtUnix int64 `json:"created_at_unix_ms"`
+	// State is the lifecycle state of the approval request (e.g. "pending", "approved", "rejected").
+	State string `json:"state,omitempty"`
+	// ResolvedAtUnix is the resolution time in Unix milliseconds (UTC), or 0 if unresolved.
+	ResolvedAtUnix int64 `json:"resolved_at_unix_ms,omitempty"`
+	// ApprovedArgs are the modified args approved by human, if modified during approval.
+	ApprovedArgs json.RawMessage `json:"approved_args,omitempty"`
 }
 
 // ListPendingApprovalsRequest asks the engine for the unresolved approvals of one org.
@@ -135,6 +141,17 @@ type ListPendingApprovalsRequest struct {
 // ListPendingApprovalsResponse carries the engine's unresolved approval records.
 type ListPendingApprovalsResponse struct {
 	Records []ApprovalRecord `json:"approval_records"`
+}
+
+// GetApprovalRequest asks the engine for a single approval request by ID.
+type GetApprovalRequest struct {
+	OrgID      string `json:"org_id"`
+	ApprovalID string `json:"approval_id"`
+}
+
+// GetApprovalResponse carries the engine's approval record.
+type GetApprovalResponse struct {
+	Record ApprovalRecord `json:"record"`
 }
 
 // DeadLetterRecord represents a persisted compensation failure.
@@ -196,6 +213,7 @@ type EngineClient interface {
 	Approve(ctx context.Context, req ApproveRequest) (ApproveResponse, error)
 	Reject(ctx context.Context, req RejectRequest) error
 	ListPendingApprovals(ctx context.Context, req ListPendingApprovalsRequest) (ListPendingApprovalsResponse, error)
+	GetApproval(ctx context.Context, req GetApprovalRequest) (GetApprovalResponse, error)
 	ListDeadLetters(ctx context.Context, req ListDeadLettersRequest) (ListDeadLettersResponse, error)
 	RetryDeadLetter(ctx context.Context, req RetryDeadLetterRequest) (RetryDeadLetterResponse, error)
 	SkipDeadLetter(ctx context.Context, req SkipDeadLetterRequest) (SkipDeadLetterResponse, error)

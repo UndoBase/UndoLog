@@ -15,6 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
+
 	"undolog-proxy/internal/engine"
 	"undolog-proxy/internal/metrics"
 	"undolog-proxy/internal/protocol"
@@ -142,19 +145,65 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 		return
 	}
 
-	if rec, exists := h.store.Get(id); !exists || rec.OrgID != orgID {
-		http.Error(w, "approval not found", http.StatusNotFound)
-		return
-	}
-
-	// Validate the decision body before mutating state so a malformed request
-	// never briefly flips the record to a terminal status.
+	// Validate the decision body before mutating state or querying the engine
+	// so a malformed request returns 400 without triggering engine lookup.
 	body, ok := h.decodeDecisionBody(w, r)
 	if !ok {
 		return
 	}
 	if body.Actor == "" {
 		body.Actor = "unknown"
+	}
+
+	ctx := engine.WithRequestID(r.Context(), strings.TrimSpace(r.Header.Get("X-Request-Id")))
+	if h.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.requestTimeout)
+		defer cancel()
+	}
+
+	if rec, exists := h.store.Get(id); !exists || rec.OrgID != orgID {
+		// Cache miss: query the engine directly before making a decision.
+		resp, err := h.engine.GetApproval(ctx, protocol.GetApprovalRequest{
+			OrgID:      orgID,
+			ApprovalID: id,
+		})
+		if err != nil {
+			if grpcstatus.Code(err) == codes.NotFound {
+				http.Error(w, "approval not found", http.StatusNotFound)
+				return
+			}
+			h.recordDecision(action, "engine_error")
+			h.failDecision(w, id, err)
+			return
+		}
+
+		engineRec := resp.Record
+		if engineRec.OrgID != orgID {
+			http.Error(w, "approval not found", http.StatusNotFound)
+			return
+		}
+
+		if strings.ToLower(engineRec.State) != string(StatusPending) {
+			h.recordDecision(action, "conflict")
+			http.Error(w, "approval already resolved", http.StatusConflict)
+			return
+		}
+
+		createdAt := time.Now().UTC()
+		if engineRec.CreatedAtUnix > 0 {
+			createdAt = time.UnixMilli(engineRec.CreatedAtUnix).UTC()
+		}
+		h.store.UpsertPending(Record{
+			ID:        engineRec.ApprovalID,
+			OrgID:     engineRec.OrgID,
+			SessionID: engineRec.SessionID,
+			EffectID:  engineRec.EffectID,
+			ToolName:  engineRec.ToolName,
+			Args:      append([]byte(nil), engineRec.Args...),
+			Status:    StatusPending,
+			CreatedAt: createdAt,
+		})
 	}
 
 	// Resolve the decision atomically so a concurrent double-approve returns
@@ -172,13 +221,6 @@ func (h *Handler) resolveDecision(w http.ResponseWriter, r *http.Request, target
 		h.recordDecision(action, "conflict")
 		http.Error(w, "approval already resolved", http.StatusConflict)
 		return
-	}
-
-	ctx := engine.WithRequestID(r.Context(), strings.TrimSpace(r.Header.Get("X-Request-Id")))
-	if h.requestTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, h.requestTimeout)
-		defer cancel()
 	}
 	switch target {
 	case StatusApproved:

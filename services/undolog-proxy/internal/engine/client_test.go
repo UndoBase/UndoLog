@@ -81,6 +81,11 @@ func (m *mockTransport) ListPendingApprovals(ctx context.Context, req protocol.L
 	return protocol.ListPendingApprovalsResponse{}, nil
 }
 
+// GetApproval returns an empty approval response for the mock transport.
+func (m *mockTransport) GetApproval(ctx context.Context, req protocol.GetApprovalRequest) (protocol.GetApprovalResponse, error) {
+	return protocol.GetApprovalResponse{}, nil
+}
+
 // ListDeadLetters returns an empty dead-letter response for the mock transport.
 func (m *mockTransport) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
 	return protocol.ListDeadLettersResponse{}, nil
@@ -690,6 +695,16 @@ func (b *blockingTransport) Reject(ctx context.Context, req protocol.RejectReque
 // is exempt from the guard by design.
 func (b *blockingTransport) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
 	return protocol.ListPendingApprovalsResponse{}, nil
+}
+
+func (b *blockingTransport) GetApproval(ctx context.Context, req protocol.GetApprovalRequest) (protocol.GetApprovalResponse, error) {
+	b.calls.Add(1)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return protocol.GetApprovalResponse{}, ctx.Err()
+	}
+	return protocol.GetApprovalResponse{}, b.failure
 }
 
 func (b *blockingTransport) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {

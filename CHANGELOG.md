@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Proxy: added engine point lookup fallback on approval cache misses to
+  prevent duplicate execution of resolved approvals.
+
 - Engine: added GetApproval gRPC RPC and extended ApprovalRecord with
   resolution state, timestamp, and approved arguments.
 

@@ -38,7 +38,8 @@ func ReconcileApprovals(ctx context.Context, engine protocol.EngineClient, store
 			failedOrgs[orgID] = struct{}{}
 			continue
 		}
-		for _, rec := range resp.Records {
+		for i := range resp.Records {
+			rec := &resp.Records[i]
 			store.UpsertPending(Record{
 				ID:        rec.ApprovalID,
 				OrgID:     rec.OrgID,
