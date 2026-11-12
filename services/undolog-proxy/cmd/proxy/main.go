@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -39,16 +40,33 @@ func run() error {
 
 	registry := metrics.NewRegistry()
 
-	engineClient := engine.NewClient(cfg.EngineGRPCAddr, engine.RetryConfig{
-		MaxAttempts: cfg.EngineRetryMaxAttempts,
-		Backoff:     cfg.EngineRetryBackoff,
-	}, logger, engine.WithAuthToken(cfg.EngineAuthToken), engine.WithBackpressure(engine.BackpressureConfig{
+	var engineOpts []engine.Option
+	if cfg.EngineAuthToken != "" {
+		engineOpts = append(engineOpts, engine.WithAuthToken(cfg.EngineAuthToken))
+	}
+	engineOpts = append(engineOpts, engine.WithBackpressure(engine.BackpressureConfig{
 		MaxInFlight:      cfg.MaxEngineRPCs,
 		QueueMax:         cfg.EngineQueueMax,
 		QueueWait:        cfg.EngineQueueWait,
 		BreakerThreshold: cfg.EngineBreakerThreshold,
 		BreakerReset:     cfg.EngineBreakerReset,
 	}))
+	if cfg.EngineTLSCAPath != "" || cfg.EngineTLSClientCertPath != "" || cfg.EngineTLSClientKeyPath != "" {
+		creds, err := engine.BuildTransportCredentials(engine.TLSConfig{
+			CAPath:         cfg.EngineTLSCAPath,
+			ClientCertPath: cfg.EngineTLSClientCertPath,
+			ClientKeyPath:  cfg.EngineTLSClientKeyPath,
+		})
+		if err != nil {
+			return fmt.Errorf("engine TLS credentials: %w", err)
+		}
+		engineOpts = append(engineOpts, engine.WithTransportCredentials(creds))
+	}
+
+	engineClient := engine.NewClient(cfg.EngineGRPCAddr, engine.RetryConfig{
+		MaxAttempts: cfg.EngineRetryMaxAttempts,
+		Backoff:     cfg.EngineRetryBackoff,
+	}, logger, engineOpts...)
 	engineClient.SetMetrics(registry)
 	defer func() { _ = engineClient.Close() }()
 

@@ -443,6 +443,36 @@ no credential.
 
 ---
 
+### `UNDOLOG_PROXY_ENGINE_TLS_CA_PATH`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Filesystem path to the PEM-encoded CA bundle used to verify the engine server certificate. When unset while client certificates are configured, the proxy verifies the engine certificate against the host's system certificate pool. When no TLS variables are set, the proxy connects over plaintext TCP.
+
+---
+
+### `UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Filesystem path to the PEM-encoded client certificate presented to the engine for mutual TLS (mTLS). Must be configured together with `UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH` and requires `UNDOLOG_PROXY_ENGINE_TLS_CA_PATH`.
+
+---
+
+### `UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH`
+
+| Type | Default | Required |
+|------|---------|----------|
+| `string` | `""` | No |
+
+Filesystem path to the PEM-encoded client private key for mutual TLS (mTLS). Must be configured together with `UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH`.
+
+---
+
 ### `UNDOLOG_PROXY_UPSTREAM_TOOL_URL`
 
 | Type | Default | Required |
@@ -771,6 +801,9 @@ Shared log level variable. When set, affects both the Rust engine and Go proxy.
 | `UNDOLOG_PROXY_APPROVAL_RETENTION_SECS` | Proxy | `int` | `86400` | No |
 | `UNDOLOG_PROXY_ENGINE_GRPC_ADDR` | Proxy | `string` | `localhost:50051` | Yes |
 | `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` | Proxy | `string` | `""` | No |
+| `UNDOLOG_PROXY_ENGINE_TLS_CA_PATH` | Proxy | `string` | `""` | No |
+| `UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH` | Proxy | `string` | `""` | No |
+| `UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_UPSTREAM_TOOL_URL` | Proxy | `string` | `""` | No |
 | `UNDOLOG_PROXY_API_KEYS` | Proxy | `string` | `""` | Yes |
 | `UNDOLOG_PROXY_ADMIN_API_KEYS` | Proxy | `string` | `""` | No |

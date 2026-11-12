@@ -21,6 +21,16 @@ Every HTTP request entering the proxy through its middleware chain is assigned a
 
 ---
 
+## Engine Transport Security
+
+The proxy communicates with the UndoLog effect engine over gRPC. By default, communication uses unencrypted plaintext TCP on port 50051. In production and zero-trust deployments, transport security can be configured:
+
+- **Transport TLS:** Enabled by specifying `UNDOLOG_PROXY_ENGINE_TLS_CA_PATH`. The proxy verifies the engine's TLS certificate chain against the configured custom CA bundle (or falls back to system root certificates when unset while client certificates are active).
+- **Mutual TLS (mTLS):** Enabled by configuring `UNDOLOG_PROXY_ENGINE_TLS_CLIENT_CERT_PATH` and `UNDOLOG_PROXY_ENGINE_TLS_CLIENT_KEY_PATH` alongside `UNDOLOG_PROXY_ENGINE_TLS_CA_PATH`. The proxy presents its client certificate to the engine during the handshake.
+- **Authentication decoupling:** Bearer token authentication via `UNDOLOG_PROXY_ENGINE_AUTH_TOKEN` operates independently of TLS and is sent on every RPC across plaintext, TLS, or mTLS connections.
+
+---
+
 ## `POST /mcp/tool_call`
 
 Intercept and execute a tool call through the UndoLog engine.

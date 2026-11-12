@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Proxy: added TLS and mTLS client credentials support for the engine
+  gRPC transport.
+
 - Engine: added optional transport TLS and mutual TLS authentication for
   the gRPC service.
 
