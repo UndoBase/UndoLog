@@ -463,6 +463,18 @@ Server-Sent Events stream for real-time dashboard updates.
 |--------|----------|-------------|
 | `X-Api-Key` | Yes | API key for tenant authentication. |
 | `X-Org-Id` | Yes | Organisation identifier (set by auth middleware). |
+| `Last-Event-ID` | No | Sequence ID of the last event received by the client. |
+
+### Replay and Reconnection
+
+The proxy assigns monotonically increasing positive integers to each broadcasted event and maintains an in-memory ring buffer of the most recent 1,000 events across all tenants:
+
+- **Replay:** When a client reconnects presenting a valid `Last-Event-ID`, the proxy snapshots and replays all buffered events for the authenticated organisation strictly newer than the requested ID before streaming live events.
+- **Tenant isolation:** Replayed events are strictly filtered to the authenticated organisation.
+- **Buffer limits:** Replay buffer capacity is 1,000 events. The buffer is held in memory and resets on proxy restart.
+- **Resynchronization:** If the requested `Last-Event-ID` is older than the oldest buffered event, the proxy emits a `resync_required` event before live events, signaling that the client missed events that exceeded buffer capacity and must refresh full state from the REST API.
+- **Future sequence:** If `Last-Event-ID` is newer than the current sequence, no events are replayed and live streaming starts immediately.
+- **Malformed ID:** If `Last-Event-ID` is not a valid unsigned integer, the endpoint returns `400 Bad Request`.
 
 ### Response
 
@@ -479,12 +491,13 @@ Server-Sent Events stream for real-time dashboard updates.
 | `approval_required` | Tool call waiting for human approval. |
 | `approval_approved` | Human approved an approval request. |
 | `approval_rejected` | Human rejected an approval request. |
+| `resync_required` | Event gap exceeded ring buffer capacity. Full REST sync required. |
 
 **Event format:**
 
 ```
 event: effect_committed
-id: 1704067200000000000
+id: 42
 data: {"type":"effect_committed","timestamp":"2026-01-01T00:00:00Z","org_id":"...","session_id":"...","effect_id":"...","payload":{"stage":"committed"}}
 
 ```
@@ -495,6 +508,7 @@ Heartbeat (`: ping`) sent every 25 seconds to maintain connection.
 
 | Status | Description |
 |--------|-------------|
+| `400 Bad Request` | Malformed `Last-Event-ID` header. |
 | `401 Unauthorized` | Missing org ID via header or query parameter. |
 | `500 Internal Server Error` | Streaming unsupported by proxy. |
 
