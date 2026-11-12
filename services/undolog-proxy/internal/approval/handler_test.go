@@ -26,16 +26,19 @@ import (
 )
 
 type mockEngine struct {
-	mu              sync.Mutex
-	approved        []string
-	rejected        []string
-	lastRejectActor string
-	commitCalls     []protocol.CommitRequest
-	failCalls       []protocol.FailRequest
-	pending         []protocol.ApprovalRecord
-	listErr         map[string]error
-	approveErr      error
-	rejectErr       error
+	mu               sync.Mutex
+	approved         []string
+	rejected         []string
+	lastRejectActor  string
+	commitCalls      []protocol.CommitRequest
+	failCalls        []protocol.FailRequest
+	pending          []protocol.ApprovalRecord
+	listErr          map[string]error
+	getApprovalCalls []protocol.GetApprovalRequest
+	getApprovalResp  map[string]protocol.GetApprovalResponse
+	getApprovalErr   map[string]error
+	approveErr       error
+	rejectErr        error
 }
 
 // Intercept is a no-op stub used to satisfy the engine interface.
@@ -98,6 +101,24 @@ func (m *mockEngine) ListPendingApprovals(ctx context.Context, req protocol.List
 		return protocol.ListPendingApprovalsResponse{}, err
 	}
 	return protocol.ListPendingApprovalsResponse{Records: m.pending}, nil
+}
+
+// GetApproval returns the configured approval record or error for the approval ID.
+func (m *mockEngine) GetApproval(ctx context.Context, req protocol.GetApprovalRequest) (protocol.GetApprovalResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getApprovalCalls = append(m.getApprovalCalls, req)
+	if m.getApprovalErr != nil {
+		if err, ok := m.getApprovalErr[req.ApprovalID]; ok {
+			return protocol.GetApprovalResponse{}, err
+		}
+	}
+	if m.getApprovalResp != nil {
+		if resp, ok := m.getApprovalResp[req.ApprovalID]; ok {
+			return resp, nil
+		}
+	}
+	return protocol.GetApprovalResponse{}, status.Error(codes.NotFound, "approval not found")
 }
 
 // ListDeadLetters is a no-op stub used to satisfy the engine interface.
@@ -504,5 +525,277 @@ func TestOpenBreakerAnswers503OnDecisionPath(t *testing.T) {
 		if got := w.Header().Get("Retry-After"); got != protocol.BusyRetryAfter {
 			t.Fatalf("%s: Retry-After = %q, want %q", target, got, protocol.BusyRetryAfter)
 		}
+	}
+}
+
+// TestApprovalCacheMissPendingAllowsExecution verifies that a cache miss on an
+// approval decision queries the engine, upserts the pending record, and executes
+// the approved tool call.
+func TestApprovalCacheMissPendingAllowsExecution(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{
+		getApprovalResp: map[string]protocol.GetApprovalResponse{
+			"ap-miss-1": {
+				Record: protocol.ApprovalRecord{
+					ApprovalID:    "ap-miss-1",
+					OrgID:         "org-1",
+					SessionID:     "sess-1",
+					EffectID:      "eff-1",
+					ToolName:      "delete_user",
+					Args:          []byte(`{"id":"u1"}`),
+					State:         "pending",
+					CreatedAtUnix: time.Now().UnixMilli(),
+				},
+			},
+		},
+	}
+	var executedCall protocol.ToolCall
+	mockExec := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		executedCall = call
+		return protocol.ToolResult{Success: true, Output: []byte(`{"deleted":true}`)}, nil
+	}
+	handler := NewHandler(store, engine, mockExec, nil, 0, 1<<20, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/approvals/ap-miss-1/approve", bytes.NewBufferString(`{"actor":"admin"}`))
+	req.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.ApproveApproval(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if len(engine.getApprovalCalls) != 1 {
+		t.Fatalf("expected 1 GetApproval call, got %d", len(engine.getApprovalCalls))
+	}
+	if engine.getApprovalCalls[0].ApprovalID != "ap-miss-1" || engine.getApprovalCalls[0].OrgID != "org-1" {
+		t.Fatalf("unexpected GetApproval call args: %+v", engine.getApprovalCalls[0])
+	}
+	if len(engine.approved) != 1 || engine.approved[0] != "ap-miss-1" {
+		t.Fatalf("expected approval to be recorded, got %+v", engine.approved)
+	}
+	if executedCall.ToolName != "delete_user" {
+		t.Fatalf("expected tool execution for delete_user, got %q", executedCall.ToolName)
+	}
+	stored, ok := store.Get("ap-miss-1")
+	if !ok || stored.Status != StatusApproved {
+		t.Fatalf("expected store to contain approved record, got ok=%v, status=%v", ok, stored.Status)
+	}
+}
+
+// TestApprovalCacheMissResolvedReturns409 verifies that a cache miss for an
+// approval already approved, rejected, or timed out in the engine returns 409 Conflict.
+func TestApprovalCacheMissResolvedReturns409(t *testing.T) {
+	for _, state := range []string{"approved", "rejected", "timed_out", "auto_approved"} {
+		t.Run(state, func(t *testing.T) {
+			store := NewStore()
+			approvalID := "ap-" + state
+			engine := &mockEngine{
+				getApprovalResp: map[string]protocol.GetApprovalResponse{
+					approvalID: {
+						Record: protocol.ApprovalRecord{
+							ApprovalID:    approvalID,
+							OrgID:         "org-1",
+							SessionID:     "sess-1",
+							EffectID:      "eff-1",
+							ToolName:      "delete_user",
+							Args:          []byte(`{"id":"u1"}`),
+							State:         state,
+							CreatedAtUnix: time.Now().UnixMilli(),
+						},
+					},
+				},
+			}
+			handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
+
+			req := httptest.NewRequest(http.MethodPost, "/approvals/"+approvalID+"/approve", nil)
+			req.Header.Set("X-Org-Id", "org-1")
+			w := httptest.NewRecorder()
+			handler.ApproveApproval(w, req)
+
+			if w.Code != http.StatusConflict {
+				t.Fatalf("expected 409 Conflict for state %s, got %d", state, w.Code)
+			}
+			if !strings.Contains(w.Body.String(), "approval already resolved") {
+				t.Fatalf("expected 'approval already resolved' in body, got %q", w.Body.String())
+			}
+			if len(engine.approved) != 0 {
+				t.Fatalf("engine Approve must not be called for already resolved state %s", state)
+			}
+		})
+	}
+}
+
+// TestApprovalCacheMissNotFoundReturns404 verifies that a cache miss where the
+// engine reports NotFound returns 404 Not Found.
+func TestApprovalCacheMissNotFoundReturns404(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{
+		getApprovalErr: map[string]error{
+			"ap-unknown": status.Error(codes.NotFound, "approval not found"),
+		},
+	}
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/approvals/ap-unknown/approve", nil)
+	req.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.ApproveApproval(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "approval not found") {
+		t.Fatalf("expected 'approval not found' in body, got %q", w.Body.String())
+	}
+	if len(engine.approved) != 0 {
+		t.Fatalf("engine Approve must not be called on NotFound")
+	}
+}
+
+// TestApprovalMalformedBodyDoesNotQueryEngine verifies that a malformed request
+// body returns 400 Bad Request immediately without invoking GetApproval on a cache miss.
+func TestApprovalMalformedBodyDoesNotQueryEngine(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{}
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/approvals/ap-malformed/approve", bytes.NewBufferString(`{"actor":`))
+	req.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.ApproveApproval(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request, got %d", w.Code)
+	}
+	if len(engine.getApprovalCalls) != 0 {
+		t.Fatalf("GetApproval must not be called on a malformed request body, got %d calls", len(engine.getApprovalCalls))
+	}
+}
+
+// TestApprovalCacheHitDoesNotQueryEngine verifies that a cache hit resolves
+// locally and forwards to Approve without calling GetApproval.
+func TestApprovalCacheHitDoesNotQueryEngine(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{}
+	mockExec := func(ctx context.Context, call protocol.ToolCall) (protocol.ToolResult, error) {
+		return protocol.ToolResult{Success: true, Output: []byte(`{"ok":true}`)}, nil
+	}
+	handler := NewHandler(store, engine, mockExec, nil, 0, 1<<20, nil)
+	rec := handler.CreatePending("ap-hit-1", "org-1", "sess-1", "eff-1", "delete_user", []byte(`{}`))
+
+	req := httptest.NewRequest(http.MethodPost, "/approvals/"+rec.ID+"/approve", nil)
+	req.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.ApproveApproval(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+	if len(engine.getApprovalCalls) != 0 {
+		t.Fatalf("GetApproval must not be called on a cache hit, got %d calls", len(engine.getApprovalCalls))
+	}
+	if len(engine.approved) != 1 || engine.approved[0] != rec.ID {
+		t.Fatalf("expected approval forwarded, got %+v", engine.approved)
+	}
+}
+
+// TestApprovalCacheMissEngineErrorMapsTo502 verifies that transport failures
+// during GetApproval return 502 Bad Gateway.
+func TestApprovalCacheMissEngineErrorMapsTo502(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{
+		getApprovalErr: map[string]error{
+			"ap-err": errors.New("gRPC transport failure"),
+		},
+	}
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/approvals/ap-err/approve", nil)
+	req.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.ApproveApproval(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 Bad Gateway, got %d", w.Code)
+	}
+	if len(engine.approved) != 0 {
+		t.Fatalf("Approve must not be called on transport error")
+	}
+}
+
+// TestApprovalCacheMissWrongOrgReturns404 verifies that if the engine returns an
+// approval record belonging to a different organization, 404 Not Found is returned.
+func TestApprovalCacheMissWrongOrgReturns404(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{
+		getApprovalResp: map[string]protocol.GetApprovalResponse{
+			"ap-cross-org": {
+				Record: protocol.ApprovalRecord{
+					ApprovalID:    "ap-cross-org",
+					OrgID:         "other-org",
+					SessionID:     "sess-1",
+					EffectID:      "eff-1",
+					ToolName:      "delete_user",
+					Args:          []byte(`{}`),
+					State:         "pending",
+					CreatedAtUnix: time.Now().UnixMilli(),
+				},
+			},
+		},
+	}
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/approvals/ap-cross-org/approve", nil)
+	req.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.ApproveApproval(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found for cross-tenant approval, got %d", w.Code)
+	}
+	if len(engine.approved) != 0 {
+		t.Fatalf("Approve must not be called for cross-tenant approval")
+	}
+}
+
+// TestApprovalCacheMissRejectPending verifies that a cache miss for the reject endpoint
+// looks up the pending record, upserts it, and rejects it in the engine.
+func TestApprovalCacheMissRejectPending(t *testing.T) {
+	store := NewStore()
+	engine := &mockEngine{
+		getApprovalResp: map[string]protocol.GetApprovalResponse{
+			"ap-miss-rej": {
+				Record: protocol.ApprovalRecord{
+					ApprovalID:    "ap-miss-rej",
+					OrgID:         "org-1",
+					SessionID:     "sess-1",
+					EffectID:      "eff-1",
+					ToolName:      "delete_user",
+					Args:          []byte(`{}`),
+					State:         "pending",
+					CreatedAtUnix: time.Now().UnixMilli(),
+				},
+			},
+		},
+	}
+	handler := NewHandler(store, engine, nil, nil, 0, 1<<20, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/approvals/ap-miss-rej/reject", bytes.NewBufferString(`{"actor":"sec-ops"}`))
+	req.Header.Set("X-Org-Id", "org-1")
+	w := httptest.NewRecorder()
+	handler.RejectApproval(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+	if len(engine.rejected) != 1 || engine.rejected[0] != "ap-miss-rej" {
+		t.Fatalf("expected reject recorded, got %+v", engine.rejected)
+	}
+	if engine.lastRejectActor != "sec-ops" {
+		t.Fatalf("expected actor sec-ops, got %q", engine.lastRejectActor)
+	}
+	stored, ok := store.Get("ap-miss-rej")
+	if !ok || stored.Status != StatusRejected {
+		t.Fatalf("expected store to contain rejected record, got ok=%v, status=%v", ok, stored.Status)
 	}
 }

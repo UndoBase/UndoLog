@@ -106,6 +106,7 @@ const (
 	rpcMethodApprove         = "Approve"
 	rpcMethodReject          = "Reject"
 	rpcMethodListPending     = "ListPendingApprovals"
+	rpcMethodGetApproval     = "GetApproval"
 	rpcMethodListDeadLetters = "ListDeadLetters"
 	rpcMethodRetryDeadLetter = "RetryDeadLetter"
 	rpcMethodSkipDeadLetter  = "SkipDeadLetter"
@@ -551,6 +552,18 @@ func (c *Client) ListPendingApprovals(ctx context.Context, req protocol.ListPend
 		return t.ListPendingApprovals(ctx, req)
 	})
 	c.observeRPC(rpcMethodListPending, start, err)
+	return resp, err
+}
+
+// GetApproval retrieves a single approval record by ID.
+func (c *Client) GetApproval(ctx context.Context, req protocol.GetApprovalRequest) (protocol.GetApprovalResponse, error) {
+	start := time.Now()
+	resp, err := guarded(ctx, c, func() (protocol.GetApprovalResponse, error) {
+		return call(ctx, c, func(t Transport) (protocol.GetApprovalResponse, error) {
+			return t.GetApproval(ctx, req)
+		})
+	})
+	c.observeRPC(rpcMethodGetApproval, start, err)
 	return resp, err
 }
 

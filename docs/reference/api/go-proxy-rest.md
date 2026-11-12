@@ -332,6 +332,12 @@ Each record contains:
 
 Approve a pending approval request and resume the suspended session.
 
+When the approval record is absent from the proxy's local cache (e.g. after a proxy
+restart), the proxy falls back to querying the engine directly via `GetApproval`. If
+the engine reports the record as pending for the authenticated organisation, it is
+upserted into the local store and processed. If the engine reports the record as
+already resolved (approved, rejected, or timed out), the endpoint returns `409 Conflict`.
+
 ### Request
 
 **Headers**
@@ -385,6 +391,12 @@ Approve a pending approval request and resume the suspended session.
 ## `POST /approvals/{id}/reject`
 
 Reject a pending approval request and halt the suspended session.
+
+When the approval record is absent from the proxy's local cache (e.g. after a proxy
+restart), the proxy falls back to querying the engine directly via `GetApproval`. If
+the engine reports the record as pending for the authenticated organisation, it is
+upserted into the local store and processed. If the engine reports the record as
+already resolved (approved, rejected, or timed out), the endpoint returns `409 Conflict`.
 
 ### Request
 

@@ -152,6 +152,22 @@ func (t *GRPCTransport) ListPendingApprovals(ctx context.Context, req protocol.L
 	return listPendingApprovalsFromProto(pbResp), nil
 }
 
+// GetApproval retrieves a single approval record by ID.
+func (t *GRPCTransport) GetApproval(ctx context.Context, req protocol.GetApprovalRequest) (protocol.GetApprovalResponse, error) {
+	ctx = withTracingMetadata(ctx)
+	pbReq := &pb.GetApprovalRequest{
+		OrgId:      req.OrgID,
+		ApprovalId: req.ApprovalID,
+	}
+	pbResp, err := t.client.GetApproval(ctx, pbReq)
+	if err != nil {
+		return protocol.GetApprovalResponse{}, err
+	}
+	return protocol.GetApprovalResponse{
+		Record: approvalRecordFromProto(pbResp.GetRecord()),
+	}, nil
+}
+
 // Close is a no-op. The caller owns the gRPC connection lifecycle.
 func (t *GRPCTransport) Close() error { return nil }
 
@@ -255,18 +271,44 @@ func rejectRequestToProto(req protocol.RejectRequest) *pb.RejectRequest {
 	}
 }
 
+func approvalRecordFromProto(rec *pb.ApprovalRecord) protocol.ApprovalRecord {
+	if rec == nil {
+		return protocol.ApprovalRecord{}
+	}
+	var stateStr string
+	switch rec.State {
+	case pb.ApprovalState_APPROVAL_STATE_PENDING:
+		stateStr = "pending"
+	case pb.ApprovalState_APPROVAL_STATE_APPROVED:
+		stateStr = "approved"
+	case pb.ApprovalState_APPROVAL_STATE_REJECTED:
+		stateStr = "rejected"
+	case pb.ApprovalState_APPROVAL_STATE_TIMED_OUT:
+		stateStr = "timed_out"
+	case pb.ApprovalState_APPROVAL_STATE_AUTO_APPROVED:
+		stateStr = "auto_approved"
+	default:
+		stateStr = "unspecified"
+	}
+
+	return protocol.ApprovalRecord{
+		ApprovalID:     rec.ApprovalId,
+		OrgID:          rec.OrgId,
+		SessionID:      rec.SessionId,
+		EffectID:       rec.EffectId,
+		ToolName:       rec.ToolName,
+		Args:           rec.Args,
+		CreatedAtUnix:  rec.CreatedAtUnixMs,
+		State:          stateStr,
+		ResolvedAtUnix: rec.ResolvedAtUnixMs,
+		ApprovedArgs:   rec.ApprovedArgs,
+	}
+}
+
 func listPendingApprovalsFromProto(msg *pb.ListPendingApprovalsResponse) protocol.ListPendingApprovalsResponse {
 	out := protocol.ListPendingApprovalsResponse{Records: make([]protocol.ApprovalRecord, 0, len(msg.ApprovalRecords))}
 	for _, rec := range msg.ApprovalRecords {
-		out.Records = append(out.Records, protocol.ApprovalRecord{
-			ApprovalID:    rec.ApprovalId,
-			OrgID:         rec.OrgId,
-			SessionID:     rec.SessionId,
-			EffectID:      rec.EffectId,
-			ToolName:      rec.ToolName,
-			Args:          rec.Args,
-			CreatedAtUnix: rec.CreatedAtUnixMs,
-		})
+		out.Records = append(out.Records, approvalRecordFromProto(rec))
 	}
 	return out
 }

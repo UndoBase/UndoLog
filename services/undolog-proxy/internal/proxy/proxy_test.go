@@ -74,6 +74,11 @@ func (m *mockEngineClient) ListPendingApprovals(ctx context.Context, req protoco
 	return protocol.ListPendingApprovalsResponse{Records: m.pending}, nil
 }
 
+// GetApproval is a stub satisfying protocol.EngineClient.
+func (m *mockEngineClient) GetApproval(ctx context.Context, req protocol.GetApprovalRequest) (protocol.GetApprovalResponse, error) {
+	return protocol.GetApprovalResponse{}, nil
+}
+
 // ListDeadLetters is a stub satisfying protocol.EngineClient.
 func (m *mockEngineClient) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
 	return protocol.ListDeadLettersResponse{}, nil
@@ -1666,6 +1671,10 @@ func (e *trackingEngine) Reject(ctx context.Context, req protocol.RejectRequest)
 
 func (e *trackingEngine) ListPendingApprovals(ctx context.Context, req protocol.ListPendingApprovalsRequest) (protocol.ListPendingApprovalsResponse, error) {
 	return protocol.ListPendingApprovalsResponse{}, nil
+}
+
+func (e *trackingEngine) GetApproval(ctx context.Context, req protocol.GetApprovalRequest) (protocol.GetApprovalResponse, error) {
+	return protocol.GetApprovalResponse{}, nil
 }
 
 func (e *trackingEngine) ListDeadLetters(ctx context.Context, req protocol.ListDeadLettersRequest) (protocol.ListDeadLettersResponse, error) {
