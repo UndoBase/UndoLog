@@ -88,6 +88,13 @@ async fn main() -> Result<()> {
     // and the compose stack behave exactly as before.
     let auth_token = auth::enforcing_token(std::env::var(ENV_AUTH_TOKEN).ok());
 
+    // Parse and validate TLS configuration. Fails startup with clear error
+    // when configuration is invalid or certificate files cannot be loaded.
+    let tls_config = undolog_engine::config::TlsConfig::from_env()
+        .context("Invalid engine TLS configuration")?;
+    let server_tls = undolog_engine::startup::build_server_tls_config(tls_config.as_ref())
+        .context("Failed to initialize engine TLS credentials")?;
+
     // Initialize tracing with optional OpenTelemetry export.
     let _guard = telemetry::init_telemetry();
 
@@ -132,7 +139,20 @@ async fn main() -> Result<()> {
     // ── Start gRPC server ────────────────────────────────────────────────
     info!(addr = %grpc_addr, "gRPC server listening");
 
-    Server::builder()
+    let mut server = Server::builder();
+    if let Some(tls) = server_tls {
+        server =
+            server.tls_config(tls).context("Failed to apply TLS configuration to gRPC server")?;
+        if tls_config.as_ref().is_some_and(|c| c.is_mtls()) {
+            info!("gRPC transport security enabled: TLS with mutual TLS (client certificates required)");
+        } else {
+            info!("gRPC transport security enabled: TLS server-side encryption");
+        }
+    } else {
+        info!("gRPC transport security: plaintext TCP");
+    }
+
+    server
         .add_service(grpc_service)
         .serve_with_shutdown(grpc_addr, shutdown_signal())
         .await

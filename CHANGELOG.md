@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Engine: added optional transport TLS and mutual TLS authentication for
+  the gRPC service.
+
 - Proxy: added engine point lookup fallback on approval cache misses to
   prevent duplicate execution of resolved approvals.
 
